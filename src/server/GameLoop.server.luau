@@ -1,9 +1,9 @@
 --!strict
 local SSS = game:GetService("ServerScriptService")
 
-local ScoringService = require(SSS.Modules.ScoringService)
-local CurrencyService = require(SSS.Modules.CurrencyService)
-local BallService = require(SSS.Modules.BallService)
+local ScoringService = require(SSS.Scripts.Modules.ScoringService)
+local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+local BallService = require(SSS.Scripts.Modules.BallService)
 
 local NRPLAYS_ID = 89831196
 

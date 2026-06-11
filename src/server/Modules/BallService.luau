@@ -8,12 +8,11 @@
 -- is why Spawn is written to be poolable later without changing its callers.
 
 local CollectionService = game:GetService("CollectionService")
-local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
 
 local Signal = require(RS.Shared.Signal)
 
-local Config = require(SSS.Modules.Config)
+local Config = require(RS.Shared.Config)
 
 local BallService = {}
 
@@ -26,10 +25,19 @@ local liveBalls: { [BasePart]: true } = {}    -- ballInstance: true
 local ballValue: { [BasePart]: number } = {} -- ballInstance: value
 local ownerCounts: { [number]: number } = {}
 
+-- Weight slider (0 light .. 1 heavy) → physics. Heavy = denser and less elastic
+-- (fewer, deader bounces); light = less dense and bouncier. Linear map between
+-- these endpoints; tune to taste. Friction held constant for now.
+local LIGHT_DENSITY, HEAVY_DENSITY = 0.7, 8
+local LIGHT_ELASTICITY, HEAVY_ELASTICITY = 0.8, 0.15
+local BALL_FRICTION = 0.3
+
 export type SpawnOptions = {
 	ownerUserId: number?,  -- credited by ScoringService; nil = unowned/no score
 	velocity: Vector3?,    -- initial velocity; nil = drop from rest
 	initialValue: number?, -- initial ball value
+	weight: number?,       -- 0 (light) .. 1 (heavy); sets density/elasticity
+	size: number?,         -- scale factor applied to the prefab's base size
 }
 
 function BallService.Spawn(position: Vector3, options: SpawnOptions?): BasePart
@@ -37,14 +45,30 @@ function BallService.Spawn(position: Vector3, options: SpawnOptions?): BasePart
 	
 	local ball = Config.Templates.Ball:Clone()
 	ball.CFrame = CFrame.new(position)
+
+	-- Size: scale the prefab's base size before it enters the world.
+	if opts.size then
+		ball.Size = ball.Size * opts.size
+		ball:SetAttribute(Config.Attributes.Size, opts.size)
+	end
+
+	-- Weight: map the slider to density/elasticity (see endpoints above).
+	if opts.weight then
+		local w = math.clamp(opts.weight, 0, 1)
+		local density = LIGHT_DENSITY + (HEAVY_DENSITY - LIGHT_DENSITY) * w
+		local elasticity = LIGHT_ELASTICITY + (HEAVY_ELASTICITY - LIGHT_ELASTICITY) * w
+		ball.CustomPhysicalProperties = PhysicalProperties.new(density, BALL_FRICTION, elasticity)
+		ball:SetAttribute(Config.Attributes.Weight, w)
+	end
+
 	ball.Parent = game.Workspace
-	
+
 	if not ball.Anchored then
 		ball:SetNetworkOwner(nil)
 	end
-	
+
 	ball.AssemblyLinearVelocity = opts.velocity or ball.AssemblyLinearVelocity
-	
+
 	if (opts.ownerUserId) then
 		ball:SetAttribute(Config.Attributes.OwnerUserId, opts.ownerUserId)
 		ownerCounts[opts.ownerUserId] = (ownerCounts[opts.ownerUserId] or 0) + 1

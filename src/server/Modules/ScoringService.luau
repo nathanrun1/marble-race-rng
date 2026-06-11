@@ -8,19 +8,28 @@
 --            (If a ball is a Model, tag and read position from its PrimaryPart.)
 
 local SSS = game:GetService("ServerScriptService")
+local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
-local Config = require(SSS.Modules.Config)
-local CurrencyService = require(SSS.Modules.CurrencyService)
-local BallService = require(SSS.Modules.BallService)
-local BallEffects = require(SSS.Modules.BallEffects)
+local Config = require(RS.Shared.Config)
+local ProfileStats = require(RS.Shared.ProfileStats)
+local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+local BallService = require(SSS.Scripts.Modules.BallService)
+local BallEffects = require(SSS.Scripts.Modules.BallEffects)
+local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 
 local ScoringService = {}
 
 -- hitRecord[ball][target] = os.clock() of last credited hit; per-pair debounce.
 local hitRecord: { [BasePart]: { [Instance]: number } } = {}
+
+-- heatAccum[ball] = running sum of PegHeat over the pegs this ball has hit.
+-- Path-dependent and objective (the heat map is fixed); the player's PegHeat
+-- tier only scales how much it matters, applied once at banking. Kept separate
+-- from ball value so it never feeds the (future) jackpot gate.
+local heatAccum: { [BasePart]: number } = {}
 
 local overlapParams = OverlapParams.new()
 
@@ -39,7 +48,6 @@ local function calculatePoints(cur: number, target: Instance): number?
 end
 
 local function resolveHit(ball: BasePart, target: Instance)
-	print("resolving hit")
 	local ownerId = ball:GetAttribute(Config.Attributes.OwnerUserId) :: number?
 	if not ownerId then
 		return
@@ -54,11 +62,27 @@ local function resolveHit(ball: BasePart, target: Instance)
 		BallService.SetBallValue(ball, newValue)
 		BallEffects.SetValueUI(ball, newValue)
 	end
-	
+
+	-- Peg heat: accumulate this peg's signed heat onto the ball. Always recorded
+	-- (the heat map is objective); the player's tier scales the effect at banking.
+	local pegHeat: number? = target:GetAttribute(Config.Attributes.PegHeat)
+	if pegHeat then
+		local heatFactor: number = ProfileStats.GetPegHeatFactor(ProfileService.GetUpgrades(player))
+		heatAccum[ball] = (heatAccum[ball] or 0) + pegHeat * heatFactor
+		BallEffects.ApplyHeat(ball, heatAccum[ball]) -- repaint for new heat
+	end
+
 	if (target:HasTag(Config.Tags.DestroyTarget)) then
-		print("Destroying ball")
+		-- Apply accumulated heat as a value-proportional multiplier on the final
+		-- payout, scaled by the player's PegHeat tier. Read H BEFORE Despawn,
+		-- which clears heatAccum via onBallDespawn. Clamp ≥ 0 so a cold path
+		-- can zero the payout but never go negative.
+		local base: number = newValue or curValue
+		local H: number = heatAccum[ball] or 0
+		local banked: number = base * math.max(0, 1 + H)
+
 		BallService.Despawn(ball)
-		CurrencyService.AddPoints(player, newValue or curValue, "Ball destroyed at target: "..target.Name)
+		CurrencyService.AddPoints(player, banked, "Ball destroyed at target: "..target.Name)
 	end
 end
 
@@ -98,10 +122,12 @@ end
 local function onBallSpawn(ball: BasePart)
 	BallEffects.SetValueUI(ball, BallService.GetBallValue(ball))
 	hitRecord[ball] = {}
+	heatAccum[ball] = 0
 end
 
 local function onBallDespawn(ball: BasePart)
 	hitRecord[ball] = nil
+	heatAccum[ball] = nil
 end
 
 function ScoringService.Init()
@@ -110,6 +136,8 @@ function ScoringService.Init()
 	
 	CollectionService:GetInstanceAddedSignal(Config.Tags.ScoreTarget):Connect(refreshTargetFilter)
 	CollectionService:GetInstanceRemovedSignal(Config.Tags.ScoreTarget):Connect(refreshTargetFilter)
+	refreshTargetFilter() -- snapshot targets already tagged at startup
+
 	RunService.Heartbeat:Connect(onHeartbeat)
 end
 

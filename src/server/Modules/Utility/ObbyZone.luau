@@ -3,7 +3,7 @@
 local SSS = game:GetService("ServerScriptService")
 local Players = game:GetService("Players")
 
-local CurrencyService = require(SSS.Modules.CurrencyService)
+local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 
 local ObbyZone = {}
 ObbyZone.__index = ObbyZone

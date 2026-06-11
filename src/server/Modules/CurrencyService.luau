@@ -1,8 +1,7 @@
-local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
-local Config = require(SSS.Modules.Config)
+local Config = require(RS.Shared.Config)
 local Signal = require(RS.Shared.Signal)
 
 local CurrencyService = {}

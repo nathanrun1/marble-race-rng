@@ -1,73 +1,192 @@
--- Script inside the "join" part
-local Players = game:GetService("Players")
-local DataStoreService = game:GetService("DataStoreService")
-local rewardStore = DataStoreService:GetDataStore("GroupRewardStore")
+--------------------------------------------------------------------------------
+--               Batched Yield-Safe Signal Implementation                     --
+-- This is a Signal class which has effectively identical behavior to a       --
+-- normal RBXScriptSignal, with the only difference being a couple extra      --
+-- stack frames at the bottom of the stack trace when an error is thrown.     --
+-- This implementation caches runner coroutines, so the ability to yield in   --
+-- the signal handlers comes at minimal extra cost over a naive signal        --
+-- implementation that either always or never spawns a thread.                --
+--                                                                            --
+-- API:                                                                       --
+--   local Signal = require(THIS MODULE)                                      --
+--   local sig = Signal.new()                                                 --
+--   local connection = sig:Connect(function(arg1, arg2, ...) ... end)        --
+--   sig:Fire(arg1, arg2, ...)                                                --
+--   connection:Disconnect()                                                  --
+--   sig:DisconnectAll()                                                      --
+--   local arg1, arg2, ... = sig:Wait()                                       --
+--                                                                            --
+-- Licence:                                                                   --
+--   Licenced under the MIT licence.                                          --
+--                                                                            --
+-- Authors:                                                                   --
+--   stravant - July 31st, 2021 - Created the file.                           --
+--------------------------------------------------------------------------------
+--!nocheck
 
-local GROUP_ID = 559054633
-local COOLDOWN = 24 * 60 * 60 -- 24 hours in seconds
-local PERCENT = 0.50 -- 50%
-local part = script.Parent
-local debounce = {}
+-- The currently idle thread to run the next handler on
+local freeRunnerThread = nil
 
-local function getCoins(player)
-	local leaderstats = player:FindFirstChild("leaderstats")
-	if leaderstats then
-		local coins = leaderstats:FindFirstChild("Coins")
-		if coins then return coins end
-	end
-	return nil
+-- Function which acquires the currently idle handler runner thread, runs the
+-- function fn on it, and then releases the thread, returning it to being the
+-- currently idle one.
+-- If there was a currently idle runner thread already, that's okay, that old
+-- one will just get thrown and eventually GCed.
+local function acquireRunnerThreadAndCallEventHandler(fn, ...)
+	local acquiredRunnerThread = freeRunnerThread
+	freeRunnerThread = nil
+	fn(...)
+	-- The handler finished running, this runner thread is free again.
+	freeRunnerThread = acquiredRunnerThread
 end
 
-local function getTimeLeft(lastClaim)
-	local diff = COOLDOWN - (os.time() - lastClaim)
-	if diff <= 0 then return nil end
-	local hours = math.floor(diff / 3600)
-	local mins = math.floor((diff % 3600) / 60)
-	return string.format("%dh %dm", hours, mins)
+-- Coroutine runner that we create coroutines of. The coroutine can be
+-- repeatedly resumed with functions to run followed by the argument to run
+-- them with.
+local function runEventHandlerInFreeThread()
+	-- Note: We cannot use the initial set of arguments passed to
+	-- runEventHandlerInFreeThread for a call to the handler, because those
+	-- arguments would stay on the stack for the duration of the thread's
+	-- existence, temporarily leaking references. Without access to raw bytecode
+	-- there's no way for us to clear the "..." references from the stack.
+	while true do
+		acquireRunnerThreadAndCallEventHandler(coroutine.yield())
+	end
 end
 
-part.Touched:Connect(function(hit)
-	local character = hit.Parent
-	local player = Players:GetPlayerFromCharacter(character)
-	if not player then return end
-	if debounce[player.UserId] then return end
-	debounce[player.UserId] = true
+-- Connection class
+local Connection = {}
+Connection.__index = Connection
 
-	local coinsObj = getCoins(player)
-	if not coinsObj then
-		debounce[player.UserId] = nil
-		return
-	end
+function Connection.new(signal, fn)
+	return setmetatable({
+		_connected = true,
+		_signal = signal,
+		_fn = fn,
+		_next = false,
+	}, Connection)
+end
 
-	local currentCoins = coinsObj.Value
-	local reward = math.floor(currentCoins * PERCENT)
-	local inGroup = player:IsInGroup(GROUP_ID)
+function Connection:Disconnect()
+	self._connected = false
 
-	local lastClaim = nil
-	local success, data = pcall(function()
-		return rewardStore:GetAsync("player_" .. player.UserId)
-	end)
-	if success and data then
-		lastClaim = data
-	end
-
-	local timeLeft = lastClaim and getTimeLeft(lastClaim) or nil
-
-	local remote = game:GetService("ReplicatedStorage"):FindFirstChild("GroupRewardRemote")
-	if remote then
-		if not inGroup then
-			remote:FireClient(player, "notInGroup", currentCoins, reward, nil)
-		elseif timeLeft then
-			remote:FireClient(player, "onCooldown", currentCoins, reward, timeLeft)
-		else
-			coinsObj.Value = currentCoins + reward
-			pcall(function()
-				rewardStore:SetAsync("player_" .. player.UserId, os.time())
-			end)
-			remote:FireClient(player, "success", currentCoins + reward, reward, nil)
+	-- Unhook the node, but DON'T clear it. That way any fire calls that are
+	-- currently sitting on this node will be able to iterate forwards off of
+	-- it, but any subsequent fire calls will not hit it, and it will be GCed
+	-- when no more fire calls are sitting on it.
+	if self._signal._handlerListHead == self then
+		self._signal._handlerListHead = self._next
+	else
+		local prev = self._signal._handlerListHead
+		while prev and prev._next ~= self do
+			prev = prev._next
+		end
+		if prev then
+			prev._next = self._next
 		end
 	end
+end
 
-	task.wait(5)
-	debounce[player.UserId] = nil
-end)
+-- Make Connection strict
+setmetatable(Connection, {
+	__index = function(_, key)
+		error(("Attempt to get Connection::%s (not a valid member)"):format(tostring(key)), 2)
+	end,
+	__newindex = function(_, key)
+		error(("Attempt to set Connection::%s (not a valid member)"):format(tostring(key)), 2)
+	end,
+})
+
+export type Connection = {
+	Disconnect: (self: Connection) -> (),
+}
+
+export type Signal<T...> = {
+	Connect: (self: Signal<T...>, callback: (T...) -> ()) -> Connection,
+	Once: (self: Signal<T...>, callback: (T...) -> ()) -> Connection,
+	Fire: (self: Signal<T...>, T...) -> (),
+	Wait: (self: Signal<T...>) -> T...,
+}
+
+-- Signal class
+local Signal = {}
+Signal.__index = Signal
+
+function Signal.new<T...>(): Signal<T...>
+	return setmetatable({
+		_handlerListHead = false,
+	}, Signal) :: any
+end
+
+function Signal:Connect(fn)
+	local connection = Connection.new(self, fn)
+	if self._handlerListHead then
+		connection._next = self._handlerListHead
+		self._handlerListHead = connection
+	else
+		self._handlerListHead = connection
+	end
+	return connection
+end
+
+-- Disconnect all handlers. Since we use a linked list it suffices to clear the
+-- reference to the head handler.
+function Signal:DisconnectAll()
+	self._handlerListHead = false
+end
+
+-- Signal:Fire(...) implemented by running the handler functions on the
+-- coRunnerThread, and any time the resulting thread yielded without returning
+-- to us, that means that it yielded to the Roblox scheduler and has been taken
+-- over by Roblox scheduling, meaning we have to make a new coroutine runner.
+function Signal:Fire(...)
+	local item = self._handlerListHead
+	while item do
+		if item._connected then
+			if not freeRunnerThread then
+				freeRunnerThread = coroutine.create(runEventHandlerInFreeThread)
+				-- Get the freeRunnerThread to the first yield
+				coroutine.resume(freeRunnerThread)
+			end
+			task.spawn(freeRunnerThread, item._fn, ...)
+		end
+		item = item._next
+	end
+end
+
+-- Implement Signal:Wait() in terms of a temporary connection using
+-- a Signal:Connect() which disconnects itself.
+function Signal:Wait()
+	local waitingCoroutine = coroutine.running()
+	local cn
+	cn = self:Connect(function(...)
+		cn:Disconnect()
+		task.spawn(waitingCoroutine, ...)
+	end)
+	return coroutine.yield()
+end
+
+-- Implement Signal:Once() in terms of a connection which disconnects
+-- itself before running the handler.
+function Signal:Once(fn)
+	local cn
+	cn = self:Connect(function(...)
+		if cn._connected then
+			cn:Disconnect()
+		end
+		fn(...)
+	end)
+	return cn
+end
+
+-- Make signal strict
+setmetatable(Signal, {
+	__index = function(_, key)
+		error(("Attempt to get Signal::%s (not a valid member)"):format(tostring(key)), 2)
+	end,
+	__newindex = function(_, key)
+		error(("Attempt to set Signal::%s (not a valid member)"):format(tostring(key)), 2)
+	end,
+})
+
+return Signal
