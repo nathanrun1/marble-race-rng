@@ -1,0 +1,8 @@
+# Project place file
+/marble_race_rng.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+sourcemap.json
