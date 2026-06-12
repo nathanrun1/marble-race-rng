@@ -26,6 +26,7 @@ type UpgradeDef = {
 	Cost: { Base: number, Growth: number },
 	Name: string?,
 	Desc: string?,
+	Icon: string?,
 	Caps: { number }?,                         -- Frequency: tier cap = #Caps - 1
 	Widths: { number }?,                       -- Arc: tier cap = #Widths - 1
 	Ranges: { { Min: number, Max: number } }?, -- continuous axes: cap = #Ranges - 1
@@ -47,6 +48,7 @@ export type Info = {
 	track: string,
 	name: string,
 	desc: string,
+	icon: string,
 	tier: number,
 	maxTier: number?, -- nil = unbounded
 	maxed: boolean,
@@ -94,6 +96,7 @@ function UpgradeService.GetInfo(player: Player, track: string): Info?
 		track = track,
 		name = def.Name or track,
 		desc = def.Desc or "",
+		icon = def.Icon or "",
 		tier = tier,
 		maxTier = maxTierOf(def),
 		maxed = price == nil,
@@ -124,7 +127,8 @@ end
 -- then deducts and increments. There is no yield between the funds check and the
 -- deduct, so it is atomic against concurrent requests.
 function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
-	if not UpgradeDefs[track] then
+	print(UpgradeDefs)
+	if UpgradeDefs[track] == nil then
 		return { ok = false, reason = "invalid_track" }
 	end
 	local tier = ProfileService.GetUpgradeTier(player, track)
@@ -164,5 +168,7 @@ function UpgradeService.Init()
 		return UpgradeService.Purchase(player, track)
 	end
 end
+
+print("hello")
 
 return UpgradeService

@@ -69,7 +69,7 @@ Config.Upgrades = {
 		Base = 0.5, PerTier = 2,
 		Cost = { Base = 150, Growth = 2.0 },
 		Name = "Flat Rate", Desc = "More points per peg bounce.",
-		Icon + "⚡"
+		Icon = "⚡"
 	},
 	-- baseAdditive = PerTier * tier  (additive)         [output-scaling]
 	BaseAdditive = {
@@ -123,6 +123,7 @@ type AxisDef = {
 	Cost: { Base: number, Growth: number }?,
 	Name: string?,
 	Desc: string?,
+	Icon: string?
 }
 Config.Axes = {
 	Weight = {

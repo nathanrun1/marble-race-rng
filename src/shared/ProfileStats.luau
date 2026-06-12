@@ -78,4 +78,40 @@ function ProfileStats.GetTrickle(upgrades: Upgrades): number
 	return Config.Economy.TrickleFraction * ProfileStats.GetMaxBet(upgrades)
 end
 
+-- Human-readable value string for a given upgrade track at a given tier. Intended
+-- for the shop UI to show current and next values without duplicating derivation
+-- logic. Builds a one-entry upgrades map so the existing getters can be reused.
+--
+-- Format per track type:
+--   MaxBet      → integer coin amount      e.g. "80"
+--   FlatRate    → decimal                  e.g. "1.00"
+--   BaseAdditive→ percentage               e.g. "+5%"
+--   Frequency   → ball count               e.g. "4"
+--   Arc         → degrees                  e.g. "30°"
+--   PegHeat     → multiplier               e.g. "0.5×"
+--   Axes        → range                    e.g. "0.25 – 0.75"
+function ProfileStats.GetDisplayString(track: string, tier: number): string
+	local u: Upgrades = { [track] = tier }
+	if track == "MaxBet" then
+		return tostring(math.floor(ProfileStats.GetMaxBet(u)))
+	elseif track == "FlatRate" then
+		return string.format("%.2f", ProfileStats.GetFlatPerBounce(u))
+	elseif track == "BaseAdditive" then
+		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
+	elseif track == "Frequency" then
+		return tostring(ProfileStats.GetBallCountCap(u))
+	elseif track == "Arc" then
+		return math.round(math.deg(ProfileStats.GetArcWidth(u))) .. "°"
+	elseif track == "PegHeat" then
+		return string.format("%.1f×", ProfileStats.GetPegHeatFactor(u))
+	else
+		-- Axis tracks (Weight, Size, ...)
+		if Config.Axes[track] then
+			local min, max = ProfileStats.GetAxisRange(u, track)
+			return string.format("%.2f – %.2f", min, max)
+		end
+	end
+	return ""
+end
+
 return ProfileStats
