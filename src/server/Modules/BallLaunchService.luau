@@ -31,6 +31,13 @@ local MAX_BALLS_PER_PLAYER = 40                 -- concurrency ceiling (well abo
 -- upgrade — and passed into deriveLaunchVelocity per batch.
 local BASE_LAUNCH_DIR = Vector3.new(0, 0, -1)   -- down-ramp; align with real geometry
 local LAUNCH_SPEED = 20                          -- studs/s initial speed
+local LAUNCH_SPEED_VARIATION = 0.2              -- Launch speed can vary by up to this portion
+local LAUNCH_DIR_VARIATION = math.rad(10)                -- Launch angle can vary by up to this angle
+
+local function genLaunchSpeed(): number
+	local variation = LAUNCH_SPEED * LAUNCH_SPEED_VARIATION
+	return math.random(LAUNCH_SPEED - variation, LAUNCH_SPEED + variation)
+end
 
 local function genSpawnPos(): Vector3
 	local left: number = 43.859
@@ -45,9 +52,9 @@ end
 -- default phase 0.5 fires straight down the center (angle 0). Direction is the
 -- base down-ramp vector rotated about the vertical axis by that angle.
 local function deriveLaunchVelocity(phase: number, arcWidth: number): Vector3
-	local angle = arcWidth * math.sin(2 * math.pi * phase)
+	local angle = arcWidth * math.sin(2 * math.pi * phase) + math.random(-LAUNCH_DIR_VARIATION, LAUNCH_DIR_VARIATION)
 	local dir = CFrame.fromAxisAngle(Vector3.yAxis, angle):VectorToWorldSpace(BASE_LAUNCH_DIR)
-	return dir.Unit * LAUNCH_SPEED
+	return dir.Unit * genLaunchSpeed()
 end
 
 -- Launch one player's batch: pay trickle, then fire N balls over the window.

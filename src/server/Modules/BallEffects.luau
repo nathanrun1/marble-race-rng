@@ -21,6 +21,7 @@
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local SSS = game:GetService("ServerScriptService")
+local TweenService = game:GetService("TweenService")
 
 local Config = require(RS.Shared.Config)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
@@ -153,6 +154,67 @@ function BallEffects.ApplyHeat(ball: BasePart, heat: number)
 	applyColor(ball, base, heat)
 	applyMaterial(ball, weight, heat)
 	applyHeatParticles(ball, heat)
+end
+
+local POPUP_TWEEN = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
+local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
+
+-- Spawns a floating label above the ball showing what just happened (e.g. "+100"
+-- or "×2"). Snapshots the ball's position into an invisible anchor Part parented
+-- to workspace so the popup outlives ball destruction, then tweens it upward while
+-- fading out and cleans up the anchor when done.
+function BallEffects.ShowValuePopup(ball: BasePart, label: string, color: Color3?)
+	if not ball.Parent then return end
+
+	-- Snapshot world position now; the ball may be destroyed before the tween ends.
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.new(0.05, 0.05, 0.05)
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.CFrame = ball.CFrame
+	anchor.Parent = workspace
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0, 100, 0, 50)
+	billboard.StudsOffset = POPUP_OFFSET_START
+	billboard.AlwaysOnTop = true
+	billboard.Parent = anchor
+
+	local text = Instance.new("TextLabel")
+	text.Size = UDim2.new(1, 0, 1, 0)
+	text.BackgroundTransparency = 1
+	text.Text = label
+	text.TextColor3 = color or Color3.new(1, 1, 1)
+	text.TextStrokeColor3 = Color3.new(0, 0, 0)
+	text.TextStrokeTransparency = 0.4
+	text.TextScaled = true
+	text.Font = Enum.Font.GothamBold
+	text.Parent = billboard
+
+	local t1 = TweenService:Create(billboard, POPUP_TWEEN, { StudsOffset = POPUP_OFFSET_END })
+	local t2 = TweenService:Create(text, POPUP_TWEEN, {
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+	})
+	t1:Play()
+	t2:Play()
+	t2.Completed:Connect(function()
+		anchor:Destroy()
+	end)
+end
+
+local HEAT_COLOR_POS = Color3.fromRGB(255, 140, 0)  -- orange: hot peg
+local HEAT_COLOR_NEG = Color3.fromRGB(80, 160, 255)  -- blue:   cold peg
+
+function BallEffects.ShowHeatPopup(ball: BasePart, heatDelta: number)
+	if heatDelta == 0 then return end
+	local label = string.format("%+.1f", heatDelta)
+	local color = if heatDelta > 0 then HEAT_COLOR_POS else HEAT_COLOR_NEG
+	BallEffects.ShowValuePopup(ball, label, color)
 end
 
 function BallEffects.SetValueUI(ball: BasePart, value: number): ()

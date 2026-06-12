@@ -1,7 +1,10 @@
 --!strict
 
+local ShopUI = {}
+
 local Players: Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local ProfileStats = require(RS.Shared.ProfileStats)
 
@@ -9,6 +12,17 @@ local player: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 
 local ShopGui = PlayerGui:WaitForChild("ShopGui") :: any
+local ShopFrame: Frame = ShopGui.ShopFrame :: Frame
+
+-- Capture the studio-authored center position; off-screen-right is +1 X scale.
+local POS_OPEN  = ShopFrame.Position
+local POS_RIGHT = UDim2.new(
+	POS_OPEN.X.Scale + 1, POS_OPEN.X.Offset,
+	POS_OPEN.Y.Scale,     POS_OPEN.Y.Offset
+)
+local TWEEN_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+local activeTween: Tween? = nil
 
 local BalanceChangedRE: RemoteEvent = RS.Remote.BalanceChanged
 local GetUpgradeInfoRF: RemoteFunction = RS.Remote.GetUpgradeInfo
@@ -23,7 +37,8 @@ local UI = {
 	purchaseBtn = ShopGui.ShopFrame.BuyButton, -- ImageButton
 	curValue = ShopGui.ShopFrame.Effect.CurrentCell.Frame.Value, -- TextLabel
 	nextValue = ShopGui.ShopFrame.Effect.NextCell.Frame.Value, -- TextLabel
-	track = ShopGui.ShopFrame.Track -- Frame
+	track = ShopGui.ShopFrame.Track, -- Frame
+    closeBtn = ShopGui.ShopFrame.UIListIgnore.CloseButton
 }
 
 -- Types copied from UpgradeService
@@ -185,6 +200,47 @@ function onBuyPressed()
     end
 end
 
+-- Invoked when close button pressed
+function ShopUI.CloseShop()
+	if activeTween then activeTween:Cancel() end
+	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_RIGHT })
+	activeTween = t
+	t.Completed:Connect(function(state: Enum.PlaybackState)
+		if state == Enum.PlaybackState.Completed then
+			ShopGui.Enabled = false
+			ShopFrame.Position = POS_OPEN
+		end
+	end)
+	t:Play()
+end
+
+-- Enable the shop for the given track, sliding it in from the right.
+function ShopUI.OpenShop(track: string)
+	if activeTween then activeTween:Cancel() end
+	loadShop(track)
+	ShopFrame.Position = POS_RIGHT
+	ShopGui.Enabled = true
+	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_OPEN })
+	activeTween = t
+	t:Play()
+end
+
+-- Determines if the Shop UI is open
+function ShopUI.IsOpen(): boolean
+	return ShopGui.Enabled
+end
+
+-- Fetches currently loaded track
+function ShopUI.GetLoadedTrack(): string?
+	return loadedTrack
+end
+
+-- Loads the given track
+function ShopUI.LoadTrack(track: string)
+	loadShop(track)
+end
+
+
 BalanceChangedRE.OnClientEvent:Connect(function()
     if ShopGui.Enabled and loadedTrack then
         loadShop(loadedTrack)
@@ -192,5 +248,6 @@ BalanceChangedRE.OnClientEvent:Connect(function()
 end)
 
 UI.purchaseBtn.Activated:Connect(onBuyPressed)
+UI.closeBtn.Activated:Connect(ShopUI.CloseShop)
 
-loadShop("Frequency")
+return ShopUI

@@ -33,17 +33,17 @@ local heatAccum: { [BasePart]: number } = {}
 
 local overlapParams = OverlapParams.new()
 
-local function calculatePoints(cur: number, target: Instance): number?
-	local pointValue: number? = target:GetAttribute(Config.Attributes.PointValue)
+local function calculatePoints(cur: number, target: Instance): (number?, string?)
+	local pointValue: number? = target:GetAttribute(Config.Attributes.PointValue) :: number?
 	if not pointValue then
-		return nil
+		return nil, nil
 	end
-	
-	local isPointMul: boolean? = target:GetAttribute(Config.Attributes.IsPointMul)
-	if isPointMul ~= nil and isPointMul then
-		return cur * pointValue
+
+	local isPointMul = target:GetAttribute(Config.Attributes.IsPointMul) :: boolean?
+	if isPointMul then
+		return cur * pointValue, "×" .. tostring(pointValue)
 	else
-		return cur + pointValue
+		return cur + pointValue, "+" .. tostring(pointValue)
 	end
 end
 
@@ -57,10 +57,11 @@ local function resolveHit(ball: BasePart, target: Instance)
 		return -- owner left mid-flight; points dropped.
 	end
 	local curValue: number = BallService.GetBallValue(ball)
-	local newValue: number? = calculatePoints(curValue, target)
-	if (newValue) then
+	local newValue, popupLabel = calculatePoints(curValue, target)
+	if newValue and popupLabel then
 		BallService.SetBallValue(ball, newValue)
 		BallEffects.SetValueUI(ball, newValue)
+		BallEffects.ShowValuePopup(ball, popupLabel)
 	end
 
 	-- Peg heat: accumulate this peg's signed heat onto the ball. Always recorded
@@ -68,8 +69,10 @@ local function resolveHit(ball: BasePart, target: Instance)
 	local pegHeat: number? = target:GetAttribute(Config.Attributes.PegHeat)
 	if pegHeat then
 		local heatFactor: number = ProfileStats.GetPegHeatFactor(ProfileService.GetUpgrades(player))
-		heatAccum[ball] = (heatAccum[ball] or 0) + pegHeat * heatFactor
-		BallEffects.ApplyHeat(ball, heatAccum[ball]) -- repaint for new heat
+		local heatDelta = pegHeat * heatFactor
+		heatAccum[ball] = (heatAccum[ball] or 0) + heatDelta
+		BallEffects.ApplyHeat(ball, heatAccum[ball])
+		BallEffects.ShowHeatPopup(ball, heatDelta)
 	end
 
 	if (target:HasTag(Config.Tags.DestroyTarget)) then

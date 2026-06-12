@@ -169,6 +169,4 @@ function UpgradeService.Init()
 	end
 end
 
-print("hello")
-
 return UpgradeService

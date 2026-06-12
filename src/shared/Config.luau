@@ -24,11 +24,11 @@ Config.Attributes = {
 }
 
 Config.Scoring = {
-	DefaultCooldown = 0.5,
+	DefaultCooldown = 1.5,
 }
 
 Config.Currency = {
-	StartingBalance = 10,  -- NOTE: debug value; guideline §4 StartBank = 150
+	StartingBalance = 150,  -- NOTE: debug value; guideline §4 StartBank = 150
 }
 
 Config.Economy = {
@@ -80,8 +80,8 @@ Config.Upgrades = {
 	},
 	-- max ball count N at each frequency tier (§3 axis A) [cap for loadout.BallCount]
 	Frequency = {
-		Caps = { 2, 4, 8, 16 },  -- tier 0 → N≤2, tier 1 → N≤4, ...
-		Cost = { Base = 500, Growth = 4 },
+		Caps = { 2, 3, 4, 6, 8, 12, 16 },
+		Cost = { Base = 500, Growth = 2 },
 		Name = "Frequency", Desc = "Launch more balls per batch.",
 		Icon = "🔄"
 	},
