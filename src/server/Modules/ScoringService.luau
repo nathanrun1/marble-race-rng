@@ -20,10 +20,38 @@ local BallService = require(SSS.Scripts.Modules.BallService)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
+local Signal = require(RS.Shared.Signal)
 
 local ScoringService = {}
 
+-- Itemized breakdown of one ball's final payout, built when the ball hits a
+-- DestroyTarget and emitted via BallScored. The contribution fields are additive
+-- and reconstruct the total:
+--   banked == base + heatBonus + comboBonus + additiveBonus + trickle
+-- Intended for analysis tooling (DevService's launch test) more than gameplay.
+export type ScoreInfo = {
+	targetName: string,       -- name of the DestroyTarget hit
+	finalMultiplier: number?, -- the slot's × multiplier (nil if additive / no PointValue)
+	initialValue: number,     -- ball value at spawn (the stake for this ball)
+	base: number,             -- ball value at destruction, before heat/combo/additive
+	heatBonus: number,        -- signed; accumulated peg heat applied at banking
+	comboBonus: number,       -- flat-per-bounce combo payout (0 below MinCombo)
+	additiveBonus: number,    -- base-additive upgrade contribution
+	trickle: number,          -- unconditional per-launch income
+	combo: number,            -- number of scoring bounces credited
+	banked: number,           -- total credited to the player
+}
+
+-- (ball: BasePart, info: ScoreInfo) — fired once when a ball is banked at a
+-- DestroyTarget, just before it despawns. The ball reference stays valid as a
+-- table key for the duration of the fire.
+ScoringService.BallScored = Signal.new()
+
 local MIN_HEAT_ACCUM = -0.75
+
+-- spawnValue[ball] = ball value at spawn (the stake). Captured so the emitted
+-- ScoreInfo can report the staked amount alongside the payout.
+local spawnValue: { [BasePart]: number } = {}
 
 -- hitRecord[ball][target] = os.clock() of last credited hit; per-pair debounce.
 local hitRecord: { [BasePart]: { [Instance]: number } } = {}
@@ -119,7 +147,21 @@ local function resolveHit(ball: BasePart, target: Instance)
 
 		local baseAdditive = ProfileStats.GetBaseAdditive(upgrades) * banked
 		banked += baseAdditive
-		banked += ProfileStats.GetTrickle(upgrades)
+		local trickle = ProfileStats.GetTrickle(upgrades)
+		banked += trickle
+
+		ScoringService.BallScored:Fire(ball, {
+			targetName = target.Name,
+			finalMultiplier = multiplier,
+			initialValue = spawnValue[ball] or curValue,
+			base = base,
+			heatBonus = heatEffect,
+			comboBonus = comboBonus,
+			additiveBonus = baseAdditive,
+			trickle = trickle,
+			combo = combo,
+			banked = banked,
+		} :: ScoreInfo)
 
 		ScoreUI.PostMessage(player, "Ball scored! $" .. math.floor(base), Color3.new(1, 1, 1))
 		if math.abs(heatEffect) >= 0.5 then
@@ -183,12 +225,14 @@ local function onBallSpawn(ball: BasePart)
 	hitRecord[ball] = {}
 	heatAccum[ball] = 0
 	bounceCount[ball] = 0
+	spawnValue[ball] = BallService.GetBallValue(ball)
 end
 
 local function onBallDespawn(ball: BasePart)
 	hitRecord[ball] = nil
 	heatAccum[ball] = nil
 	bounceCount[ball] = nil
+	spawnValue[ball] = nil
 end
 
 function ScoringService.Init()

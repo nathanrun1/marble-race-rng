@@ -61,10 +61,27 @@ local function deriveLaunchVelocity(phase: number, arcWidth: number): Vector3
 	return dir.Unit * genLaunchSpeed()
 end
 
--- Launch one player's batch: pay trickle, then fire N balls over the window.
--- Runs in its own thread (the per-ball waits must not block other players or
--- the master clock). The last ball fires at (N-1)/N · BATCH_SECONDS, so a batch
--- always finishes before the next one starts.
+-- Spawn one ball for this player using their current loadout + arc geometry.
+-- This is the trajectory/loadout core of a launch with no guards or currency
+-- side effects — launchFor wraps it with those; the dev launch test reuses it
+-- raw. Phase is read from the launcher's continuous swivel at call time.
+local function spawnBall(player: Player): BasePart
+	local upgrades = ProfileService.GetUpgrades(player)
+	local loadout = ProfileService.GetLoadout(player)
+	local arcWidth = ProfileStats.GetArcWidth(upgrades)
+	local phase = (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
+	return BallService.Spawn(genSpawnPos(), {
+		ownerUserId = player.UserId,
+		velocity = deriveLaunchVelocity(phase, arcWidth),
+		initialValue = loadout.Bet,
+		weight = loadout.axes.Weight,
+		size = loadout.axes.Size,
+	})
+end
+
+-- Fire one ball for a manual launch: enforce the launch-delay cooldown, charge
+-- the bet, and respect the concurrency cap, then spawn. (Launches are manual now
+-- — the old per-batch clock was dropped in favor of a shrinkable launch delay.)
 local function launchFor(player: Player)
 	local userId = player.UserId
 	local upgrades = ProfileService.GetUpgrades(player)
@@ -74,20 +91,17 @@ local function launchFor(player: Player)
 	if CurrencyService.GetPoints(player) < loadout.Bet then return end  -- Can't afford launch
 	if BallService.GetLiveCount(userId) >= MAX_BALLS_PER_PLAYER then return end  -- Too many balls live
 
-	local arcWidth = ProfileStats.GetArcWidth(upgrades)
-	local weight = loadout.axes.Weight
-	local size = loadout.axes.Size
-
-	lastLaunch[player.UserId] = os.clock()
+	lastLaunch[userId] = os.clock()
 	CurrencyService.AddPoints(player, -loadout.Bet)
-	local phase = (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
-	BallService.Spawn(genSpawnPos(), {
-		ownerUserId = userId,
-		velocity = deriveLaunchVelocity(phase, arcWidth),
-		initialValue = loadout.Bet,
-		weight = weight,
-		size = size,
-	})
+	spawnBall(player)
+end
+
+-- Dev/test only: fire one ball immediately, bypassing the cooldown, the
+-- affordability check, the concurrency cap, and the bet charge. For measuring
+-- outcome distributions over many launches (DevService /test). Returns the ball
+-- so the caller can match it against ScoringService.BallScored.
+function BallLaunchService.LaunchTest(player: Player): BasePart
+	return spawnBall(player)
 end
 
 -- Client configures its bet (intent only); the server clamps and stores it on
