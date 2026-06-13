@@ -21,7 +21,7 @@ local BallLaunchService = {}
 
 -- Server-chosen trajectory constants. The client never touches these.
 local SPAWN_POS = Vector3.new(43.859, 190.14, 332.272)
-local BATCH_SECONDS = 5                         -- seconds per batch; server owns timing
+local BATCH_SECONDS = 3                         -- seconds per batch; server owns timing
 local MAX_BALLS_PER_PLAYER = 40                 -- concurrency ceiling (well above max N)
 
 -- Launcher geometry — TUNE to the actual ramp. BASE_LAUNCH_DIR is the "center"
@@ -33,6 +33,9 @@ local BASE_LAUNCH_DIR = Vector3.new(0, 0, -1)   -- down-ramp; align with real ge
 local LAUNCH_SPEED = 20                          -- studs/s initial speed
 local LAUNCH_SPEED_VARIATION = 0.2              -- Launch speed can vary by up to this portion
 local LAUNCH_DIR_VARIATION = math.rad(10)                -- Launch angle can vary by up to this angle
+
+-- Most recent launch from player with given user ID
+local lastLaunch: { [number]: number } = {}
 
 local function genLaunchSpeed(): number
 	local variation = LAUNCH_SPEED * LAUNCH_SPEED_VARIATION
@@ -66,6 +69,9 @@ local function launchBatchFor(player: Player)
 	local upgrades = ProfileService.GetUpgrades(player)
 	local loadout = ProfileService.GetLoadout(player)
 
+	if lastLaunch[userId] and os.clock() - lastLaunch[userId] < ProfileStats.GetLaunchDelay(upgrades) then return end  -- Launch too early
+	if CurrencyService.GetPoints(player) < loadout.Bet then return end  -- Can't afford launch
+
 	-- Trickle income, unconditional, once per batch (§1.2).
 	CurrencyService.AddPoints(player, ProfileStats.GetTrickle(upgrades), "Trickle")
 
@@ -81,6 +87,8 @@ local function launchBatchFor(player: Player)
 	local arcWidth = ProfileStats.GetArcWidth(upgrades)
 	local weight = loadout.axes.Weight
 	local size = loadout.axes.Size
+
+	lastLaunch[player.UserId] = os.clock()
 
 	for i = 0, n - 1 do
 		-- Re-check per ball: concurrency cap and affordability (a leaver/score
@@ -117,6 +125,7 @@ local function onRequest(player: Player, bet: number)
 		return -- reject NaN/negative/non-number; do not trust the client
 	end
 	ProfileService.SetBet(player, bet)
+	launchBatchFor(player)
 end
 
 function BallLaunchService.Init()
@@ -125,14 +134,14 @@ function BallLaunchService.Init()
 	-- Server-authoritative batch clock: every BATCH_SECONDS, kick off each
 	-- player's batch in its own thread so their staggered launches run in
 	-- parallel and never block the clock.
-	task.spawn(function()
-		while true do
-			task.wait(BATCH_SECONDS)
-			for _, player in Players:GetPlayers() do
-				task.spawn(launchBatchFor, player)
-			end
-		end
-	end)
+	-- task.spawn(function()
+	-- 	while true do
+	-- 		task.wait(BATCH_SECONDS)
+	-- 		for _, player in Players:GetPlayers() do
+	-- 			task.spawn(launchBatchFor, player)
+	-- 		end
+	-- 	end
+	-- end)
 end
 
 return BallLaunchService

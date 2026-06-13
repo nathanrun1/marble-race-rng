@@ -47,9 +47,15 @@ end
 
 -- Cap on ball count N unlocked at the current frequency tier (§3 axis A). The
 -- ceiling, not the chosen N (that is loadout.BallCount, ≤ this).
-function ProfileStats.GetBallCountCap(upgrades: Upgrades): number
-	local caps = Config.Upgrades.Frequency.Caps
-	return caps[math.clamp(tier(upgrades, "Frequency") + 1, 1, #caps)]
+-- function ProfileStats.GetBallCountCap(upgrades: Upgrades): number
+-- 	local caps = Config.Upgrades.Frequency.Caps
+-- 	return caps[math.clamp(tier(upgrades, "Frequency") + 1, 1, #caps)]
+-- end
+
+-- Delay between ball launches
+function ProfileStats.GetLaunchDelay(upgrades: Upgrades): number
+	local values = Config.Upgrades.Frequency.Caps
+	return values[math.clamp(tier(upgrades, "Frequency") + 1, 1, #values)]
 end
 
 -- Max launcher swivel (radians) at the current arc tier (§3 axis C). The launch
@@ -62,7 +68,7 @@ end
 -- Sensitivity to accumulated peg heat (§1.5, simplified). 0 at tier 0 (heat does
 -- nothing); banked payout is scaled by (1 + accumulatedHeat * this).
 function ProfileStats.GetPegHeatFactor(upgrades: Upgrades): number
-	return Config.Upgrades.PegHeat.PerTier * tier(upgrades, "PegHeat") * 3.0
+	return Config.Upgrades.PegHeat.PerTier * tier(upgrades, "PegHeat")
 end
 
 -- [Min,Max] a continuous axis (Weight, Size, ...) may move within, from its tier.

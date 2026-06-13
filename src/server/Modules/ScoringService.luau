@@ -17,10 +17,13 @@ local Config = require(RS.Shared.Config)
 local ProfileStats = require(RS.Shared.ProfileStats)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local BallService = require(SSS.Scripts.Modules.BallService)
-local BallEffects = require(SSS.Scripts.Modules.BallEffects)
+local BallEffects = require(RS.Shared.BallEffects)
+local ScoreUI = require(RS.Shared.ScoreUI)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 
 local ScoringService = {}
+
+local MIN_HEAT_ACCUM = -0.75
 
 -- hitRecord[ball][target] = os.clock() of last credited hit; per-pair debounce.
 local hitRecord: { [BasePart]: { [Instance]: number } } = {}
@@ -30,6 +33,11 @@ local hitRecord: { [BasePart]: { [Instance]: number } } = {}
 -- tier only scales how much it matters, applied once at banking. Kept separate
 -- from ball value so it never feeds the (future) jackpot gate.
 local heatAccum: { [BasePart]: number } = {}
+
+-- bounceCount[ball] = number of scoring hits this ball has credited. Used for
+-- the combo system: at banking, combo * flatPerBounce is awarded when count >=
+-- Config.Scoring.MinCombo.
+local bounceCount: { [BasePart]: number } = {}
 
 local overlapParams = OverlapParams.new()
 
@@ -61,7 +69,18 @@ local function resolveHit(ball: BasePart, target: Instance)
 	if newValue and popupLabel then
 		BallService.SetBallValue(ball, newValue)
 		BallEffects.SetValueUI(ball, newValue)
-		BallEffects.ShowValuePopup(ball, popupLabel)
+		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, popupLabel)
+	end
+
+	if target:HasTag(Config.Tags.BounceTarget) then
+		bounceCount[ball] = (bounceCount[ball] or 0) + 1
+		print("combo: "..bounceCount[ball])
+		local combo = bounceCount[ball]
+		local flatRate = ProfileStats.GetFlatPerBounce(ProfileService.GetUpgrades(player))
+		print("flat rate: " .. flatRate)
+		if flatRate > 0 then
+			BallEffects.DoClientEffect(player, "ShowComboPopup", ball, ball.CFrame, combo)
+		end
 	end
 
 	-- Peg heat: accumulate this peg's signed heat onto the ball. Always recorded
@@ -70,22 +89,52 @@ local function resolveHit(ball: BasePart, target: Instance)
 	if pegHeat then
 		local heatFactor: number = ProfileStats.GetPegHeatFactor(ProfileService.GetUpgrades(player))
 		local heatDelta = pegHeat * heatFactor
-		heatAccum[ball] = (heatAccum[ball] or 0) + heatDelta
-		BallEffects.ApplyHeat(ball, heatAccum[ball])
-		BallEffects.ShowHeatPopup(ball, heatDelta)
+		heatAccum[ball] = math.max((heatAccum[ball] or 0) + heatDelta, 0)
+		if heatFactor ~= 0 then
+			BallEffects.ApplyHeat(ball, heatAccum[ball] / heatFactor)  -- Normalize by heat factor for cosmetic
+		end
+		BallEffects.DoClientEffect(player, "ShowHeatPopup", ball, heatDelta)
 	end
 
-	if (target:HasTag(Config.Tags.DestroyTarget)) then
-		-- Apply accumulated heat as a value-proportional multiplier on the final
-		-- payout, scaled by the player's PegHeat tier. Read H BEFORE Despawn,
-		-- which clears heatAccum via onBallDespawn. Clamp ≥ 0 so a cold path
-		-- can zero the payout but never go negative.
+	if target:HasTag(Config.Tags.DestroyTarget) then
+		-- Read state BEFORE Despawn clears heatAccum/bounceCount.
+		local upgrades = ProfileService.GetUpgrades(player)
 		local base: number = newValue or curValue
-		local H: number = heatAccum[ball] or 0
-		local banked: number = base * math.max(0, 1 + H)
+		local H: number = math.max(heatAccum[ball] or 0, MIN_HEAT_ACCUM)
+		local heatPayout: number = base * math.max(0, 1 + H)
+		local heatEffect: number = heatPayout - base
+
+		local combo = bounceCount[ball] or 0
+		local comboBonus = 0
+		if combo >= Config.Scoring.MinCombo then
+			comboBonus = combo * ProfileStats.GetFlatPerBounce(upgrades)
+		end
+		local banked = heatPayout + comboBonus
+
+		local baseAdditive = ProfileStats.GetBaseAdditive(upgrades) * banked
+		banked += baseAdditive
+
+		ScoreUI.PostMessage(player, "Ball scored! $" .. math.floor(base), Color3.new(1, 1, 1))
+		if math.abs(heatEffect) >= 0.5 then
+			if heatEffect > 0 then
+				ScoreUI.PostMessage(player,
+					string.format("Heat Bonus! %s$%d", if heatEffect >= 0 then "+" else "-", math.floor(math.abs(heatEffect))),
+					Color3.fromRGB(255, 140, 0))
+			else
+				ScoreUI.PostMessage(player,
+					string.format("Cold Penalty: %s$%d", if heatEffect >= 0 then "+" else "-", math.floor(math.abs(heatEffect))),
+					Color3.fromRGB(80, 160, 255))
+			end
+		end
+		if comboBonus > 0 then
+			ScoreUI.PostMessage(player, "Combo! +$" .. math.floor(comboBonus) .. " ("..combo..")", Color3.fromRGB(255, 60, 60))
+		end
+		if baseAdditive > 0 then
+			ScoreUI.PostMessage(player, "Additive Bonus! +$" .. math.floor(baseAdditive), Color3.fromRGB(98, 37, 209))
+		end
 
 		BallService.Despawn(ball)
-		CurrencyService.AddPoints(player, banked, "Ball destroyed at target: "..target.Name)
+		CurrencyService.AddPoints(player, banked, "Ball destroyed at target: " .. target.Name)
 	end
 end
 
@@ -126,11 +175,13 @@ local function onBallSpawn(ball: BasePart)
 	BallEffects.SetValueUI(ball, BallService.GetBallValue(ball))
 	hitRecord[ball] = {}
 	heatAccum[ball] = 0
+	bounceCount[ball] = 0
 end
 
 local function onBallDespawn(ball: BasePart)
 	hitRecord[ball] = nil
 	heatAccum[ball] = nil
+	bounceCount[ball] = nil
 end
 
 function ScoringService.Init()

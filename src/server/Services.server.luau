@@ -1,13 +1,16 @@
 local SSS = game:GetService('ServerScriptService')
+local RS = game:GetService("ReplicatedStorage")
 
 local ScoringService = require(SSS.Scripts.Modules.ScoringService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local BallService = require(SSS.Scripts.Modules.BallService)
+local CollisionService = require(SSS.Scripts.Modules.CollisionService)
 local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PegService = require(SSS.Scripts.Modules.PegService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
-local BallEffects = require(SSS.Scripts.Modules.BallEffects)
+local BallEffects = require(RS.Shared.BallEffects)
+local ScoreUI = require(RS.Shared.ScoreUI)
 local DevService = require(SSS.Scripts.Modules.DevService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
@@ -25,4 +28,8 @@ BallService.Init()
 -- BallEffects before launches start: it self-connects to BallSpawned to paint
 -- each ball from its owner's profile.
 BallEffects.Init()
+ScoreUI.Init()
+-- CollisionService before launches start: it self-connects to BallSpawned to put
+-- each ball in the right gate-collision group from its first frame.
+CollisionService.Init()
 BallLaunchService.Init()

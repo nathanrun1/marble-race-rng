@@ -20,6 +20,8 @@ local BallService = {}
 BallService.BallSpawned = Signal.new()
 -- (ball: BasePart), fired when ball is despawned
 BallService.BallDespawned = Signal.new()
+-- (ball: BasePart, newValue: number), fired when ball's value changes
+BallService.BallValueChanged = Signal.new()
 
 local liveBalls: { [BasePart]: true } = {}    -- ballInstance: true
 local ballValue: { [BasePart]: number } = {} -- ballInstance: value
@@ -131,6 +133,7 @@ function BallService.SetBallValue(ball: BasePart, value: number): number
 		return 0
 	end
 	ballValue[ball] = value
+	BallService.BallValueChanged:Fire(ball, value)
 	return value
 end
 

@@ -1,0 +1,241 @@
+--!strict
+-- Shared ball-effects module. Required by both server and client.
+--
+-- Everything that only touches BasePart / Config / TweenService lives at module
+-- scope and is callable from either context. Two small server-only blocks handle
+-- the parts that genuinely need server dependencies:
+--   * Lifecycle (BallSpawned/Despawned) — needs BallService + ProfileService.
+--   * DoClientEffect — needs a RemoteEvent that only the server should create.
+-- One client-only block wires up the receiving end of that RemoteEvent.
+
+local RunService = game:GetService("RunService")
+local RS = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+local Config = require(RS.Shared.Config)
+
+local BallEffects = {}
+
+----------------------------------------------------------------------------------
+-- Constants
+----------------------------------------------------------------------------------
+local DEFAULT_BASE_COLOR = Color3.fromRGB(163, 163, 163)
+local DEFAULT_MATERIAL   = Enum.Material.Plastic
+local HEAVY_AT           = 0.66
+local LIGHT_AT           = 0.34
+local LIGHT_TRANSPARENCY = 0.45
+local FREQ_PARTICLE_AT   = 4
+local HEAT_NEON_AT       = 1
+local HEAT_FIRE_AT       = 2
+local HEAT_COLD_AT       = -0.5
+local COLD_MATERIAL      = Enum.Material.Slate
+local BRIGHTNESS_PER_HEAT        = 0.08
+local MIN_BRIGHTNESS, MAX_BRIGHTNESS = 0.35, 2.0
+local FREQ_EMITTER_NAME  = "FreqParticles"
+local FIRE_NAME          = "HeatFire"
+local POPUP_TWEEN        = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
+local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
+local HEAT_COLOR_POS     = Color3.fromRGB(255, 140, 0)
+local HEAT_COLOR_NEG     = Color3.fromRGB(80, 160, 255)
+local MIN_COMBO_TO_SHOW  = 6
+
+-- Per-ball base color resolved at spawn (server-populated; client reads default).
+local baseColors: { [BasePart]: Color3 } = {}
+
+----------------------------------------------------------------------------------
+-- Internal helpers
+----------------------------------------------------------------------------------
+local function applyTransparency(ball: BasePart, weight: number)
+	ball.Transparency = if weight <= LIGHT_AT then LIGHT_TRANSPARENCY else 0
+end
+
+local function applyFreqParticles(ball: BasePart, n: number)
+	local existing = ball:FindFirstChild(FREQ_EMITTER_NAME)
+	if n >= FREQ_PARTICLE_AT then
+		if not existing then
+			local p = Instance.new("ParticleEmitter")
+			p.Name = FREQ_EMITTER_NAME
+			p.Color = ColorSequence.new(Color3.new(1, 1, 1))
+			p.Lifetime = NumberRange.new(0.4, 0.7)
+			p.Rate = 25
+			p.Speed = NumberRange.new(1, 2)
+			p.Size = NumberSequence.new(0.3, 0)
+			p.Transparency = NumberSequence.new(0.2, 1)
+			p.Parent = ball
+		end
+	elseif existing then
+		existing:Destroy()
+	end
+end
+
+local function applyHeatParticles(ball: BasePart, heat: number)
+	local fire = ball:FindFirstChild(FIRE_NAME)
+	if heat >= HEAT_FIRE_AT then
+		if not fire then
+			local f = Instance.new("Fire")
+			f.Name = FIRE_NAME
+			f.Heat = 10
+			f.Size = 5
+			f.Parent = ball
+		end
+	elseif fire then
+		fire:Destroy()
+	end
+end
+
+local function applyColor(ball: BasePart, base: Color3, heat: number)
+	local b = math.clamp(1 + heat * BRIGHTNESS_PER_HEAT, MIN_BRIGHTNESS, MAX_BRIGHTNESS)
+	ball.Color = Color3.new(
+		math.clamp(base.R * b, 0, 1),
+		math.clamp(base.G * b, 0, 1),
+		math.clamp(base.B * b, 0, 1)
+	)
+end
+
+local function applyMaterial(ball: BasePart, weight: number, heat: number)
+	if heat <= HEAT_COLD_AT then
+		ball.Material = COLD_MATERIAL
+	elseif heat >= HEAT_NEON_AT then
+		ball.Material = Enum.Material.Neon
+	elseif weight >= HEAVY_AT then
+		ball.Material = Enum.Material.Metal
+	else
+		ball.Material = DEFAULT_MATERIAL
+	end
+end
+
+----------------------------------------------------------------------------------
+-- Public API (both contexts)
+----------------------------------------------------------------------------------
+function BallEffects.ApplyHeat(ball: BasePart, heat: number)
+	if not ball.Parent then return end
+	local base = baseColors[ball] or DEFAULT_BASE_COLOR
+	local weight = (ball:GetAttribute(Config.Attributes.Weight) :: number?) or 0.5
+	applyColor(ball, base, heat)
+	applyMaterial(ball, weight, heat)
+	applyHeatParticles(ball, heat)
+end
+
+function BallEffects.SetValueUI(ball: BasePart, value: number)
+	local textLabel: TextLabel = (ball:FindFirstChild("ValueUI") :: Instance):FindFirstChild("TextLabel") :: TextLabel
+	textLabel.Text = tostring(value)
+end
+
+function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: string, color: Color3?)
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.new(0.05, 0.05, 0.05)
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.CFrame = cframe
+	anchor.Parent = workspace
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0, 100, 0, 50)
+	billboard.StudsOffset = POPUP_OFFSET_START
+	billboard.AlwaysOnTop = true
+	billboard.Parent = anchor
+
+	local text = Instance.new("TextLabel")
+	text.Size = UDim2.new(1, 0, 1, 0)
+	text.BackgroundTransparency = 1
+	text.Text = label
+	text.TextColor3 = color or Color3.new(1, 1, 1)
+	text.TextStrokeColor3 = Color3.new(0, 0, 0)
+	text.TextStrokeTransparency = 0.4
+	text.TextScaled = true
+	text.Font = Enum.Font.GothamBold
+	text.Parent = billboard
+
+	local t1 = TweenService:Create(billboard, POPUP_TWEEN, { StudsOffset = POPUP_OFFSET_END })
+	local t2 = TweenService:Create(text, POPUP_TWEEN, {
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+	})
+	t1:Play()
+	t2:Play()
+	t2.Completed:Connect(function()
+		anchor:Destroy()
+	end)
+end
+
+local COMBO_COLOR_NORMAL = Color3.new(1, 1, 1)
+local COMBO_COLOR_HOT    = Color3.fromRGB(255, 60, 60)
+
+function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: number)
+	if combo < MIN_COMBO_TO_SHOW then return end
+	if combo < Config.Scoring.MinCombo then
+		BallEffects.ShowValuePopup(ball, cframe, "BOUNCE x" .. combo, COMBO_COLOR_NORMAL)
+	else
+		BallEffects.ShowValuePopup(ball, cframe, "COMBO! x" .. combo, COMBO_COLOR_HOT)
+	end
+	
+end
+
+function BallEffects.ShowHeatPopup(ball: BasePart?, heatDelta: number)
+	if heatDelta == 0 or not ball or not ball.Parent then return end
+	local label = string.format("%+.1f", heatDelta)
+	local color = if heatDelta > 0 then HEAT_COLOR_POS else HEAT_COLOR_NEG
+	BallEffects.ShowValuePopup(ball, ball.CFrame, label, color)
+end
+
+----------------------------------------------------------------------------------
+-- Server-only: lifecycle + client dispatch
+----------------------------------------------------------------------------------
+if RunService:IsServer() then
+	local Players = game:GetService("Players")
+	local SSS = game:GetService("ServerScriptService")
+	local ProfileService = require(SSS.Scripts.Modules.ProfileService)
+	local BallService = require(SSS.Scripts.Modules.BallService)
+
+	local effectRemote: RemoteEvent? = nil
+
+	-- Fires a named effect function on the given player's client for a specific
+	-- ball. The client Init listener calls BallEffects[effect](ball, ...).
+	function BallEffects.DoClientEffect(player: Player, effect: string, ball: BasePart, ...: any)
+		(effectRemote :: RemoteEvent):FireClient(player, effect, ball, ...)
+	end
+
+	local function onBallSpawn(ball: BasePart)
+		local ownerId = ball:GetAttribute(Config.Attributes.OwnerUserId) :: number?
+		local player = if ownerId then Players:GetPlayerByUserId(ownerId) else nil
+		baseColors[ball] = if player then DEFAULT_BASE_COLOR else DEFAULT_BASE_COLOR
+		local weight = (ball:GetAttribute(Config.Attributes.Weight) :: number?) or 0.5
+		applyTransparency(ball, weight)
+		local n = if player then ProfileService.GetLoadout(player).BallCount else 1
+		applyFreqParticles(ball, n)
+		BallEffects.ApplyHeat(ball, 0)
+	end
+
+	local function onBallDespawn(ball: BasePart)
+		baseColors[ball] = nil
+	end
+
+	function BallEffects.Init()
+		local re = Instance.new("RemoteEvent")
+		re.Name = "BallEffect"
+		re.Parent = RS.Remote
+		effectRemote = re
+
+		BallService.BallSpawned:Connect(onBallSpawn)
+		BallService.BallDespawned:Connect(onBallDespawn)
+	end
+end
+
+----------------------------------------------------------------------------------
+-- Client-only: receive and dispatch effect calls from server
+----------------------------------------------------------------------------------
+if RunService:IsClient() then
+	function BallEffects.Init()
+		local remote = RS.Remote:WaitForChild("BallEffect") :: RemoteEvent
+		remote.OnClientEvent:Connect(function(effect: string, ball: BasePart?, ...: any)
+			local fn = (BallEffects :: any)[effect]
+			if fn then fn(ball, ...) end
+		end)
+	end
+end
+
+return BallEffects

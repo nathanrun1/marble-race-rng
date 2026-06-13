@@ -5,6 +5,7 @@ local Config = {}
 Config.Tags = {
 	ScoreTarget = "ScoreTarget",       -- Scores on ball collision
 	DestroyTarget = "DestroyTarget",   -- Destroys ball on collision
+	BounceTarget = "BounceTarget",      -- Counts towards bounce combo
 	Ball = "Ball"
 }
 
@@ -25,6 +26,7 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
+	MinCombo = 11
 }
 
 Config.Currency = {
@@ -66,7 +68,7 @@ Config.Upgrades = {
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	FlatRate = {
-		Base = 0.5, PerTier = 2,
+		Base = 5, PerTier = 2,
 		Cost = { Base = 150, Growth = 2.0 },
 		Name = "Flat Rate", Desc = "More points per peg bounce.",
 		Icon = "⚡"
@@ -74,15 +76,15 @@ Config.Upgrades = {
 	-- baseAdditive = PerTier * tier  (additive)         [output-scaling]
 	BaseAdditive = {
 		PerTier = 0.05,  -- INFERRED: guideline gives no exact per-tier %
-		Cost = { Base = 200, Growth = 2.2 },
+		Cost = { Base = 200, Growth = 2.0 },
 		Name = "Base Bonus", Desc = "Boost your final slot payout.",
 		Icon = "➕"
 	},
 	-- max ball count N at each frequency tier (§3 axis A) [cap for loadout.BallCount]
 	Frequency = {
-		Caps = { 2, 3, 4, 6, 8, 12, 16 },
-		Cost = { Base = 500, Growth = 2 },
-		Name = "Frequency", Desc = "Launch more balls per batch.",
+		Caps = { 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.25 },
+		Cost = { Base = 500, Growth = 4.0 },
+		Name = "Launch Delay", Desc = "Decrease time between launches",
 		Icon = "🔄"
 	},
 	-- max launcher swivel (radians) at each tier (§3 axis C) [scales launch direction].
@@ -90,7 +92,7 @@ Config.Upgrades = {
 	-- the reachable sweep toward the edges. Phase 0..1 selects within ±width.
 	Arc = {
 		Widths = { math.rad(15), math.rad(30), math.rad(45), math.rad(60) },
-		Cost = { Base = 400, Growth = 3 },
+		Cost = { Base = 400, Growth = 40 },
 		Name = "Launcher Arc", Desc = "Widen your aiming sweep.",
 		Icon = "🎯"
 	},
@@ -99,7 +101,7 @@ Config.Upgrades = {
 	-- (and random cold paths cost more). Targeting channel; only pays with aim.
 	PegHeat = {
 		PerTier = 0.5,  -- INFERRED magnitude; tune against the heat map
-		Cost = { Base = 250, Growth = 2.2 },
+		Cost = { Base = 500, Growth = 2.0 },
 		Name = "Peg Sense", Desc = "Hot and cold pegs affect you more strongly.",
 		Icon = "🔥"
 	},
@@ -133,7 +135,7 @@ Config.Axes = {
 			{ Min = 0.25, Max = 0.75 },  -- tier 1: partial
 			{ Min = 0.0, Max = 1.0 },    -- tier 2: full heavy↔light
 		},
-		Cost = { Base = 300, Growth = 2.5 },
+		Cost = { Base = 1000, Growth = 12 },
 		Name = "Ball Weight", Desc = "Unlock heavier and lighter balls.",
 		Icon = "⚖️"
 	},
@@ -141,10 +143,10 @@ Config.Axes = {
 		Default = 1.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
 		Ranges = {
 			{ Min = 1.0, Max = 1.0 },   -- tier 0: locked at full
-			{ Min = 0.75, Max = 1.0 },  -- tier 1
-			{ Min = 0.5, Max = 1.0 },   -- tier 2
+			{ Min = 0.75, Max = 1.25 },  -- tier 1
+			{ Min = 0.5, Max = 1.5 },   -- tier 2
 		},
-		Cost = { Base = 300, Growth = 2.5 },
+		Cost = { Base = 1000, Growth = 12 },
 		Name = "Ball Size", Desc = "Unlock smaller balls.",
 		Icon = "◯"
 	},
@@ -154,7 +156,7 @@ Config.Axes = {
 -- Continuous-axis positions (Weight, Size, ...) are not listed here — they
 -- default to Config.Axes[name].Default, so axes have one definition site.
 Config.LoadoutDefaults = {
-	Bet = 1,           -- total bet B; player sets via UI
+	Bet = 10,           -- total bet B; player sets via UI
 	BallCount = 1,     -- N
 	LaunchPhase = 0.5, -- center of arc (no upgrade gate yet; Launcher Arc later)
 }
