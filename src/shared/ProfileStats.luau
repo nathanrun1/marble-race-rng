@@ -81,6 +81,8 @@ end
 
 -- Trickle income this batch (§1.2), scaled to current ceiling.
 function ProfileStats.GetTrickle(upgrades: Upgrades): number
+	print("trickle: "..Config.Economy.TrickleFraction * ProfileStats.GetMaxBet(upgrades))
+	print(Config.Economy.TrickleFraction)
 	return Config.Economy.TrickleFraction * ProfileStats.GetMaxBet(upgrades)
 end
 

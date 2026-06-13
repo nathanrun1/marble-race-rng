@@ -119,6 +119,7 @@ local function resolveHit(ball: BasePart, target: Instance)
 
 		local baseAdditive = ProfileStats.GetBaseAdditive(upgrades) * banked
 		banked += baseAdditive
+		banked += ProfileStats.GetTrickle(upgrades)
 
 		ScoreUI.PostMessage(player, "Ball scored! $" .. math.floor(base), Color3.new(1, 1, 1))
 		if math.abs(heatEffect) >= 0.5 then

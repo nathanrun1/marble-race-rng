@@ -184,8 +184,8 @@ function BallEffects.ShowHeatPopup(ball: BasePart?, heatDelta: number)
 end
 
 local HIGH_POINT_PARTICLE_COUNT = 40
-local HIGH_POINT_EMIT_TIME      = 0.1  -- window the emitter runs to lay down the burst
-local HIGH_POINT_MAX_LIFETIME   = 1.1
+local HIGH_POINT_EMIT_TIME      = 0.4  -- window the emitter runs to lay down the burst
+local HIGH_POINT_MAX_LIFETIME   = 1.5
 
 -- Burst of white particles thrown upward from the ball. Marks a high-point hit.
 -- Meant to be invoked server-side (the emitter replicates to every client), so no
@@ -207,15 +207,16 @@ function BallEffects.ShowHighPointFX(ball: BasePart?)
 	anchor.CanQuery = false
 	anchor.CanTouch = false
 	anchor.Transparency = 1
-	anchor.CFrame = ball.CFrame
+	anchor.CFrame = CFrame.new(ball.CFrame.Position)
 	anchor.Parent = workspace
 
 	local emitter = Instance.new("ParticleEmitter")
+	emitter.Brightness = 4
 	emitter.Color = ColorSequence.new(Color3.new(1, 1, 1))
-	emitter.Lifetime = NumberRange.new(0.6, HIGH_POINT_MAX_LIFETIME)
-	emitter.Speed = NumberRange.new(14, 22)
+	emitter.Lifetime = NumberRange.new(1.0, HIGH_POINT_MAX_LIFETIME)
+	emitter.Speed = NumberRange.new(22, 30)
 	emitter.SpreadAngle = Vector2.new(18, 18)
-	emitter.Size = NumberSequence.new(0.45, 0)
+	emitter.Size = NumberSequence.new(1.0, 0)
 	emitter.Transparency = NumberSequence.new(0.05, 1)
 	emitter.EmissionDirection = Enum.NormalId.Top
 	emitter.Acceleration = Vector3.new(0, 18, 0)
@@ -228,7 +229,7 @@ function BallEffects.ShowHighPointFX(ball: BasePart?)
 	task.delay(HIGH_POINT_EMIT_TIME, function()
 		emitter.Enabled = false
 	end)
-	--Debris:AddItem(anchor, HIGH_POINT_EMIT_TIME + HIGH_POINT_MAX_LIFETIME + 0.2)
+	Debris:AddItem(anchor, HIGH_POINT_EMIT_TIME + HIGH_POINT_MAX_LIFETIME + 0.2)
 end
 
 ----------------------------------------------------------------------------------

@@ -59,7 +59,7 @@ if RunService:IsClient() then
 		label.TextStrokeTransparency = 1
 		label.TextTransparency = 1
 		label.TextScaled = false
-		label.TextSize = 15
+		label.TextSize = 25
 		label.Font = Enum.Font.GothamBold
 		label.TextXAlignment = Enum.TextXAlignment.Right
 		label.Parent = frame

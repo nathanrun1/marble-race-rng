@@ -74,15 +74,12 @@ local function launchFor(player: Player)
 	if CurrencyService.GetPoints(player) < loadout.Bet then return end  -- Can't afford launch
 	if BallService.GetLiveCount(userId) >= MAX_BALLS_PER_PLAYER then return end  -- Too many balls live
 
-	-- Trickle income, unconditional, once per batch (§1.2).
-	CurrencyService.AddPoints(player, ProfileStats.GetTrickle(upgrades), "Trickle")
-
 	local arcWidth = ProfileStats.GetArcWidth(upgrades)
 	local weight = loadout.axes.Weight
 	local size = loadout.axes.Size
 
 	lastLaunch[player.UserId] = os.clock()
-	CurrencyService.AddPoints(player, loadout.Bet)
+	CurrencyService.AddPoints(player, -loadout.Bet)
 	local phase = (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
 	BallService.Spawn(genSpawnPos(), {
 		ownerUserId = userId,

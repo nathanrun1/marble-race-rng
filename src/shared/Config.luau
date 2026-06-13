@@ -32,7 +32,7 @@ Config.Scoring = {
 }
 
 Config.Currency = {
-	StartingBalance = 150,  -- NOTE: debug value; guideline §4 StartBank = 150
+	StartingBalance = 100,
 }
 
 Config.Economy = {
@@ -70,9 +70,9 @@ Config.Upgrades = {
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	FlatRate = {
-		Base = 5, PerTier = 2,
+		Base = 2.5, PerTier = 2,
 		Cost = { Base = 150, Growth = 2.0 },
-		Name = "Flat Rate", Desc = "More points per peg bounce.",
+		Name = "Combo", Desc = "More points per bounce during a combo.",
 		Icon = "⚡"
 	},
 	-- baseAdditive = PerTier * tier  (additive)         [output-scaling]
