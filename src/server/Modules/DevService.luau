@@ -41,7 +41,7 @@ local MAX_TIER = 5    -- /maxall and presets set every track to this (caps self-
 local BIG_BET = 1e9   -- SetBet clamps this down to the player's current max bet
 
 -- /test tuning.
-local TEST_INTERVAL = 0.15   -- default seconds between launches; spaced so balls don't pile up
+local TEST_INTERVAL = 0.02   -- default seconds between launches; spaced so balls don't pile up
 local TEST_TIMEOUT = 45      -- max seconds to wait for stragglers after the last launch
 local TEST_MAX_BALLS = 1000  -- hard cap on n, so a typo can't spawn forever
 

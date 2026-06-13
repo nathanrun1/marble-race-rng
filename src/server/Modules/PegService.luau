@@ -28,10 +28,10 @@ local CATEGORIES: { [string]: Category } = {
 
 -- Band thresholds on nd (0 = field edge .. 1 = center) and the category weights
 -- per band. Tunable; each band has a dominant category plus spillover for mixing.
-local EDGE_BAND, HOT_BAND, COLD_BAND = 0.12, 0.40, 0.68
-local HOT_WEIGHTS    = { Hot = 0.70, Cold = 0.15, Normal = 0.15 }
-local COLD_WEIGHTS   = { Cold = 0.70, Hot = 0.15, Normal = 0.15 }
-local CENTER_WEIGHTS = { Normal = 0.70, Hot = 0.15, Cold = 0.15 }
+local EDGE_BAND, HOT_BAND, COLD_BAND = 0.12, 0.70, 0.90
+local HOT_WEIGHTS    = { Hot = 0.80, Cold = 0.1, Normal = 0.1 }
+local COLD_WEIGHTS   = { Cold = 0.60, Hot = 0.10, Normal = 0.30 }
+local CENTER_WEIGHTS = { Normal = 0.70, Hot = 0.20, Cold = 0.10 }
 
 local pegs: { BasePart } = {}
 local minX, maxX = 0, 0
@@ -55,7 +55,7 @@ end
 -- nd: 0 at the field edge, 1 at the center.
 local function pickCategory(nd: number): string
 	if nd < EDGE_BAND then
-		return if math.random() < 0.5 then "Hot" else "Cold"
+		return if math.random() < 0.7 then "Hot" else "Cold"
 	elseif nd < HOT_BAND then
 		return weightedPick(HOT_WEIGHTS)
 	elseif nd < COLD_BAND then

@@ -26,9 +26,12 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 11,
+	MinCombo = 20,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
-	SpecialFXMinMultiplier = 0.25, -- temp value 
+	SpecialFXMinMultiplier = 0.25, -- temp value
+	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
+	-- (a ball wedged on geometry must not live forever). Tune above a normal fall.
+	MaxBallLifetime = 25,
 }
 
 Config.Currency = {
@@ -70,7 +73,7 @@ Config.Upgrades = {
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	FlatRate = {
-		Base = 2.5, PerTier = 2,
+		Base = 1, PerTier = 2,
 		Cost = { Base = 150, Growth = 2.0 },
 		Name = "Combo", Desc = "More points per bounce during a combo.",
 		Icon = "⚡"
@@ -130,23 +133,23 @@ type AxisDef = {
 	Icon: string?
 }
 Config.Axes = {
-	Weight = {
-		Default = 0.5,  -- 0 = light, 1 = heavy
+	Elasticity = {
+		Default = 0.5,  -- 0 = low elasticity, 1 = high elasticity
 		Ranges = {
 			{ Min = 0.5, Max = 0.5 },    -- tier 0: locked at center
 			{ Min = 0.25, Max = 0.75 },  -- tier 1: partial
 			{ Min = 0.0, Max = 1.0 },    -- tier 2: full heavy↔light
 		},
 		Cost = { Base = 1000, Growth = 12 },
-		Name = "Ball Weight", Desc = "Unlock heavier and lighter balls.",
-		Icon = "⚖️"
+		Name = "Bounciness", Desc = "How bouncy the ball is. More bounciness increases variance.",
+		Icon = "💨"
 	},
 	Size = {
 		Default = 1.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
 		Ranges = {
 			{ Min = 1.0, Max = 1.0 },   -- tier 0: locked at full
-			{ Min = 0.75, Max = 1.25 },  -- tier 1
-			{ Min = 0.5, Max = 1.5 },   -- tier 2
+			{ Min = 0.75, Max = 1.0 },  -- tier 1
+			{ Min = 0.5, Max = 1.0 },   -- tier 2
 		},
 		Cost = { Base = 1000, Growth = 12 },
 		Name = "Ball Size", Desc = "Unlock smaller balls.",

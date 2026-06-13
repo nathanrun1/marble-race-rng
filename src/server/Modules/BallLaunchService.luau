@@ -74,7 +74,7 @@ local function spawnBall(player: Player): BasePart
 		ownerUserId = player.UserId,
 		velocity = deriveLaunchVelocity(phase, arcWidth),
 		initialValue = loadout.Bet,
-		weight = loadout.axes.Weight,
+		weight = 1 - loadout.axes.Elasticity,
 		size = loadout.axes.Size,
 	})
 end

@@ -30,9 +30,9 @@ local ownerCounts: { [number]: number } = {}
 -- Weight slider (0 light .. 1 heavy) → physics. Heavy = denser and less elastic
 -- (fewer, deader bounces); light = less dense and bouncier. Linear map between
 -- these endpoints; tune to taste. Friction held constant for now.
-local LIGHT_DENSITY, HEAVY_DENSITY = 0.7, 8
+local LIGHT_DENSITY, HEAVY_DENSITY = 5, 11
 local LIGHT_ELASTICITY, HEAVY_ELASTICITY = 0.8, 0.15
-local BALL_FRICTION = 0.3
+local BALL_FRICTION = 0.6
 
 export type SpawnOptions = {
 	ownerUserId: number?,  -- credited by ScoringService; nil = unowned/no score
