@@ -105,7 +105,7 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 	elseif track == "BaseAdditive" then
 		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
 	elseif track == "Frequency" then
-		return tostring(ProfileStats.GetBallCountCap(u))
+		return tostring(ProfileStats.GetLaunchDelay(u)).."s"
 	elseif track == "Arc" then
 		return math.round(math.deg(ProfileStats.GetArcWidth(u))) .. "°"
 	elseif track == "PegHeat" then

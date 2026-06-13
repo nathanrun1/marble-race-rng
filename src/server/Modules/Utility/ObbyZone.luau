@@ -53,7 +53,6 @@ function ObbyZone.New(obby: Model)
 		if not player then
 			return
 		end
-		print("dead")
 		tpPlayerToPart(player, self.startPart)
 	end))
 

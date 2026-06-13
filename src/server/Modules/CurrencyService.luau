@@ -47,7 +47,6 @@ end
 
 
 local function _onPlayerAdded(player: Player)
-	print("player added")
 	balances[player.UserId] = Config.Currency.StartingBalance
 	CurrencyService.Changed:Fire(player, Config.Currency.StartingBalance, 0, "Initial")
 	BalanceChangedRE:FireClient(player, Config.Currency.StartingBalance, 0, "Initial")

@@ -26,7 +26,9 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 11
+	MinCombo = 11,
+	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
+	SpecialFXMinMultiplier = 0.25, -- temp value 
 }
 
 Config.Currency = {
@@ -80,7 +82,7 @@ Config.Upgrades = {
 		Name = "Base Bonus", Desc = "Boost your final slot payout.",
 		Icon = "➕"
 	},
-	-- max ball count N at each frequency tier (§3 axis A) [cap for loadout.BallCount]
+	-- Minimum delay between launches
 	Frequency = {
 		Caps = { 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.25 },
 		Cost = { Base = 500, Growth = 4.0 },

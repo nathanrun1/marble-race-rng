@@ -39,7 +39,6 @@ export type Upgrades = { [string]: number }
 
 export type Loadout = {
 	Bet: number,
-	BallCount: number,
 	LaunchPhase: number,
 	axes: { [string]: number }, -- continuous synergetic axis positions (Weight, Size, ...)
 }
@@ -81,7 +80,6 @@ local function newProfile(): Profile
 		upgrades = upgrades,
 		loadout = {
 			Bet = d.Bet,
-			BallCount = d.BallCount,
 			LaunchPhase = d.LaunchPhase,
 			axes = axes,
 		},
@@ -165,15 +163,15 @@ function ProfileService.SetBet(player: Player, bet: number)
 	ProfileService.Changed:Fire(player, profile)
 end
 
--- Ball count N: 1 .. unlocked frequency cap.
-function ProfileService.SetBallCount(player: Player, n: number)
-	if type(n) ~= "number" or n ~= n then
-		return
-	end
-	local profile = get(player)
-	profile.loadout.BallCount = math.clamp(math.floor(n), 1, ProfileStats.GetBallCountCap(profile.upgrades))
-	ProfileService.Changed:Fire(player, profile)
-end
+-- -- Ball count N: 1 .. unlocked frequency cap.
+-- function ProfileService.SetBallCount(player: Player, n: number)
+-- 	if type(n) ~= "number" or n ~= n then
+-- 		return
+-- 	end
+-- 	local profile = get(player)
+-- 	profile.loadout.BallCount = math.clamp(math.floor(n), 1, ProfileStats.GetBallCountCap(profile.upgrades))
+-- 	ProfileService.Changed:Fire(player, profile)
+-- end
 
 -- Launch phase: 0 .. 1 (no upgrade gate yet; becomes an axis with Launcher Arc).
 function ProfileService.SetLaunchPhase(player: Player, phase: number)
@@ -205,7 +203,6 @@ end
 reclampLoadout = function(profile: Profile)
 	local upgrades = profile.upgrades
 	profile.loadout.Bet = math.clamp(profile.loadout.Bet, 0, ProfileStats.GetMaxBet(upgrades))
-	profile.loadout.BallCount = math.clamp(profile.loadout.BallCount, 1, ProfileStats.GetBallCountCap(upgrades))
 	for axis in Config.Axes do
 		local min, max = ProfileStats.GetAxisRange(upgrades, axis)
 		profile.loadout.axes[axis] = math.clamp(profile.loadout.axes[axis], min, max)

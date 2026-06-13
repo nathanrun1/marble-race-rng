@@ -23,6 +23,7 @@ local BallLaunchService = {}
 local SPAWN_POS = Vector3.new(43.859, 190.14, 332.272)
 local BATCH_SECONDS = 3                         -- seconds per batch; server owns timing
 local MAX_BALLS_PER_PLAYER = 40                 -- concurrency ceiling (well above max N)
+local LAUNCHER_ROT_PERIOD = 3                   -- Launcher full rotation period in seconds
 
 -- Launcher geometry — TUNE to the actual ramp. BASE_LAUNCH_DIR is the "center"
 -- (phase 0.5) launch direction, i.e. straight down the ramp; the swivel rotates
@@ -64,58 +65,32 @@ end
 -- Runs in its own thread (the per-ball waits must not block other players or
 -- the master clock). The last ball fires at (N-1)/N · BATCH_SECONDS, so a batch
 -- always finishes before the next one starts.
-local function launchBatchFor(player: Player)
+local function launchFor(player: Player)
 	local userId = player.UserId
 	local upgrades = ProfileService.GetUpgrades(player)
 	local loadout = ProfileService.GetLoadout(player)
 
 	if lastLaunch[userId] and os.clock() - lastLaunch[userId] < ProfileStats.GetLaunchDelay(upgrades) then return end  -- Launch too early
 	if CurrencyService.GetPoints(player) < loadout.Bet then return end  -- Can't afford launch
+	if BallService.GetLiveCount(userId) >= MAX_BALLS_PER_PLAYER then return end  -- Too many balls live
 
 	-- Trickle income, unconditional, once per batch (§1.2).
 	CurrencyService.AddPoints(player, ProfileStats.GetTrickle(upgrades), "Trickle")
 
-	-- Snapshot config at batch start; a mid-batch loadout change must not re-aim
-	-- or re-price balls already committed to this batch.
-	local n = loadout.BallCount
-	if n < 1 then
-		return
-	end
-	local perBallValue = loadout.Bet / n
-	local interval = BATCH_SECONDS / n
-	local basePhase = loadout.LaunchPhase
 	local arcWidth = ProfileStats.GetArcWidth(upgrades)
 	local weight = loadout.axes.Weight
 	local size = loadout.axes.Size
 
 	lastLaunch[player.UserId] = os.clock()
-
-	for i = 0, n - 1 do
-		-- Re-check per ball: concurrency cap and affordability (a leaver/score
-		-- mid-batch can change either). Skip remaining balls if either fails.
-		if BallService.GetLiveCount(userId) >= MAX_BALLS_PER_PLAYER then
-			break
-		end
-		if CurrencyService.GetPoints(player) < perBallValue then
-			break
-		end
-		CurrencyService.AddPoints(player, -perBallValue)
-
-		-- Ball i fires at phase (basePhase + i/N): one big aimed ball pins to the
-		-- chosen phase; many balls spread evenly across the full sweep.
-		local phase = (basePhase + i / n) % 1
-		BallService.Spawn(genSpawnPos(), {
-			ownerUserId = userId,
-			velocity = deriveLaunchVelocity(phase, arcWidth),
-			initialValue = perBallValue,
-			weight = weight,
-			size = size,
-		})
-
-		if i < n - 1 then
-			task.wait(interval)
-		end
-	end
+	CurrencyService.AddPoints(player, loadout.Bet)
+	local phase = (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
+	BallService.Spawn(genSpawnPos(), {
+		ownerUserId = userId,
+		velocity = deriveLaunchVelocity(phase, arcWidth),
+		initialValue = loadout.Bet,
+		weight = weight,
+		size = size,
+	})
 end
 
 -- Client configures its bet (intent only); the server clamps and stores it on
@@ -125,7 +100,7 @@ local function onRequest(player: Player, bet: number)
 		return -- reject NaN/negative/non-number; do not trust the client
 	end
 	ProfileService.SetBet(player, bet)
-	launchBatchFor(player)
+	launchFor(player)
 end
 
 function BallLaunchService.Init()

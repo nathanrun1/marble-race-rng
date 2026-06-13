@@ -11,6 +11,7 @@
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 
 local Config = require(RS.Shared.Config)
 
@@ -182,6 +183,54 @@ function BallEffects.ShowHeatPopup(ball: BasePart?, heatDelta: number)
 	BallEffects.ShowValuePopup(ball, ball.CFrame, label, color)
 end
 
+local HIGH_POINT_PARTICLE_COUNT = 40
+local HIGH_POINT_EMIT_TIME      = 0.1  -- window the emitter runs to lay down the burst
+local HIGH_POINT_MAX_LIFETIME   = 1.1
+
+-- Burst of white particles thrown upward from the ball. Marks a high-point hit.
+-- Meant to be invoked server-side (the emitter replicates to every client), so no
+-- DoClientEffect round-trip. The ball is usually destroyed right after the scoring
+-- hit, so the emitter rides an independent anchor part in workspace (snapshot of
+-- the ball's position) rather than the ball itself — same trick as ShowValuePopup.
+--
+-- The burst is driven by Rate + Enabled, NOT ParticleEmitter:Emit(): Emit() does
+-- not replicate from server to client, so a server-side Emit produces nothing on
+-- any player's screen. Rate/Enabled DO replicate, so we run a high rate for a brief
+-- window then switch it off — every client renders the same burst.
+function BallEffects.ShowHighPointFX(ball: BasePart?)
+	if not ball or not ball.Parent then return end
+
+	local anchor = Instance.new("Part")
+	anchor.Size = Vector3.new(0.05, 0.05, 0.05)
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.CFrame = ball.CFrame
+	anchor.Parent = workspace
+
+	local emitter = Instance.new("ParticleEmitter")
+	emitter.Color = ColorSequence.new(Color3.new(1, 1, 1))
+	emitter.Lifetime = NumberRange.new(0.6, HIGH_POINT_MAX_LIFETIME)
+	emitter.Speed = NumberRange.new(14, 22)
+	emitter.SpreadAngle = Vector2.new(18, 18)
+	emitter.Size = NumberSequence.new(0.45, 0)
+	emitter.Transparency = NumberSequence.new(0.05, 1)
+	emitter.EmissionDirection = Enum.NormalId.Top
+	emitter.Acceleration = Vector3.new(0, 18, 0)
+	emitter.Rate = HIGH_POINT_PARTICLE_COUNT / HIGH_POINT_EMIT_TIME
+	emitter.Enabled = true
+	emitter.Parent = anchor
+
+	-- Stop emitting after the burst window; clear the anchor once the last
+	-- particle has lived out its max lifetime.
+	task.delay(HIGH_POINT_EMIT_TIME, function()
+		emitter.Enabled = false
+	end)
+	--Debris:AddItem(anchor, HIGH_POINT_EMIT_TIME + HIGH_POINT_MAX_LIFETIME + 0.2)
+end
+
 ----------------------------------------------------------------------------------
 -- Server-only: lifecycle + client dispatch
 ----------------------------------------------------------------------------------
@@ -205,8 +254,6 @@ if RunService:IsServer() then
 		baseColors[ball] = if player then DEFAULT_BASE_COLOR else DEFAULT_BASE_COLOR
 		local weight = (ball:GetAttribute(Config.Attributes.Weight) :: number?) or 0.5
 		applyTransparency(ball, weight)
-		local n = if player then ProfileService.GetLoadout(player).BallCount else 1
-		applyFreqParticles(ball, n)
 		BallEffects.ApplyHeat(ball, 0)
 	end
 

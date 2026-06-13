@@ -41,17 +41,20 @@ local bounceCount: { [BasePart]: number } = {}
 
 local overlapParams = OverlapParams.new()
 
-local function calculatePoints(cur: number, target: Instance): (number?, string?)
+-- Returns (newValue, popupLabel, multiplier). multiplier is the × factor when the
+-- target is a point multiplier (nil for additive targets), so the caller can gate
+-- high-point FX on its magnitude.
+local function calculatePoints(cur: number, target: Instance): (number?, string?, number?)
 	local pointValue: number? = target:GetAttribute(Config.Attributes.PointValue) :: number?
 	if not pointValue then
-		return nil, nil
+		return nil, nil, nil
 	end
 
 	local isPointMul = target:GetAttribute(Config.Attributes.IsPointMul) :: boolean?
 	if isPointMul then
-		return cur * pointValue, "×" .. tostring(pointValue)
+		return cur * pointValue, "×" .. tostring(pointValue), pointValue
 	else
-		return cur + pointValue, "+" .. tostring(pointValue)
+		return cur + pointValue, "+" .. tostring(pointValue), nil
 	end
 end
 
@@ -65,19 +68,22 @@ local function resolveHit(ball: BasePart, target: Instance)
 		return -- owner left mid-flight; points dropped.
 	end
 	local curValue: number = BallService.GetBallValue(ball)
-	local newValue, popupLabel = calculatePoints(curValue, target)
+	local newValue, popupLabel, multiplier = calculatePoints(curValue, target)
 	if newValue and popupLabel then
 		BallService.SetBallValue(ball, newValue)
 		BallEffects.SetValueUI(ball, newValue)
 		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, popupLabel)
+		-- High-point hit: a big enough multiplier earns the special FX (runs on
+		-- the server; the emitter replicates to all clients).
+		if multiplier and multiplier >= Config.Scoring.SpecialFXMinMultiplier then
+			BallEffects.ShowHighPointFX(ball)
+		end
 	end
 
 	if target:HasTag(Config.Tags.BounceTarget) then
 		bounceCount[ball] = (bounceCount[ball] or 0) + 1
-		print("combo: "..bounceCount[ball])
 		local combo = bounceCount[ball]
 		local flatRate = ProfileStats.GetFlatPerBounce(ProfileService.GetUpgrades(player))
-		print("flat rate: " .. flatRate)
 		if flatRate > 0 then
 			BallEffects.DoClientEffect(player, "ShowComboPopup", ball, ball.CFrame, combo)
 		end

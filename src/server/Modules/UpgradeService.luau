@@ -127,7 +127,6 @@ end
 -- then deducts and increments. There is no yield between the funds check and the
 -- deduct, so it is atomic against concurrent requests.
 function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
-	print(UpgradeDefs)
 	if UpgradeDefs[track] == nil then
 		return { ok = false, reason = "invalid_track" }
 	end
