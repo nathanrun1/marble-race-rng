@@ -39,7 +39,7 @@ local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
 local HEAT_COLOR_POS     = Color3.fromRGB(255, 140, 0)
 local HEAT_COLOR_NEG     = Color3.fromRGB(80, 160, 255)
-local MIN_COMBO_TO_SHOW  = 6
+local MIN_COMBO_TO_SHOW  = 17
 
 -- Per-ball base color resolved at spawn (server-populated; client reads default).
 local baseColors: { [BasePart]: Color3 } = {}

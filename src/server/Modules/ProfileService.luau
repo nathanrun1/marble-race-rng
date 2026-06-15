@@ -53,6 +53,12 @@ local profiles: { [number]: Profile } = {}
 
 -- (player, profile) — fired after any mutation so UI/services can react.
 ProfileService.Changed = Signal.new()
+-- (player, profile) -- Fired along with ProfileService.Changed
+local ProfileChangedRE: RemoteEvent = RS.Remote.ProfileChanged
+
+-- (player, axis, value) -- Invoked by player, request to change axis value
+local SetAxisRF: RemoteFunction = RS.Remote.SetAxis
+
 
 --------------------------------------------------------------------------------
 -- Construction
@@ -126,6 +132,7 @@ function ProfileService.SetUpgradeTier(player: Player, track: string, tier: numb
 	profile.upgrades[track] = math.max(tier, profile.upgrades[track])
 	reclampLoadout(profile)
 	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile)
 end
 
 function ProfileService.GetLoadout(player: Player): Loadout
@@ -161,6 +168,7 @@ function ProfileService.SetBet(player: Player, bet: number)
 	local profile = get(player)
 	profile.loadout.Bet = math.clamp(bet, 0, ProfileStats.GetMaxBet(profile.upgrades))
 	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile)
 end
 
 -- -- Ball count N: 1 .. unlocked frequency cap.
@@ -181,21 +189,24 @@ function ProfileService.SetLaunchPhase(player: Player, phase: number)
 	local profile = get(player)
 	profile.loadout.LaunchPhase = math.clamp(phase, 0, 1)
 	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile)
 end
 
 -- Generic continuous-axis setter (Weight, Size, ...): clamps to the tier range.
-function ProfileService.SetAxis(player: Player, axis: string, value: number)
+function ProfileService.SetAxis(player: Player, axis: string, value: number): boolean
 	if Config.Axes[axis] == nil then
 		warn("SetAxis: unknown axis '" .. tostring(axis) .. "'")
-		return
+		return false
 	end
 	if type(value) ~= "number" or value ~= value then
-		return
+		return false
 	end
 	local profile = get(player)
 	local min, max = ProfileStats.GetAxisRange(profile.upgrades, axis)
 	profile.loadout.axes[axis] = math.clamp(value, min, max)
 	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile) -- authoritative value back to the client (e.g. UI revert)
+	return true
 end
 
 -- (definition for the forward-declared local above; assigns the local, not a
@@ -217,6 +228,7 @@ local function onPlayerAdded(player: Player)
 	profiles[player.UserId] = newProfile()
 	-- later: profiles[player.UserId] = DataService.LoadProfile(player)
 	ProfileService.Changed:Fire(player, profiles[player.UserId])
+	ProfileChangedRE:FireClient(player, profiles[player.UserId])
 end
 
 local function onPlayerRemoving(player: Player)
@@ -228,6 +240,7 @@ function ProfileService.Init()
 	Players.PlayerAdded:Connect(onPlayerAdded)
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
 	RS.Remote.GetProfile.OnServerInvoke = get
+	SetAxisRF.OnServerInvoke = ProfileService.SetAxis
 	for _, p in Players:GetPlayers() do
 		onPlayerAdded(p)
 	end

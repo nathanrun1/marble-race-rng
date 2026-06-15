@@ -1,10 +1,10 @@
 -- ServerScriptService/BallLaunchService (ModuleScript)
 --!strict
--- Authority over launches. The server owns timing (a fixed batch clock) and
--- trajectory; the client only configures its loadout (bet, N, phase, ...) via
--- ProfileService. Each batch, a player launches N balls (their frequency)
--- spaced BATCH_SECONDS/N apart, each worth bet/N, aimed by the launcher's swivel
--- at that ball's phase.
+-- Authority over launches. The server owns timing (the launch-delay cooldown) and
+-- trajectory; the client only configures its loadout (bet, Arc, Angle, ...) via
+-- ProfileService. Launches are manual: each request fires one ball. The launcher
+-- swivels continuously (aim ± Arc) driven by the clock; the ball is aimed by the
+-- swivel's phase at fire time, around the player's Angle (aim center).
 
 local Players = game:GetService("Players")
 local SSS = game:GetService("ServerScriptService")
@@ -25,11 +25,11 @@ local BATCH_SECONDS = 3                         -- seconds per batch; server own
 local MAX_BALLS_PER_PLAYER = 40                 -- concurrency ceiling (well above max N)
 local LAUNCHER_ROT_PERIOD = 3                   -- Launcher full rotation period in seconds
 
--- Launcher geometry — TUNE to the actual ramp. BASE_LAUNCH_DIR is the "center"
--- (phase 0.5) launch direction, i.e. straight down the ramp; the swivel rotates
--- it left/right about the vertical axis. The max swivel (the launcher's
--- "rotation radius") is per-player — ProfileStats.GetArcWidth, from the Arc
--- upgrade — and passed into deriveLaunchVelocity per batch.
+-- Launcher geometry — TUNE to the actual ramp. BASE_LAUNCH_DIR is the launcher's
+-- neutral direction (aim 0, mid-phase), i.e. straight down the ramp; the swivel
+-- rotates it left/right about the vertical axis. Two per-player loadout axes shape
+-- the aim: Arc (swivel half-width) and Angle (the center the launcher swivels
+-- around, default 0 = straight down). Both are passed into deriveLaunchVelocity.
 local BASE_LAUNCH_DIR = Vector3.new(0, 0, -1)   -- down-ramp; align with real geometry
 local LAUNCH_SPEED = 20                          -- studs/s initial speed
 local LAUNCH_SPEED_VARIATION = 0.2              -- Launch speed can vary by up to this portion
@@ -51,28 +51,30 @@ local function genSpawnPos(): Vector3
 	return Vector3.new((right + left) / 2, SPAWN_POS.Y, SPAWN_POS.Z)
 end
 
--- Launcher swivels once per batch: phase 0 = center, 0.25 = right, 0.5 = center,
--- 0.75 = left, 1 = center. angle(phase) = arcWidth · sin(2π·phase), so the
--- default phase 0.5 fires straight down the center (angle 0). Direction is the
--- base down-ramp vector rotated about the vertical axis by that angle.
-local function deriveLaunchVelocity(phase: number, arcWidth: number): Vector3
-	local angle = arcWidth * math.sin(2 * math.pi * phase) + math.random(-LAUNCH_DIR_VARIATION, LAUNCH_DIR_VARIATION)
+-- Launcher swivels continuously: as phase runs 0→1 the aim sweeps aim ± arcWidth
+-- (phase 0/0.5/1 = aim, 0.25 = +arcWidth, 0.75 = −arcWidth). The deterministic
+-- swivel angle is ProfileStats.GetSwivelAngle; we add a small random jitter, then
+-- rotate the base down-ramp vector about the vertical axis by the total angle.
+local function deriveLaunchVelocity(phase: number, arcWidth: number, aimAngle: number): Vector3
+	local angle = ProfileStats.GetSwivelAngle(arcWidth, aimAngle, phase)
+		+ (math.random() * 2 - 1) * LAUNCH_DIR_VARIATION
 	local dir = CFrame.fromAxisAngle(Vector3.yAxis, angle):VectorToWorldSpace(BASE_LAUNCH_DIR)
 	return dir.Unit * genLaunchSpeed()
 end
 
--- Spawn one ball for this player using their current loadout + arc geometry.
--- This is the trajectory/loadout core of a launch with no guards or currency
--- side effects — launchFor wraps it with those; the dev launch test reuses it
--- raw. Phase is read from the launcher's continuous swivel at call time.
+-- Spawn one ball for this player using their current loadout. This is the
+-- trajectory/loadout core of a launch with no guards or currency side effects —
+-- launchFor wraps it with those; the dev launch test reuses it raw. Phase is the
+-- launcher's continuous swivel position at call time, derived from the clock and
+-- the rotation period; Arc (swivel width) and Angle (aim center) are loadout axes.
 local function spawnBall(player: Player): BasePart
-	local upgrades = ProfileService.GetUpgrades(player)
 	local loadout = ProfileService.GetLoadout(player)
-	local arcWidth = ProfileStats.GetArcWidth(upgrades)
+	local arcWidth = loadout.axes.Arc
+	local aimAngle = loadout.axes.Angle
 	local phase = (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
 	return BallService.Spawn(genSpawnPos(), {
 		ownerUserId = player.UserId,
-		velocity = deriveLaunchVelocity(phase, arcWidth),
+		velocity = deriveLaunchVelocity(phase, arcWidth, aimAngle),
 		initialValue = loadout.Bet,
 		weight = 1 - loadout.axes.Elasticity,
 		size = loadout.axes.Size,

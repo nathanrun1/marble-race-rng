@@ -58,11 +58,14 @@ function ProfileStats.GetLaunchDelay(upgrades: Upgrades): number
 	return values[math.clamp(tier(upgrades, "Frequency") + 1, 1, #values)]
 end
 
--- Max launcher swivel (radians) at the current arc tier (§3 axis C). The launch
--- phase selects a direction within ±this; wider arc reaches the edge slots.
-function ProfileStats.GetArcWidth(upgrades: Upgrades): number
-	local widths = Config.Upgrades.Arc.Widths
-	return widths[math.clamp(tier(upgrades, "Arc") + 1, 1, #widths)]
+-- Launcher swivel angle (radians) for a given phase. The launcher sweeps its aim
+-- ± arcWidth as phase runs 0→1: angle = aim + arcWidth·sin(2π·phase). Phase
+-- 0/0.5/1 fire straight down the aim line; 0.25 = +arcWidth, 0.75 = −arcWidth.
+-- Both arcWidth (loadout.axes.Arc) and aim (loadout.axes.Angle) are continuous
+-- loadout axes the player sets within their unlocked range — this is pure geometry
+-- over them and the clock-derived phase, no upgrade/loadout fetch.
+function ProfileStats.GetSwivelAngle(arcWidth: number, aimAngle: number, phase: number): number
+	return aimAngle + arcWidth * math.sin(2 * math.pi * phase)
 end
 
 -- Sensitivity to accumulated peg heat (§1.5, simplified). 0 at tier 0 (heat does
@@ -81,8 +84,6 @@ end
 
 -- Trickle income this batch (§1.2), scaled to current ceiling.
 function ProfileStats.GetTrickle(upgrades: Upgrades): number
-	print("trickle: "..Config.Economy.TrickleFraction * ProfileStats.GetMaxBet(upgrades))
-	print(Config.Economy.TrickleFraction)
 	return Config.Economy.TrickleFraction * ProfileStats.GetMaxBet(upgrades)
 end
 
@@ -95,9 +96,13 @@ end
 --   FlatRate    → decimal                  e.g. "1.00"
 --   BaseAdditive→ percentage               e.g. "+5%"
 --   Frequency   → ball count               e.g. "4"
---   Arc         → degrees                  e.g. "30°"
 --   PegHeat     → multiplier               e.g. "0.5×"
+--   Angle/Arc   → degree range             e.g. "-15° – 15°" (stored in radians)
 --   Axes        → range                    e.g. "0.25 – 0.75"
+
+-- Axes whose stored value is an angle in radians; displayed in degrees.
+local ANGLE_AXES: { [string]: boolean } = { Angle = true, Arc = true }
+
 function ProfileStats.GetDisplayString(track: string, tier: number): string
 	local u: Upgrades = { [track] = tier }
 	if track == "MaxBet" then
@@ -108,14 +113,15 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
 	elseif track == "Frequency" then
 		return tostring(ProfileStats.GetLaunchDelay(u)).."s"
-	elseif track == "Arc" then
-		return math.round(math.deg(ProfileStats.GetArcWidth(u))) .. "°"
 	elseif track == "PegHeat" then
 		return string.format("%.1f×", ProfileStats.GetPegHeatFactor(u))
 	else
 		-- Axis tracks (Weight, Size, ...)
 		if Config.Axes[track] then
 			local min, max = ProfileStats.GetAxisRange(u, track)
+			if ANGLE_AXES[track] then
+				return string.format("%d° – %d°", math.round(math.deg(min)), math.round(math.deg(max)))
+			end
 			return string.format("%.2f – %.2f", min, max)
 		end
 	end

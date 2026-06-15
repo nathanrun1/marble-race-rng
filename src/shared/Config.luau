@@ -92,15 +92,6 @@ Config.Upgrades = {
 		Name = "Launch Delay", Desc = "Decrease time between launches",
 		Icon = "🔄"
 	},
-	-- max launcher swivel (radians) at each tier (§3 axis C) [scales launch direction].
-	-- tier 0 keeps a small base width so phase aiming works day one; tiers widen
-	-- the reachable sweep toward the edges. Phase 0..1 selects within ±width.
-	Arc = {
-		Widths = { math.rad(15), math.rad(30), math.rad(45), math.rad(60) },
-		Cost = { Base = 400, Growth = 40 },
-		Name = "Launcher Arc", Desc = "Widen your aiming sweep.",
-		Icon = "🎯"
-	},
 	-- pegHeatFactor = PerTier * tier (additive). Sensitivity to peg heat (§1.5,
 	-- simplified): tier 0 = heat has no effect; higher = aimed hot pegs pay more
 	-- (and random cold paths cost more). Targeting channel; only pays with aim.
@@ -155,6 +146,32 @@ Config.Axes = {
 		Name = "Ball Size", Desc = "Unlock smaller balls.",
 		Icon = "◯"
 	},
+	Angle = {
+		Default = 0.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
+		Ranges = {
+			{ Min = 0.0, Max = 0.0 },   -- tier 0: locked at center
+			{ Min = -math.rad(10), Max = math.rad(10) },   -- tier 1
+			{ Min = -math.rad(15), Max = math.rad(15) },   -- tier 2
+			{ Min = -math.rad(20), Max = math.rad(20) },   -- tier 3
+			{ Min = -math.rad(30), Max = math.rad(30) },   -- tier 4
+			{ Min = -math.rad(40), Max = math.rad(40) },   -- tier 5
+		},
+		Cost = { Base = 1000, Growth = 12 },
+		Name = "Angle", Desc = "Launch angle.",
+		Icon = "🏹"
+	},
+	Arc = {
+		Default = math.rad(15),
+		Ranges = {
+			{ Min = math.rad(15), Max = math.rad(15) },  -- tier 0: locked at 15 deg swivel
+			{ Min = math.rad(12), Max = math.rad(25) },  -- tier 1
+			{ Min = math.rad(8), Max = math.rad(35) },   -- tier 3
+			{ Min = math.rad(5), Max = math.rad(45) },   -- tier 4
+		},
+		Cost = { Base = 400, Growth = 40 },
+		Name = "Launcher Swivel", Desc = "Widen or tighten the possible launch angles.",
+		Icon = "🎯"
+	},
 } :: { [string]: AxisDef }
 
 -- Default loadout for a fresh player (free choices, distinct from upgrades).
@@ -163,7 +180,6 @@ Config.Axes = {
 Config.LoadoutDefaults = {
 	Bet = 10,           -- total bet B; player sets via UI
 	BallCount = 1,     -- N
-	LaunchPhase = 0.5, -- center of arc (no upgrade gate yet; Launcher Arc later)
 }
 
 Config.Templates = {

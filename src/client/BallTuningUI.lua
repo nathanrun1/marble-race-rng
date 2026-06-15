@@ -22,8 +22,22 @@
 local Players: Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
+local RS               = game:GetService("ReplicatedStorage")
+
+-- Shared, pure derivation + config — the same source the server clamps against, so
+-- the client computes identical axis ranges locally (no extra "get ranges" remote).
+local Config       = require(RS.Shared.Config)
+local ProfileStats = require(RS.Shared.ProfileStats)
 
 local player = Players.LocalPlayer
+
+-- Loadout remotes (see ProfileService): SetAxis is the submit RF (returns whether
+-- the change was accepted), ProfileChanged pushes the authoritative profile after
+-- any mutation, GetProfile is the initial pull.
+local Remote           = RS:WaitForChild("Remote")
+local SetAxisRF        = Remote:WaitForChild("SetAxis")        :: RemoteFunction
+local ProfileChangedRE = Remote:WaitForChild("ProfileChanged") :: RemoteEvent
+local GetProfileRF     = Remote:WaitForChild("GetProfile")     :: RemoteFunction
 
 local Controller = {}
 
@@ -56,19 +70,38 @@ Controller.STYLE = {
 }
 
 ----------------------------------------------------------------
--- AXES  (config + live state). min/max/maxTier are DEFAULTS — they get
--- overwritten by fetchMaxRanges() on init from the authoritative source.
---   twoSided  → unlocks symmetrically outward from center (Angle)
---   else      → unlocks from the low end up to a tier cap (Size, Bounce)
+-- AXES  (config + live state).
+--   serverAxis  → the Config.Axes key this row maps to (ProfileService.SetAxis).
+--   toServer/fromServer → unit conversion between display units (what the handle
+--      shows) and stored units (what the server keeps). Angle/Arc: deg↔rad. Size: ×
+--      identity. Bounciness: percent↔0-1 (server axis "Elasticity").
+--   twoSided  → fill anchors at the track center (the aim point) rather than the
+--      low end. Pure cosmetic; the unlocked band itself comes from the server.
+--
+--   name is taken from Config.Axes[serverAxis].Name (single source) just below.
+--   min/max/uMin/uMax/tier/maxTier/value are filled from the authoritative profile
+--   (applyProfile) — and seeded from Config at tier 0 so the UI renders pre-fetch.
 ----------------------------------------------------------------
 Controller.AXES = {
-	{ key="angle",  name="Angle",      min=-60, max=60,  step=1,   tier=2, maxTier=5, value=0,   twoSided=true,
+	{ key="angle",  serverAxis="Angle",      step=1,    value=0,   twoSided=true,
+	  toServer=math.rad, fromServer=math.deg,
 	  fmt=function(v) return (v>0 and "+" or "")..math.round(v).."°" end },
-	{ key="size",   name="Size",       min=0.5, max=4,   step=0.1, tier=3, maxTier=5, value=1.0,
-	  fmt=function(v) return string.format("%.1f×", v) end },
-	{ key="bounce", name="Bounciness", min=0,   max=100, step=1,   tier=1, maxTier=4, value=12,
+	{ key="arc",    serverAxis="Arc",        step=1,    value=15,
+	  toServer=math.rad, fromServer=math.deg,
+	  fmt=function(v) return math.round(v).."°" end },
+	{ key="size",   serverAxis="Size",       step=0.05, value=1.0,
+	  toServer=function(v) return v end, fromServer=function(v) return v end,
+	  fmt=function(v) return string.format("%.2f×", v) end },
+	{ key="bounce", serverAxis="Elasticity", step=1,    value=50,
+	  toServer=function(v) return v / 100 end, fromServer=function(v) return v * 100 end,
 	  fmt=function(v) return math.round(v).."%" end },
 }
+
+-- Display names come straight from Config (the same labels the shop uses), so the
+-- two never drift. A fallback to the key keeps a new axis from rendering blank.
+for _, a in ipairs(Controller.AXES) do
+	a.name = Config.Axes[a.serverAxis].Name or a.key
+end
 
 -- placeholder reference to the GUI root (set this before init)
 Controller.root = player.PlayerGui.MainGui.BallTuning
@@ -76,26 +109,45 @@ Controller.root = player.PlayerGui.MainGui.BallTuning
 ----------------------------------------------------------------
 -- helpers
 ----------------------------------------------------------------
-local function new(class, props, parent)
-	local o = Instance.new(class)
-	for k, v in pairs(props or {}) do o[k] = v end
-	if parent then o.Parent = parent end
-	return o
-end
-
 local byKey = {}
 for _, a in ipairs(Controller.AXES) do byKey[a.key] = a end
 
-local function uRange(a)
-	if a.twoSided then
-		local center = (a.min + a.max) / 2
-		local half   = (a.max - a.min) / 2
-		local span   = half * (a.tier / a.maxTier)
-		return center - span, center + span
+-- Resolve a UI axis's bounds (in display units) from a raw upgrades/tiers map, the
+-- same way the server does — full track is the widest unlockable extent across all
+-- tiers; the unlocked band is the current tier's range (ProfileStats.GetAxisRange).
+-- Returns { min, max, uMin, uMax, tier, maxTier }. All conversions here (deg, ×100)
+-- are monotonic increasing, so Min/Max ordering is preserved.
+local function rangeDataFor(a, upgrades)
+	local def = Config.Axes[a.serverAxis]
+	local tier = upgrades[a.serverAxis] or 0
+	local fullMin, fullMax = math.huge, -math.huge
+	for _, r in def.Ranges do
+		fullMin = math.min(fullMin, r.Min)
+		fullMax = math.max(fullMax, r.Max)
 	end
-	return a.min, a.min + (a.max - a.min) * (a.tier / a.maxTier)
+	local uMin, uMax = ProfileStats.GetAxisRange(upgrades, a.serverAxis)
+	return {
+		min     = a.fromServer(fullMin),
+		max     = a.fromServer(fullMax),
+		uMin    = a.fromServer(uMin),
+		uMax    = a.fromServer(uMax),
+		tier    = tier,
+		maxTier = #def.Ranges - 1,
+	}
 end
-local function fracOf(a, v) return (v - a.min) / (a.max - a.min) end
+
+-- Push resolved bounds onto the axis (handle bounds + pill source).
+local function applyRangeData(a, rd)
+	a.min, a.max     = rd.min, rd.max
+	a._uMin, a._uMax = rd.uMin, rd.uMax
+	a.tier, a.maxTier = rd.tier, rd.maxTier
+	a.anchor = a.twoSided and (a.min + a.max) / 2 or a.min
+end
+
+local function fracOf(a, v)
+	if a.max == a.min then return 0 end
+	return (v - a.min) / (a.max - a.min)
+end
 local function clampStep(a, v)
 	v = math.clamp(v, a._uMin, a._uMax)
 	v = math.floor((v - a.min) / a.step + 0.5) * a.step + a.min
@@ -116,26 +168,24 @@ local function setPill(a)
 	if a._pill then a._pill.Text = "Lv "..a.tier.."/"..a.maxTier end
 end
 
-local function corner(r, p) new("UICorner", { CornerRadius = UDim.new(0, r) }, p) end
-
--- (re)build the locked-hatch zones for an axis from its current tier
+-- Reposition the authored lock zones over the currently-locked bands
+-- [min..uMin] and [uMax..max]. Up to two zones; any spare authored Lock is
+-- hidden. Never creates or destroys — the chrome owns the instances.
 local function rebuildLocks(a)
-	local S = Controller.STYLE
-	for _, c in ipairs(a._track:GetChildren()) do
-		if c.Name == "Lock" then c:Destroy() end
-	end
 	local umnF, umxF = fracOf(a, a._uMin), fracOf(a, a._uMax)
-	local function zone(xScale, wScale)
-		if wScale <= 1e-4 then return end
-		local lz = new("ImageLabel", { Name = "Lock", BackgroundTransparency = 1,
-			Image = Controller.ASSETS.hatch, ScaleType = Enum.ScaleType.Tile,
-			TileSize = UDim2.fromOffset(S.HATCH_TILE, S.HATCH_TILE),
-			AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(xScale, 0, 0.5, 0),
-			Size = UDim2.new(wScale, 0, 1, 4), ZIndex = 3 }, a._track)
-		corner(9, lz)
+	local zones = {}
+	if umnF > 1e-4 then table.insert(zones, { x = 0, w = umnF }) end          -- left  [min..uMin]
+	if (1 - umxF) > 1e-4 then table.insert(zones, { x = umxF, w = 1 - umxF }) end -- right [uMax..max]
+	for i, lock in ipairs(a._locks) do
+		local z = zones[i]
+		if z then
+			lock.Position = UDim2.new(z.x, 0, 0.5, 0)
+			lock.Size = UDim2.new(z.w, 0, 1, 4)
+			lock.Visible = true
+		else
+			lock.Visible = false
+		end
 	end
-	if a.twoSided then zone(0, umnF) end   -- left locked band
-	zone(umxF, 1 - umxF)                    -- right locked band
 end
 
 -- shake a row when the player taps a locked zone
@@ -152,34 +202,39 @@ local function shake(a)
 end
 
 ----------------------------------------------------------------
--- build the dynamic parts for one axis + wire drag
+-- bind the authored dynamic parts for one axis + wire drag
 ----------------------------------------------------------------
 local function buildDynamic(a)
-	local S = Controller.STYLE
-	a._uMin, a._uMax = uRange(a)
-	a.anchor = a.twoSided and (a.min + a.max) / 2 or a.min
+	-- The chrome (Track.Fill, Track.Handle, Track.Lock×N) is authored in Studio;
+	-- the controller only positions/sizes it. Bounds (a._uMin/_uMax, a.anchor) are
+	-- already set by applyRangeData before the first build and on every update.
+	local track = a._track
+	a._fill   = track:WaitForChild("Fill")
+	a._handle = track:WaitForChild("Handle")
+	a._locks  = {}
+	for _, c in ipairs(track:GetChildren()) do
+		if c.Name == "Lock" then table.insert(a._locks, c) end
+	end
+	-- An interior unlocked band locks both ends, so each row needs two Lock zones.
+	-- If only one is authored, clone it (same styling) to cover the right side too.
+	while #a._locks > 0 and #a._locks < 2 do
+		local clone = a._locks[1]:Clone()
+		clone.Parent = track
+		table.insert(a._locks, clone)
+	end
 
-	-- fill (magenta gradient, anchor → value)
-	a._fill = new("Frame", { Name = "Fill", BackgroundColor3 = S.WHITE,
-		AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
-		Size = UDim2.new(0, 0, 1, 4), BorderSizePixel = 0, ZIndex = 2 }, a._track)
-	corner(9, a._fill)
-	new("UIGradient", { Rotation = 90, Color = ColorSequence.new(S.FILL_TOP, S.FILL_BOT) }, a._fill)
+	-- Anchor conventions the positioning math (updateAxis / rebuildLocks) assumes.
+	a._fill.AnchorPoint   = Vector2.new(0, 0.5)
+	a._handle.AnchorPoint = Vector2.new(0.5, 0.5)
+	for _, lock in ipairs(a._locks) do
+		lock.AnchorPoint = Vector2.new(0, 0.5)
+	end
 
-	-- locked zones
 	rebuildLocks(a)
-
-	-- handle (candy circle PNG)
-	a._handle = new("ImageLabel", { Name = "Handle", BackgroundTransparency = 1,
-		Image = Controller.ASSETS.handle, AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.new(0, 0, 0.5, 0), Size = UDim2.fromOffset(S.HANDLE_SIZE, S.HANDLE_SIZE),
-		ZIndex = 4 }, a._track)
-
 	updateAxis(a)
 
 	-- drag (AbsolutePosition/Size already include UIScale → device-agnostic)
 	local dragging, startVal = false, nil
-	local track = a._track
 	local function setFromX(px)
 		local f = math.clamp((px - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
 		a.value = clampStep(a, a.min + f * (a.max - a.min))
@@ -193,6 +248,8 @@ local function buildDynamic(a)
 			local v = a.min + f * (a.max - a.min)
 			if v < a._uMin - 1e-6 or v > a._uMax + 1e-6 then shake(a) end
 			dragging, startVal = true, a.value
+			a._dragging = true           -- suppress authoritative snaps mid-drag
+			a._preDrag = startVal        -- value to restore if the submit is rejected
 			setFromX(input.Position.X)
 		end
 	end)
@@ -206,6 +263,7 @@ local function buildDynamic(a)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseButton1
 			or input.UserInputType == Enum.UserInputType.Touch) then
 			dragging = false
+			a._dragging = false
 			if a.value ~= startVal then
 				Controller.submitAxisChange(a.key, a.value)   -- ① submit on release
 			end
@@ -214,83 +272,109 @@ local function buildDynamic(a)
 end
 
 ----------------------------------------------------------------
--- INTEGRATION SEAMS  (wire these to your RemoteEvents / RemoteFunctions)
+-- INTEGRATION  (wired to ProfileService's loadout remotes)
 ----------------------------------------------------------------
 
--- ① SUBMIT axis change — fired once the handle STOPS moving.
---    Send the chosen value to the server for validation / persistence.
-function Controller.submitAxisChange(key, value)
-	-- TODO: replace with your remote, e.g.
-	--   ReplicatedStorage.Remotes.SetAxis:FireServer(key, value)
-	print(("[BallTuning] submit %s = %s"):format(key, tostring(value)))
-end
-
--- ② RECEIVE new tier — grows the unlocked band, shrinks the locked hatch,
---    updates the "Lv x/y" pill, and re-clamps the current value.
---    Call from your tier/shop remote: Controller.applyTier("size", 4)
-function Controller.applyTier(key, tier)
-	local a = byKey[key]; if not a then return end
-	a.tier = math.clamp(tier, 0, a.maxTier)
-	a._uMin, a._uMax = uRange(a)
+-- Refresh one axis's visuals from its current numeric state (band + pill + handle).
+-- No-op if the row hasn't been built yet (pre-init authoritative push).
+local function redrawAxis(a)
+	if not a._track then return end
 	rebuildLocks(a)
 	setPill(a)
-	a.value = clampStep(a, a.value)   -- pull value back into the unlocked band
 	updateAxis(a)
 end
 
--- ③ RECEIVE authoritative value — overrides whatever the local handle shows
---    and snaps the handle to match. Use for server pushes AND for a REJECTED
---    submit (server replies with the value it actually kept).
---    Call: Controller.applyAuthoritativeValue("angle", 0)
+-- ① SUBMIT axis change — fired once the handle STOPS moving. Send the chosen value
+--    (converted to server units) to ProfileService.SetAxis. The server clamps to
+--    the unlocked band and pushes the authoritative profile back over
+--    ProfileChanged, which snaps the handle to the value it actually kept — so an
+--    out-of-band or rejected change "puts the handle back" on its own. A hard
+--    failure (SetAxis returns false, no push) is reverted here from a._preDrag.
+function Controller.submitAxisChange(key, value)
+	local a = byKey[key]; if not a then return end
+	local ok = SetAxisRF:InvokeServer(a.serverAxis, a.toServer(value))
+	if not ok then
+		Controller.applyAuthoritativeValue(key, a._preDrag or a.value)
+	end
+end
+
+-- ② RECEIVE new tier — grows the unlocked band, shrinks the locked hatch, updates
+--    the "Lv x/y" pill, and re-clamps the current value. Driven by applyProfile,
+--    but exposed for direct use too: Controller.applyTier("size", 4).
+function Controller.applyTier(key, tier)
+	local a = byKey[key]; if not a then return end
+	applyRangeData(a, rangeDataFor(a, { [a.serverAxis] = math.clamp(tier, 0, a.maxTier) }))
+	a.value = clampStep(a, a.value)   -- pull value back into the unlocked band
+	redrawAxis(a)
+end
+
+-- ③ RECEIVE authoritative value — overrides whatever the local handle shows and
+--    snaps the handle to match. Used by the ProfileChanged push and the rejected-
+--    submit revert. Call: Controller.applyAuthoritativeValue("angle", 0).
 function Controller.applyAuthoritativeValue(key, value)
 	local a = byKey[key]; if not a then return end
 	a.value = clampStep(a, value)
-	updateAxis(a)
+	redrawAxis(a)
 end
 
--- ④ FETCH max ranges on initial load — return per-axis {min,max,maxTier,tier}.
---    Replace the body with a server fetch (InvokeServer). Returning nil keeps
---    the defaults baked into Controller.AXES.
-function Controller.fetchMaxRanges()
-	-- TODO: e.g.
-	--   return ReplicatedStorage.Remotes.GetAxisRanges:InvokeServer()
-	return nil
+-- Apply a whole authoritative profile (from GetProfile / ProfileChanged): refresh
+-- each axis's unlocked band from its upgrade tier and snap its handle to the stored
+-- loadout value. Skips the value snap for an axis being dragged so a stray push
+-- (e.g. a concurrent tier purchase) can't yank the handle out from under the user.
+local function applyProfile(profile)
+	if not profile then return end
+	for _, a in ipairs(Controller.AXES) do
+		applyRangeData(a, rangeDataFor(a, profile.upgrades))
+		if not a._dragging then
+			local stored = profile.loadout.axes[a.serverAxis]
+			if stored ~= nil then
+				a.value = a.fromServer(stored)
+			end
+		end
+		a.value = clampStep(a, a.value)
+		redrawAxis(a)
+	end
 end
 
--- Connect server → client pushes here (placeholder).
+-- ④ FETCH the authoritative profile on initial load. Returns the Profile table
+--    ({ upgrades, loadout }) or nil if the server didn't answer (keeps Config
+--    tier-0 seeds). pcall'd so a missing/erroring remote can't break the UI.
+function Controller.fetchProfile()
+	local ok, profile = pcall(function()
+		return GetProfileRF:InvokeServer()
+	end)
+	return ok and profile or nil
+end
+
+-- Connect server → client pushes: every profile mutation re-syncs the sliders.
 function Controller._connectRemotes()
-	-- TODO: e.g.
-	--   ReplicatedStorage.Remotes.AxisTier.OnClientEvent:Connect(Controller.applyTier)
-	--   ReplicatedStorage.Remotes.AxisValue.OnClientEvent:Connect(Controller.applyAuthoritativeValue)
+	ProfileChangedRE.OnClientEvent:Connect(applyProfile)
 end
 
 ----------------------------------------------------------------
--- init — resolve chrome refs under root, apply ranges, build moving parts
+-- init — resolve chrome refs under root, seed from Config, build, then sync
 ----------------------------------------------------------------
 function Controller.init()
 	assert(Controller.root, "BallTuningController.root must be set to the panel before init()")
 
-	local ranges = Controller.fetchMaxRanges()
 	for _, a in ipairs(Controller.AXES) do
-		local r = ranges and ranges[a.key]
-		if r then
-			a.min     = r.min or a.min
-			a.max     = r.max or a.max
-			a.maxTier = r.maxTier or a.maxTier
-			if r.tier   then a.tier  = r.tier end
-			if r.value  then a.value = r.value end
-		end
-		-- resolve the static chrome the builder created
+		-- Seed bounds from Config at tier 0 so the row renders before the fetch.
+		applyRangeData(a, rangeDataFor(a, {}))
+		a.value = clampStep(a, a.value)
+
+		-- Resolve the authored chrome for this row.
 		a._row    = Controller.root:WaitForChild(a.key)
 		a._track  = a._row:WaitForChild("Track")
 		a._read   = a._row.Top:WaitForChild("Read")
 		a._pill   = a._row.Top.NameRow.Lv:WaitForChild("LvText")
+		a._row.Top.NameRow:WaitForChild("Name").Text = a.name  -- title from Config
 
 		buildDynamic(a)
 		setPill(a)
 	end
 
 	Controller._connectRemotes()
+	applyProfile(Controller.fetchProfile()) -- authoritative pull (no-op if nil)
 end
 
 -- read the current chosen value any time: Controller.get("angle")

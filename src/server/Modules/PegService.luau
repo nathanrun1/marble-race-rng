@@ -22,7 +22,7 @@ local COLOR_TWEEN = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirecti
 type Category = { Heat: number, Color: Color3, Material: Enum.Material }
 local CATEGORIES: { [string]: Category } = {
 	Hot    = { Heat =  1.0, Color = Color3.fromRGB(255,   0, 191), Material = Enum.Material.Neon },
-	Cold   = { Heat = -1.1, Color = Color3.fromRGB( 98,  37, 209), Material = Enum.Material.Limestone },
+	Cold   = { Heat = -1.0, Color = Color3.fromRGB( 98,  37, 209), Material = Enum.Material.Limestone }, -- TODO: TEMP: set to -1.0 for accurate EV testing, was -1.1
 	Normal = { Heat =  0.0, Color = Color3.fromRGB(180, 128, 255), Material = Enum.Material.Plastic },
 }
 

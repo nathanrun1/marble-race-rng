@@ -8,12 +8,11 @@
 --   /tier <Track> <n>      set an upgrade tier (raises only; rejoin to lower)
 --   /maxall                max every upgrade tier (unlocks all ranges)
 --   /bet <n>               set total bet (clamps to current max bet)
---   /n <n>                 set ball count N
---   /phase <0..1>          set launch phase
---   /axis <Name> <0..1>    set a continuous axis (Weight, Size)
+--   /axis <Name> <v>       set a continuous axis (Arc, Angle, Size, Elasticity)
 --   /money <n>             set balance
 --   /preset <name>         targeting | chaos | hybrid
 --   /test <n> [interval]   fire n test balls (your loadout), print payout stats
+--   /comprtest <n>         sweep all builds (Arc/Angle/Size/Elasticity), n balls each
 --   /show                  print current tiers + loadout to the server console
 --   /help                  list commands
 --
@@ -28,6 +27,7 @@ local SSS = game:GetService("ServerScriptService")
 
 local Config = require(RS.Shared.Config)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
+local ProfileStats = require(RS.Shared.ProfileStats)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ScoringService = require(SSS.Scripts.Modules.ScoringService)
 local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
@@ -45,13 +45,20 @@ local TEST_INTERVAL = 0.02   -- default seconds between launches; spaced so ball
 local TEST_TIMEOUT = 45      -- max seconds to wait for stragglers after the last launch
 local TEST_MAX_BALLS = 1000  -- hard cap on n, so a typo can't spawn forever
 
+-- /comprtest tuning. The only independent variables (everything that shapes where
+-- a ball lands and what it hits) are these four axes; one batch is fired per
+-- combination of their sampled levels (a "build").
+local COMPR_AXES = { "Arc", "Angle", "Size", "Elasticity" }
+local COMPR_LEVELS = 3        -- evenly-spaced samples per axis across its full range (=> LEVELS^#axes builds)
+local COMPR_MAX_TOTAL_BALLS = 10000  -- safety: builds × N may not exceed this
+
 -- Loose indexer views for dynamic (string-keyed) access under --!strict.
 local UPGRADES: { [string]: any } = Config.Upgrades :: any
 local AXES: { [string]: any } = Config.Axes :: any
 
 -- Case-insensitive name lookups. tierByLower covers every purchasable tier key
 -- (Config.Upgrades tracks AND Config.Axes axes, e.g. /tier Size 2). axisByLower
--- is just the continuous axes, for setting a loadout position (/axis Weight 1).
+-- is just the continuous axes, for setting a loadout position (/axis Size 0.75).
 local tierByLower: { [string]: string } = {}
 local axisByLower: { [string]: string } = {}
 for track in UPGRADES do
@@ -70,37 +77,45 @@ local function setAllTiers(player: Player, value: number)
 	for track in UPGRADES do
 		ProfileService.SetUpgradeTier(player, track, value)
 	end
-	for axis in AXES do -- axis unlock tiers too, else presets' weight/size clamp
+	for axis in AXES do -- axis unlock tiers too, else preset axis values clamp to tier 0
 		ProfileService.SetUpgradeTier(player, axis, value)
 	end
 end
 
--- Presets unlock all tiers, then set the loadout that defines the build. The
--- loadout (N / weight / phase) is what actually shapes play; maxing tiers just
--- removes the range gates so the extremes are reachable.
+-- Set a continuous axis to a fraction of its currently-unlocked range
+-- (0 = min, 0.5 = mid, 1 = max). Lets presets express "tightest / widest /
+-- centered" without hardcoding unit values that the range gate would clamp.
+local function setAxisFrac(player: Player, axis: string, frac: number)
+	local min, max = ProfileStats.GetAxisRange(ProfileService.GetUpgrades(player), axis)
+	ProfileService.SetAxis(player, axis, min + (max - min) * frac)
+end
+
+-- Presets unlock all tiers, then set the loadout axes that define the build. The
+-- four landing axes (Arc / Angle / Size / Elasticity) are what shape play; maxing
+-- tiers just removes the range gates so the extremes are reachable.
 local PRESETS: { [string]: (Player) -> () } = {
 	targeting = function(player)
 		setAllTiers(player, MAX_TIER)
-		ProfileService.SetBallCount(player, 1)
-		ProfileService.SetAxis(player, "Weight", 1)   -- heavy / aimable
-		ProfileService.SetAxis(player, "Size", 0.5)   -- small
-		ProfileService.SetLaunchPhase(player, 0.25)   -- pinned to an edge
+		setAxisFrac(player, "Arc", 0)         -- tightest swivel (precise)
+		setAxisFrac(player, "Angle", 0.5)     -- centered aim
+		setAxisFrac(player, "Size", 0)        -- smallest ball
+		setAxisFrac(player, "Elasticity", 0)  -- least bounce / variance
 		ProfileService.SetBet(player, BIG_BET)
 	end,
 	chaos = function(player)
 		setAllTiers(player, MAX_TIER)
-		ProfileService.SetBallCount(player, 16)
-		ProfileService.SetAxis(player, "Weight", 0)   -- light / bouncy
-		ProfileService.SetAxis(player, "Size", 1)
-		ProfileService.SetLaunchPhase(player, 0.5)    -- high N spreads coverage
+		setAxisFrac(player, "Arc", 1)         -- widest swivel (spread)
+		setAxisFrac(player, "Angle", 0.5)     -- centered; arc does the spreading
+		setAxisFrac(player, "Size", 1)        -- largest ball
+		setAxisFrac(player, "Elasticity", 1)  -- bounciest / most variance
 		ProfileService.SetBet(player, BIG_BET)
 	end,
 	hybrid = function(player)
 		setAllTiers(player, MAX_TIER)
-		ProfileService.SetBallCount(player, 6)
-		ProfileService.SetAxis(player, "Weight", 0.5)
-		ProfileService.SetAxis(player, "Size", 1)
-		ProfileService.SetLaunchPhase(player, 0.25)
+		setAxisFrac(player, "Arc", 0.5)
+		setAxisFrac(player, "Angle", 0.5)
+		setAxisFrac(player, "Size", 0.5)
+		setAxisFrac(player, "Elasticity", 0.5)
 		ProfileService.SetBet(player, BIG_BET)
 	end,
 }
@@ -113,7 +128,7 @@ local function showState(player: Player)
 		print(string.format("  %s: tier %d", track, up[track] or 0))
 	end
 	local lo = ProfileService.GetLoadout(player)
-	print(string.format("-- Loadout -- bet=%.1f  N=%d  phase=%.2f", lo.Bet, lo.BallCount, lo.LaunchPhase))
+	print(string.format("-- Loadout -- bet=%.1f", lo.Bet))
 	for axis, v in lo.axes do
 		print(string.format("  axis %s = %.2f", axis, v))
 	end
@@ -147,20 +162,9 @@ local STAT_ORDER = {
 	"additiveBonus", "trickle", "banked", "combo",
 }
 
-local function printReport(player: Player, results: { ScoringService.ScoreInfo }, launched: number)
-	local n = #results
-	local bar = string.rep("=", 52)
-	print(bar)
-	print(string.format("Launch Test Report — %s", player.Name))
-	print(string.format("  launched=%d  resolved=%d  timed_out=%d", launched, n, launched - n))
-	if n == 0 then
-		print("  (no balls resolved — none reached a DestroyTarget within the timeout)")
-		print(bar)
-		return
-	end
-
-	-- Bucket every field into a flat array of samples (dynamic key access, hence
-	-- the string-indexer type).
+-- Bucket every STAT_ORDER field of the results into a flat array of samples
+-- (dynamic key access, hence the string-indexer type).
+local function statArrays(results: { ScoringService.ScoreInfo }): { [string]: { number } }
 	local arrays: { [string]: { number } } = {}
 	for _, name in STAT_ORDER do
 		arrays[name] = {}
@@ -175,12 +179,33 @@ local function printReport(player: Player, results: { ScoringService.ScoreInfo }
 		table.insert(arrays.banked, info.banked)
 		table.insert(arrays.combo, info.combo)
 	end
+	return arrays
+end
 
-	print("-- per-ball stats (mean / variance / std) --")
+-- Print mean / variance / std for every STAT_ORDER field, one line each, prefixed
+-- by `indent`. Shared by the full /test report and the per-build /comprtest summary.
+local function printStatLines(results: { ScoringService.ScoreInfo }, indent: string)
+	local arrays = statArrays(results)
 	for _, name in STAT_ORDER do
 		local mean, var = meanVar(arrays[name])
-		print(string.format("  %-14s mean=%11.2f  var=%13.2f  std=%10.2f", name, mean, var, math.sqrt(var)))
+		print(string.format("%s%-14s mean=%11.2f  var=%13.2f  std=%10.2f", indent, name, mean, var, math.sqrt(var)))
 	end
+end
+
+local function printReport(player: Player, results: { ScoringService.ScoreInfo }, launched: number)
+	local n = #results
+	local bar = string.rep("=", 52)
+	print(bar)
+	print(string.format("Launch Test Report — %s", player.Name))
+	print(string.format("  launched=%d  resolved=%d  timed_out=%d", launched, n, launched - n))
+	if n == 0 then
+		print("  (no balls resolved — none reached a DestroyTarget within the timeout)")
+		print(bar)
+		return
+	end
+
+	print("-- per-ball stats (mean / variance / std) --")
+	printStatLines(results, "  ")
 
 	-- Histogram of the final slot multiplier. A ball that landed in an additive /
 	-- non-multiplier slot has no multiplier; it is bucketed under 1× (identity).
@@ -205,10 +230,11 @@ local function printReport(player: Player, results: { ScoringService.ScoreInfo }
 end
 
 -- Fire `count` balls from the player's current loadout/upgrades (bypassing
--- cooldown, cost, and the concurrency cap), collect each ball's ScoreInfo as it
--- banks, then print aggregate stats. Spaced by `interval` so balls don't pile up
--- and skew physics. Runs in its own thread (it yields for the whole test).
-local function runLaunchTest(player: Player, count: number, interval: number)
+-- cooldown, cost, and the concurrency cap), collecting each ball's ScoreInfo as it
+-- banks. Spaced by `interval` so balls don't pile up, then drains all in-flight
+-- balls before returning (bounded by the stuck-timeout, so it always finishes).
+-- Yields for the whole batch; returns (results, launched).
+local function runBatch(player: Player, count: number, interval: number): ({ ScoringService.ScoreInfo }, number)
 	local results: { ScoringService.ScoreInfo } = {}
 	local pending: { [BasePart]: true } = {}
 	local launched = 0
@@ -220,7 +246,6 @@ local function runLaunchTest(player: Player, count: number, interval: number)
 		end
 	end)
 
-	print(string.format("[Dev] Launch test: firing %d balls (interval %.2fs)...", count, interval))
 	for _ = 1, count do
 		local ball = BallLaunchService.LaunchTest(player)
 		pending[ball] = true
@@ -235,13 +260,136 @@ local function runLaunchTest(player: Player, count: number, interval: number)
 	end
 	conn:Disconnect()
 
+	return results, launched
+end
+
+-- /test: fire one batch from the player's current loadout and print full stats.
+local function runLaunchTest(player: Player, count: number, interval: number)
+	print(string.format("[Dev] Launch test: firing %d balls (interval %.2fs)...", count, interval))
+	local results, launched = runBatch(player, count, interval)
 	printReport(player, results, launched)
+end
+
+-- Evenly-spaced sample values across an axis's currently-unlocked range. Falls
+-- back to a single midpoint when the range is a point (or only one level wanted).
+local function axisLevels(player: Player, axis: string, levels: number): { number }
+	local min, max = ProfileStats.GetAxisRange(ProfileService.GetUpgrades(player), axis)
+	if levels <= 1 or max <= min then
+		return { (min + max) / 2 }
+	end
+	local out: { number } = {}
+	for i = 0, levels - 1 do
+		table.insert(out, min + (max - min) * (i / (levels - 1)))
+	end
+	return out
+end
+
+-- Stored axis units → display: Angle/Arc are radians (show degrees); Size and
+-- Elasticity are plain scalars.
+local function fmtBuildParams(p: { [string]: number }): string
+	return string.format("Arc=%2d°  Angle=%3d°  Size=%.2f  Elast=%.2f",
+		math.round(math.deg(p.Arc)), math.round(math.deg(p.Angle)), p.Size, p.Elasticity)
+end
+
+-- One build's summary: params, resolve count, mean/var/std for every stat, and a
+-- one-line final-slot multiplier histogram.
+local function printComprBuild(idx: number, total: number, p: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number)
+	local n = #results
+	print(string.format("[%2d/%d] %s | resolved %d/%d", idx, total, fmtBuildParams(p), n, launched))
+	if n == 0 then
+		print("        (none resolved)")
+		return
+	end
+	printStatLines(results, "        ")
+
+	local hist: { [number]: number } = {}
+	for _, info in results do
+		local m = info.finalMultiplier or 1
+		hist[m] = (hist[m] or 0) + 1
+	end
+	local keys: { number } = {}
+	for m in hist do
+		table.insert(keys, m)
+	end
+	table.sort(keys, function(x, y)
+		return x > y
+	end)
+	local parts: { string } = {}
+	for _, m in keys do
+		table.insert(parts, string.format("%sx:%d", tostring(m), hist[m]))
+	end
+	print("        slots: " .. table.concat(parts, "  "))
+end
+
+-- /comprtest: sweep every combination of the four landing axes (Arc, Angle, Size,
+-- Elasticity), firing N balls per combination, then print a per-build summary of
+-- all of them. Unlocks those four axes' tiers so the full range is sampleable;
+-- other upgrades are left as-is (constant across builds, so comparisons hold).
+local function runComprTest(player: Player, n: number)
+	for _, axis in COMPR_AXES do
+		ProfileService.SetUpgradeTier(player, axis, MAX_TIER)
+	end
+
+	local levels: { [string]: { number } } = {}
+	local total = 1
+	for _, axis in COMPR_AXES do
+		levels[axis] = axisLevels(player, axis, COMPR_LEVELS)
+		total *= #levels[axis]
+	end
+
+	if total * n > COMPR_MAX_TOTAL_BALLS then
+		print(string.format("[Dev] comprtest aborted: %d builds × %d balls = %d > cap %d. Lower N.",
+			total, n, total * n, COMPR_MAX_TOTAL_BALLS))
+		return
+	end
+
+	-- Restore the player's chosen positions afterward (tiers stay raised — monotonic).
+	local saved: { [string]: number } = {}
+	for _, axis in COMPR_AXES do
+		saved[axis] = ProfileService.GetAxis(player, axis)
+	end
+
+	print(string.format("[Dev] comprtest: %d builds × %d balls = %d launches; running...", total, n, total * n))
+
+	type Build = { params: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number }
+	local builds: { Build } = {}
+	for _, arc in levels.Arc do
+		for _, angle in levels.Angle do
+			for _, size in levels.Size do
+				for _, elasticity in levels.Elasticity do
+					ProfileService.SetAxis(player, "Arc", arc)
+					ProfileService.SetAxis(player, "Angle", angle)
+					ProfileService.SetAxis(player, "Size", size)
+					ProfileService.SetAxis(player, "Elasticity", elasticity)
+					local results, launched = runBatch(player, n, TEST_INTERVAL)
+					table.insert(builds, {
+						params = { Arc = arc, Angle = angle, Size = size, Elasticity = elasticity },
+						results = results,
+						launched = launched,
+					})
+				end
+			end
+		end
+	end
+
+	for _, axis in COMPR_AXES do
+		ProfileService.SetAxis(player, axis, saved[axis])
+	end
+
+	local bar = string.rep("=", 78)
+	print(bar)
+	print(string.format("Comprehensive Build Test — %s — %d builds × %d balls", player.Name, #builds, n))
+	print(bar)
+	for i, b in builds do
+		printComprBuild(i, #builds, b.params, b.results, b.launched)
+	end
+	print(bar)
 end
 
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, n, phase, axis, money, preset, test, show"
+		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, show"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -252,7 +400,7 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?): st
 		local track = a2 and tierByLower[a2:lower()]
 		local n = tonumber(a3)
 		if not track or not n then
-			return "usage: /tier <Track> <n>  (incl. Weight, Size)"
+			return "usage: /tier <Track> <n>  (incl. axes: Arc, Angle, Size, Elasticity)"
 		end
 		ProfileService.SetUpgradeTier(player, track, math.floor(n))
 		return string.format("%s -> tier %d", track, math.floor(n))
@@ -261,21 +409,11 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?): st
 		if not n then return "usage: /bet <n>" end
 		ProfileService.SetBet(player, n)
 		return string.format("bet -> %.1f (clamped to max bet)", ProfileService.GetLoadout(player).Bet)
-	elseif cmd == "n" then
-		local n = tonumber(a2)
-		if not n then return "usage: /n <count>" end
-		ProfileService.SetBallCount(player, n)
-		return string.format("N -> %d (clamped to cap)", ProfileService.GetLoadout(player).BallCount)
-	elseif cmd == "phase" then
-		local n = tonumber(a2)
-		if not n then return "usage: /phase <0..1>" end
-		ProfileService.SetLaunchPhase(player, n)
-		return string.format("phase -> %.2f", ProfileService.GetLoadout(player).LaunchPhase)
 	elseif cmd == "axis" then
 		local axis = a2 and axisByLower[a2:lower()]
 		local n = tonumber(a3)
 		if not axis or not n then
-			return "usage: /axis <Weight|Size> <0..1>"
+			return "usage: /axis <Arc|Angle|Size|Elasticity> <value>"
 		end
 		ProfileService.SetAxis(player, axis, n)
 		return string.format("%s -> %.2f (clamped to range)", axis, ProfileService.GetAxis(player, axis))
@@ -302,6 +440,14 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?): st
 		-- the report prints to the server console when the test finishes.
 		task.spawn(runLaunchTest, player, count, interval)
 		return string.format("running launch test: %d balls (results in server console)", count)
+	elseif cmd == "comprtest" then
+		local n = tonumber(a2)
+		if not n then
+			return "usage: /comprtest <n>  (n balls per build)"
+		end
+		n = math.clamp(math.floor(n), 1, TEST_MAX_BALLS)
+		task.spawn(runComprTest, player, n)
+		return string.format("running comprehensive build test: %d balls/build (results in server console)", n)
 	end
 	return nil -- not a dev command; ignore
 end
