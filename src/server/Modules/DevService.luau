@@ -51,6 +51,11 @@ local TEST_MAX_BALLS = 1000  -- hard cap on n, so a typo can't spawn forever
 local COMPR_AXES = { "Arc", "Angle", "Size", "Elasticity" }
 local COMPR_LEVELS = 3        -- evenly-spaced samples per axis across its full range (=> LEVELS^#axes builds)
 local COMPR_MAX_TOTAL_BALLS = 10000  -- safety: builds × N may not exceed this
+-- Batches fire back-to-back (no waiting for the previous batch to land), so balls
+-- from several builds are in flight at once. This forced delay between the last
+-- launch of one batch and the first of the next caps how many pile up — raise it
+-- to lower peak concurrent ball count, lower it to run faster.
+local COMPR_BATCH_GAP = 1.0
 
 -- Loose indexer views for dynamic (string-keyed) access under --!strict.
 local UPGRADES: { [string]: any } = Config.Upgrades :: any
@@ -351,22 +356,53 @@ local function runComprTest(player: Player, n: number)
 
 	print(string.format("[Dev] comprtest: %d builds × %d balls = %d launches; running...", total, n, total * n))
 
+	-- One connection for the whole run. A ball is spawned with its build's axes
+	-- baked in (size/weight/velocity are set at spawn), so once fired it can land
+	-- whenever — we attribute its ScoreInfo by the build it was tagged with, which
+	-- lets batches overlap in flight. Firing itself must stay sequential because
+	-- the axes are shared player state set right before each batch's launches.
 	type Build = { params: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number }
 	local builds: { Build } = {}
+	local ballBuild: { [BasePart]: Build } = {}
+	local launchedTotal, resolved = 0, 0
+
+	local conn = ScoringService.BallScored:Connect(function(ball: BasePart, info: ScoringService.ScoreInfo)
+		local b = ballBuild[ball]
+		if b then
+			ballBuild[ball] = nil
+			table.insert(b.results, info)
+			resolved += 1
+		end
+	end)
+
+	local function fireBuild(params: { [string]: number })
+		for axis, value in params do
+			ProfileService.SetAxis(player, axis, value)
+		end
+		local build: Build = { params = params, results = {}, launched = 0 }
+		table.insert(builds, build)
+		for _ = 1, n do
+			local ball = BallLaunchService.LaunchTest(player)
+			ballBuild[ball] = build
+			build.launched += 1
+			launchedTotal += 1
+			task.wait(TEST_INTERVAL)
+		end
+	end
+
+	-- Fire every combination back-to-back, only pausing COMPR_BATCH_GAP between
+	-- batches to cap how many balls are airborne at once.
+	local first = true
 	for _, arc in levels.Arc do
 		for _, angle in levels.Angle do
 			for _, size in levels.Size do
 				for _, elasticity in levels.Elasticity do
-					ProfileService.SetAxis(player, "Arc", arc)
-					ProfileService.SetAxis(player, "Angle", angle)
-					ProfileService.SetAxis(player, "Size", size)
-					ProfileService.SetAxis(player, "Elasticity", elasticity)
-					local results, launched = runBatch(player, n, TEST_INTERVAL)
-					table.insert(builds, {
-						params = { Arc = arc, Angle = angle, Size = size, Elasticity = elasticity },
-						results = results,
-						launched = launched,
-					})
+					if not first then
+						task.wait(COMPR_BATCH_GAP)
+					end
+					first = false
+					fireBuild({ Arc = arc, Angle = angle, Size = size, Elasticity = elasticity })
+					print(string.format("[Dev] comprtest progress: %d/%d builds launched", #builds, total))
 				end
 			end
 		end
@@ -375,6 +411,14 @@ local function runComprTest(player: Player, n: number)
 	for _, axis in COMPR_AXES do
 		ProfileService.SetAxis(player, axis, saved[axis])
 	end
+
+	-- Single drain: wait for the balls still in flight across all batches.
+	print(string.format("[Dev] comprtest: all %d builds launched; draining in-flight balls...", #builds))
+	local deadline = os.clock() + TEST_TIMEOUT
+	while resolved < launchedTotal and os.clock() < deadline do
+		task.wait(0.1)
+	end
+	conn:Disconnect()
 
 	local bar = string.rep("=", 78)
 	print(bar)
