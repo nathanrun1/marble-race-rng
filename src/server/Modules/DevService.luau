@@ -41,21 +41,25 @@ local MAX_TIER = 5    -- /maxall and presets set every track to this (caps self-
 local BIG_BET = 1e9   -- SetBet clamps this down to the player's current max bet
 
 -- /test tuning.
-local TEST_INTERVAL = 0.02   -- default seconds between launches; spaced so balls don't pile up
+local TEST_INTERVAL = 0.01   -- default seconds between launches; spaced so balls don't pile up
 local TEST_TIMEOUT = 45      -- max seconds to wait for stragglers after the last launch
 local TEST_MAX_BALLS = 1000  -- hard cap on n, so a typo can't spawn forever
 
--- /comprtest tuning. The only independent variables (everything that shapes where
--- a ball lands and what it hits) are these four axes; one batch is fired per
--- combination of their sampled levels (a "build").
+-- /comprtest tuning. Independent variables: the four landing axes (Arc, Angle,
+-- Size, Elasticity) plus Bet (to exercise the jackpot gate, which keys off ball
+-- value). One batch is fired per combination ("build").
 local COMPR_AXES = { "Arc", "Angle", "Size", "Elasticity" }
-local COMPR_LEVELS = 3        -- evenly-spaced samples per axis across its full range (=> LEVELS^#axes builds)
-local COMPR_MAX_TOTAL_BALLS = 10000  -- safety: builds × N may not exceed this
+local COMPR_LEVELS = 3        -- evenly-spaced samples per axis across its full range
+local COMPR_BET_LEVELS = 2    -- bet sweeps i/COMPR_BET_LEVELS × maxBet for i = 1..this (=> tests the jackpot gate)
 -- Batches fire back-to-back (no waiting for the previous batch to land), so balls
 -- from several builds are in flight at once. This forced delay between the last
 -- launch of one batch and the first of the next caps how many pile up — raise it
 -- to lower peak concurrent ball count, lower it to run faster.
-local COMPR_BATCH_GAP = 1.0
+local COMPR_BATCH_GAP = 0.5
+-- Hard cap on how many build batches have balls in play at once: once this many
+-- are airborne, firing blocks until one fully lands before the next batch starts.
+-- Bounds peak concurrent balls to ~this × N. Raise for speed, lower for less load.
+local COMPR_MAX_ACTIVE_BUILDS = 8
 
 -- Loose indexer views for dynamic (string-keyed) access under --!strict.
 local UPGRADES: { [string]: any } = Config.Upgrades :: any
@@ -165,6 +169,8 @@ end
 local STAT_ORDER = {
 	"initialValue", "base", "heatBonus", "comboBonus",
 	"additiveBonus", "trickle", "banked", "combo",
+	"hotPegs", "coldPegs", "neutralPegs",
+	"jackpot", "jackpotHit",  -- jackpot value, and hit rate (mean of 1/0)
 }
 
 -- Bucket every STAT_ORDER field of the results into a flat array of samples
@@ -183,6 +189,11 @@ local function statArrays(results: { ScoringService.ScoreInfo }): { [string]: { 
 		table.insert(arrays.trickle, info.trickle)
 		table.insert(arrays.banked, info.banked)
 		table.insert(arrays.combo, info.combo)
+		table.insert(arrays.hotPegs, info.hotPegs)
+		table.insert(arrays.coldPegs, info.coldPegs)
+		table.insert(arrays.neutralPegs, info.neutralPegs)
+		table.insert(arrays.jackpot, info.jackpot)
+		table.insert(arrays.jackpotHit, if info.jackpotHit then 1 else 0)
 	end
 	return arrays
 end
@@ -290,10 +301,10 @@ local function axisLevels(player: Player, axis: string, levels: number): { numbe
 end
 
 -- Stored axis units → display: Angle/Arc are radians (show degrees); Size and
--- Elasticity are plain scalars.
+-- Elasticity are plain scalars; Bet is a coin amount.
 local function fmtBuildParams(p: { [string]: number }): string
-	return string.format("Arc=%2d°  Angle=%3d°  Size=%.2f  Elast=%.2f",
-		math.round(math.deg(p.Arc)), math.round(math.deg(p.Angle)), p.Size, p.Elasticity)
+	return string.format("Bet=%6.0f  Arc=%2d°  Angle=%3d°  Size=%.2f  Elast=%.2f",
+		p.Bet, math.round(math.deg(p.Arc)), math.round(math.deg(p.Angle)), p.Size, p.Elasticity)
 end
 
 -- One build's summary: params, resolve count, mean/var/std for every stat, and a
@@ -327,9 +338,10 @@ local function printComprBuild(idx: number, total: number, p: { [string]: number
 end
 
 -- /comprtest: sweep every combination of the four landing axes (Arc, Angle, Size,
--- Elasticity), firing N balls per combination, then print a per-build summary of
--- all of them. Unlocks those four axes' tiers so the full range is sampleable;
--- other upgrades are left as-is (constant across builds, so comparisons hold).
+-- Elasticity) × COMPR_BET_LEVELS bet sizes, firing N balls per combination, then
+-- print a per-build summary of all of them. Unlocks those four axes' tiers so the
+-- full range is sampleable; other upgrades are left as-is (constant across builds,
+-- so comparisons hold).
 local function runComprTest(player: Player, n: number)
 	for _, axis in COMPR_AXES do
 		ProfileService.SetUpgradeTier(player, axis, MAX_TIER)
@@ -342,17 +354,21 @@ local function runComprTest(player: Player, n: number)
 		total *= #levels[axis]
 	end
 
-	if total * n > COMPR_MAX_TOTAL_BALLS then
-		print(string.format("[Dev] comprtest aborted: %d builds × %d balls = %d > cap %d. Lower N.",
-			total, n, total * n, COMPR_MAX_TOTAL_BALLS))
-		return
+	-- Bet sweep: i/COMPR_BET_LEVELS × maxBet for i = 1..COMPR_BET_LEVELS, to push
+	-- ball value across the jackpot gate (V_JACK is a fraction of maxBet).
+	local maxBet = ProfileStats.GetMaxBet(ProfileService.GetUpgrades(player))
+	local betLevels: { number } = {}
+	for i = 1, COMPR_BET_LEVELS do
+		table.insert(betLevels, ((COMPR_BET_LEVELS - i + 1) / COMPR_BET_LEVELS) * maxBet)
 	end
+	total *= #betLevels
 
 	-- Restore the player's chosen positions afterward (tiers stay raised — monotonic).
 	local saved: { [string]: number } = {}
 	for _, axis in COMPR_AXES do
 		saved[axis] = ProfileService.GetAxis(player, axis)
 	end
+	local savedBet = ProfileService.GetLoadout(player).Bet
 
 	print(string.format("[Dev] comprtest: %d builds × %d balls = %d launches; running...", total, n, total * n))
 
@@ -361,10 +377,12 @@ local function runComprTest(player: Player, n: number)
 	-- whenever — we attribute its ScoreInfo by the build it was tagged with, which
 	-- lets batches overlap in flight. Firing itself must stay sequential because
 	-- the axes are shared player state set right before each batch's launches.
-	type Build = { params: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number }
+	-- `fired` = all of this build's launches are out; `done` = all of them have also
+	-- landed (resolved). A build counts as "in play" between firing and done.
+	type Build = { params: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number, fired: boolean, done: boolean }
 	local builds: { Build } = {}
 	local ballBuild: { [BasePart]: Build } = {}
-	local launchedTotal, resolved = 0, 0
+	local launchedTotal, resolved, activeBuilds = 0, 0, 0
 
 	local conn = ScoringService.BallScored:Connect(function(ball: BasePart, info: ScoringService.ScoreInfo)
 		local b = ballBuild[ball]
@@ -372,15 +390,25 @@ local function runComprTest(player: Player, n: number)
 			ballBuild[ball] = nil
 			table.insert(b.results, info)
 			resolved += 1
+			-- Last ball of a fully-fired build just landed → that batch left play.
+			if b.fired and not b.done and #b.results >= b.launched then
+				b.done = true
+				activeBuilds -= 1
+			end
 		end
 	end)
 
 	local function fireBuild(params: { [string]: number })
-		for axis, value in params do
-			ProfileService.SetAxis(player, axis, value)
+		for key, value in params do
+			if key == "Bet" then
+				ProfileService.SetBet(player, value)
+			else
+				ProfileService.SetAxis(player, key, value)
+			end
 		end
-		local build: Build = { params = params, results = {}, launched = 0 }
+		local build: Build = { params = params, results = {}, launched = 0, fired = false, done = false }
 		table.insert(builds, build)
+		activeBuilds += 1
 		for _ = 1, n do
 			local ball = BallLaunchService.LaunchTest(player)
 			ballBuild[ball] = build
@@ -388,21 +416,33 @@ local function runComprTest(player: Player, n: number)
 			launchedTotal += 1
 			task.wait(TEST_INTERVAL)
 		end
+		build.fired = true
+		-- Fast builds can fully land before firing finishes; close them out here.
+		if not build.done and #build.results >= build.launched then
+			build.done = true
+			activeBuilds -= 1
+		end
 	end
 
-	-- Fire every combination back-to-back, only pausing COMPR_BATCH_GAP between
-	-- batches to cap how many balls are airborne at once.
+	-- Fire combinations back-to-back, throttled two ways: a COMPR_BATCH_GAP pause
+	-- between batches, and a hard cap on how many batches are in play at once —
+	-- once COMPR_MAX_ACTIVE_BUILDS are airborne, wait for one to fully land first.
 	local first = true
-	for _, arc in levels.Arc do
-		for _, angle in levels.Angle do
-			for _, size in levels.Size do
-				for _, elasticity in levels.Elasticity do
-					if not first then
-						task.wait(COMPR_BATCH_GAP)
+	for _, bet in betLevels do
+		for _, arc in levels.Arc do
+			for _, angle in levels.Angle do
+				for _, size in levels.Size do
+					for _, elasticity in levels.Elasticity do
+						if not first then
+							task.wait(COMPR_BATCH_GAP)
+						end
+						first = false
+						while activeBuilds >= COMPR_MAX_ACTIVE_BUILDS do
+							task.wait(0.1)
+						end
+						fireBuild({ Bet = bet, Arc = arc, Angle = angle, Size = size, Elasticity = elasticity })
+						print(string.format("[Dev] comprtest progress: %d/%d builds launched (%d in play)", #builds, total, activeBuilds))
 					end
-					first = false
-					fireBuild({ Arc = arc, Angle = angle, Size = size, Elasticity = elasticity })
-					print(string.format("[Dev] comprtest progress: %d/%d builds launched", #builds, total))
 				end
 			end
 		end
@@ -411,6 +451,7 @@ local function runComprTest(player: Player, n: number)
 	for _, axis in COMPR_AXES do
 		ProfileService.SetAxis(player, axis, saved[axis])
 	end
+	ProfileService.SetBet(player, savedBet)
 
 	-- Single drain: wait for the balls still in flight across all batches.
 	print(string.format("[Dev] comprtest: all %d builds launched; draining in-flight balls...", #builds))

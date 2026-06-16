@@ -1,10 +1,19 @@
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
 local Config = require(RS.Shared.Config)
 local Signal = require(RS.Shared.Signal)
 
 local CurrencyService = {}
+
+-- Generous bankroll when playtesting in Studio so dev tools (big bets, jackpot
+-- tests) aren't starved; live servers use Config.Currency.StartingBalance.
+local STUDIO_STARTING_BALANCE = 1000000
+
+local function startingBalance(): number
+	return if RunService:IsStudio() then STUDIO_STARTING_BALANCE else Config.Currency.StartingBalance
+end
 
 -- balances[userId] = number
 local balances: { [number]: number } = {}
@@ -47,9 +56,10 @@ end
 
 
 local function _onPlayerAdded(player: Player)
-	balances[player.UserId] = Config.Currency.StartingBalance
-	CurrencyService.Changed:Fire(player, Config.Currency.StartingBalance, 0, "Initial")
-	BalanceChangedRE:FireClient(player, Config.Currency.StartingBalance, 0, "Initial")
+	local start = startingBalance()
+	balances[player.UserId] = start
+	CurrencyService.Changed:Fire(player, start, 0, "Initial")
+	BalanceChangedRE:FireClient(player, start, 0, "Initial")
 	-- later: balances[player.UserId] = DataService.Load(player)
 end
 

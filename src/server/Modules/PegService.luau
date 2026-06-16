@@ -6,8 +6,8 @@
 -- Pattern, by distance from the nearest edge: the edges are 50/50 hot/cold, then
 -- a hot band, then a cold band, then normal toward the center. Each band is a
 -- weighted random pick, so categories mix a little rather than forming clean
--- stripes. Cold's malus (-1.1) is slightly bigger than hot's bonus (+1.0), so
--- sloppy aim is punished.
+-- stripes. The hot/cold heat values live in Config.Pegs (cold's malus is meant to
+-- run slightly bigger than hot's bonus, so sloppy aim is punished).
 
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -19,16 +19,18 @@ local PegService = {}
 local REASSIGN_INTERVAL = 60 -- seconds between repaints
 local COLOR_TWEEN = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
+-- Heat values are fixed per category and live in Config.Pegs (we don't vary within
+-- hot or cold); color/material remain peg-field presentation owned here.
 type Category = { Heat: number, Color: Color3, Material: Enum.Material }
 local CATEGORIES: { [string]: Category } = {
-	Hot    = { Heat =  1.0, Color = Color3.fromRGB(255,   0, 191), Material = Enum.Material.Neon },
-	Cold   = { Heat = -1.0, Color = Color3.fromRGB( 98,  37, 209), Material = Enum.Material.Limestone }, -- TODO: TEMP: set to -1.0 for accurate EV testing, was -1.1
-	Normal = { Heat =  0.0, Color = Color3.fromRGB(180, 128, 255), Material = Enum.Material.Plastic },
+	Hot    = { Heat = Config.Pegs.HotHeat,     Color = Color3.fromRGB(255,   0, 191), Material = Enum.Material.Neon },
+	Cold   = { Heat = Config.Pegs.ColdHeat,    Color = Color3.fromRGB( 98,  37, 209), Material = Enum.Material.Limestone },
+	Normal = { Heat = Config.Pegs.NeutralHeat, Color = Color3.fromRGB(180, 128, 255), Material = Enum.Material.Plastic },
 }
 
 -- Band thresholds on nd (0 = field edge .. 1 = center) and the category weights
 -- per band. Tunable; each band has a dominant category plus spillover for mixing.
-local EDGE_BAND, HOT_BAND, COLD_BAND = 0.12, 0.70, 0.90
+local EDGE_BAND, HOT_BAND, COLD_BAND = 0.12, 0.60, 0.90
 local HOT_WEIGHTS    = { Hot = 0.80, Cold = 0.1, Normal = 0.1 }
 local COLD_WEIGHTS   = { Cold = 0.60, Hot = 0.10, Normal = 0.30 }
 local CENTER_WEIGHTS = { Normal = 0.70, Hot = 0.20, Cold = 0.10 }

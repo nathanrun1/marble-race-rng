@@ -39,7 +39,10 @@ local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
 local HEAT_COLOR_POS     = Color3.fromRGB(255, 140, 0)
 local HEAT_COLOR_NEG     = Color3.fromRGB(80, 160, 255)
-local MIN_COMBO_TO_SHOW  = 17
+local MIN_COMBO_TO_SHOW  = 5
+-- Exponential follow rate for the value-UI anchor (higher = snappier / less lag,
+-- lower = smoother). Frame-rate independent via 1 - exp(-rate * dt).
+local VALUE_FOLLOW_RATE  = 30
 
 -- Per-ball base color resolved at spawn (server-populated; client reads default).
 local baseColors: { [BasePart]: Color3 } = {}
@@ -118,9 +121,69 @@ function BallEffects.ApplyHeat(ball: BasePart, heat: number)
 	applyHeatParticles(ball, heat)
 end
 
+-- Per-ball smooth-follow value UI. The ball itself carries no ValueUI; AttachValueUI
+-- spawns an anchored part that lerps toward the ball each frame and holds a clone of
+-- Assets.ValueUI, so the billboard glides instead of jittering with the ball's
+-- physics replication. Keyed by ball for SetValueUI updates and cleanup. Per context
+-- (a client follower and a server follower for the same ball are independent).
+local valueFollowers: { [BasePart]: { anchor: BasePart, label: TextLabel, conn: RBXScriptConnection } } = {}
+
+local function removeValueFollower(ball: BasePart)
+	local f = valueFollowers[ball]
+	if not f then return end
+	valueFollowers[ball] = nil
+	f.conn:Disconnect()
+	f.anchor:Destroy()
+end
+
+-- Instantiate an anchored part that smoothly follows `ball`, carrying a clone of
+-- ReplicatedStorage.Assets.ValueUI (a BillboardGui). Decouples the value billboard
+-- from the ball's jittery motion. Callable from client or server (e.g. via
+-- DoClientEffect); the follower lives only in the calling context and
+-- self-destructs when the ball is gone. Idempotent: a second call replaces the
+-- existing follower. Returns the anchor, or nil if the ball isn't present (e.g. a
+-- DoClientEffect arrived before the ball replicated).
+function BallEffects.AttachValueUI(ball: BasePart?): BasePart?
+	if not ball or not ball.Parent then return nil end
+	removeValueFollower(ball)
+
+	local anchor = Instance.new("Part")
+	anchor.Name = "ValueFollower"
+	anchor.Size = Vector3.new(0.05, 0.05, 0.05)
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false   -- invisible to ScoringService overlap queries
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.Position = ball.Position
+	anchor.Parent = workspace
+
+	local ui = (RS.Assets:WaitForChild("ValueUI") :: BillboardGui):Clone()
+	ui.Parent = anchor
+	local label = ui:FindFirstChild("TextLabel") :: TextLabel
+
+	-- RenderStepped on the client (smoothest, pre-render); Heartbeat on the server.
+	local stepped = if RunService:IsClient() then RunService.RenderStepped else RunService.Heartbeat
+	local conn = stepped:Connect(function(dt: number)
+		if not ball.Parent then
+			removeValueFollower(ball) -- ball despawned/destroyed; clean up
+			return
+		end
+		local alpha = 1 - math.exp(-VALUE_FOLLOW_RATE * dt)
+		anchor.Position = anchor.Position:Lerp(ball.Position, alpha)
+	end)
+
+	valueFollowers[ball] = { anchor = anchor, label = label, conn = conn }
+	return anchor
+end
+
+-- Update the follower's text. No-op if AttachValueUI hasn't been called for this
+-- ball in this context (the ball has no ValueUI of its own).
 function BallEffects.SetValueUI(ball: BasePart, value: number)
-	local textLabel: TextLabel = (ball:FindFirstChild("ValueUI") :: Instance):FindFirstChild("TextLabel") :: TextLabel
-	textLabel.Text = tostring(value)
+	local f = valueFollowers[ball]
+	if f then
+		f.label.Text = tostring(value)
+	end
 end
 
 function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: string, color: Color3?)
@@ -274,14 +337,39 @@ if RunService:IsServer() then
 end
 
 ----------------------------------------------------------------------------------
--- Client-only: receive and dispatch effect calls from server
+-- Client-only: receive server effect calls, and self-attach the value UI to our
+-- own balls. The attach is driven off the Ball tag rather than a server remote:
+-- CollectionService's added signal fires only once the ball has replicated to this
+-- client, so the ball is always present — no spawn-time replication race.
 ----------------------------------------------------------------------------------
 if RunService:IsClient() then
+	local Players = game:GetService("Players")
+	local CollectionService = game:GetService("CollectionService")
+	local localUserId = Players.LocalPlayer.UserId
+
+	local function onBallTagged(ball: BasePart)
+		if ball:GetAttribute(Config.Attributes.OwnerUserId) == localUserId then
+			BallEffects.AttachValueUI(ball)
+		end
+	end
+
 	function BallEffects.Init()
 		local remote = RS.Remote:WaitForChild("BallEffect") :: RemoteEvent
 		remote.OnClientEvent:Connect(function(effect: string, ball: BasePart?, ...: any)
 			local fn = (BallEffects :: any)[effect]
 			if fn then fn(ball, ...) end
+		end)
+
+		-- Attach to our own balls already present, and any that appear later.
+		for _, ball in CollectionService:GetTagged(Config.Tags.Ball) do
+			if ball:IsA("BasePart") then
+				onBallTagged(ball)
+			end
+		end
+		CollectionService:GetInstanceAddedSignal(Config.Tags.Ball):Connect(function(inst)
+			if inst:IsA("BasePart") then
+				onBallTagged(inst)
+			end
 		end)
 	end
 end

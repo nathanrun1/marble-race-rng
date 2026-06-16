@@ -27,7 +27,7 @@ local ScoringService = {}
 -- Itemized breakdown of one ball's final payout, built when the ball hits a
 -- DestroyTarget and emitted via BallScored. The contribution fields are additive
 -- and reconstruct the total:
---   banked == base + heatBonus + comboBonus + additiveBonus + trickle
+--   banked == base + heatBonus + comboBonus + additiveBonus + trickle + jackpot
 -- Intended for analysis tooling (DevService's launch test) more than gameplay.
 export type ScoreInfo = {
 	targetName: string,       -- name of the DestroyTarget hit
@@ -40,6 +40,11 @@ export type ScoreInfo = {
 	trickle: number,          -- unconditional per-launch income
 	combo: number,            -- number of scoring bounces credited
 	banked: number,           -- total credited to the player
+	hotPegs: number,          -- hot peg hits (PegHeat > 0) registered this flight
+	coldPegs: number,         -- cold peg hits (PegHeat < 0)
+	neutralPegs: number,      -- neutral peg hits (PegHeat == 0)
+	jackpot: number,          -- jackpot bonus added to banked (0 if no JackpotTarget hit)
+	jackpotHit: boolean,      -- whether a JackpotTarget was hit this flight
 }
 
 -- (ball: BasePart, info: ScoreInfo) — fired once when a ball is banked at a
@@ -73,6 +78,14 @@ type BallState = {
 	-- Number of scoring hits credited; the combo count. At banking, combo *
 	-- flatPerBounce is awarded when it reaches Config.Scoring.MinCombo.
 	bounces: number,
+	-- Peg hits this flight, split by the peg's PegHeat sign (>0 hot, <0 cold, 0
+	-- neutral). Counts registered hit events (post-cooldown), not distinct pegs.
+	hotPegs: number,
+	coldPegs: number,
+	neutralPegs: number,
+	-- Set once the ball hits any JackpotTarget; applied as a banked-value multiplier
+	-- at banking (see buildScoreInfo). Persists until the ball is banked.
+	jackpotHit: boolean,
 }
 local ballState: { [BasePart]: BallState } = {}
 
@@ -103,6 +116,10 @@ local function buildScoreInfo(player: Player, ball: BasePart, base: number, mult
 	local state = ballState[ball]
 	local upgrades = ProfileService.GetUpgrades(player)
 
+	local jackpotHit = if state then state.jackpotHit else false
+	local jackpot = if jackpotHit then base * Config.Scoring.JackpotMultiplier else 0
+	base += jackpot
+
 	local H: number = math.max(if state then state.heat else 0, MIN_HEAT_ACCUM)
 	local heatPayout: number = base * math.max(0, 1 + H)
 	local heatEffect: number = heatPayout - base
@@ -130,15 +147,17 @@ local function buildScoreInfo(player: Player, ball: BasePart, base: number, mult
 		trickle = trickle,
 		combo = combo,
 		banked = banked,
+		hotPegs = if state then state.hotPegs else 0,
+		coldPegs = if state then state.coldPegs else 0,
+		neutralPegs = if state then state.neutralPegs else 0,
+		jackpot = jackpot,
+		jackpotHit = jackpotHit,
 	}
 end
 
--- The value a ball "feels" worth in flight: its accumulated value plus the combo
--- and heat bonuses earned so far. Excludes the base-additive and trickle (paid
--- only at banking) and any final-slot multiplier (not yet hit). This is what the
--- UI shows and what the jackpot gate tests.
+-- The value a ball "feels" worth in flight
 function ScoringService.GetEffectiveValue(info: ScoreInfo): number
-	return info.base + info.comboBonus + info.heatBonus
+	return info.base + info.heatBonus
 end
 
 -- Compute a ball's final payout from its accumulated state, emit the ScoreInfo,
@@ -170,6 +189,9 @@ local function bankBall(player: Player, ball: BasePart, base: number, multiplier
 	if baseAdditive > 0 then
 		ScoreUI.PostMessage(player, "Additive Bonus! +$" .. math.floor(baseAdditive), Color3.fromRGB(98, 37, 209))
 	end
+	if info.jackpotHit then
+		ScoreUI.PostMessage(player, "JACKPOT! $" .. math.floor(info.jackpot), Color3.fromRGB(255, 105, 180))
+	end
 
 	BallService.Despawn(ball)
 	CurrencyService.AddPoints(player, banked, if stuck then "Ball stuck (timeout): " .. ball.Name else "Ball destroyed at target: " .. targetName)
@@ -181,7 +203,9 @@ end
 local function updateEffectiveValue(player: Player, ball: BasePart)
 	local info = buildScoreInfo(player, ball, BallService.GetBallValue(ball), nil, "")
 	local effective = ScoringService.GetEffectiveValue(info)
-	BallEffects.SetValueUI(ball, math.floor(effective))
+	-- The value billboard is a client-side smooth-follow (see BallEffects.AttachValueUI),
+	-- so update it on the owner's client rather than server-side.
+	BallEffects.DoClientEffect(player, "SetValueUI", ball, math.floor(effective))
 	ScoringService.EffectiveValueChanged:Fire(ball, effective)
 end
 
@@ -221,6 +245,13 @@ local function resolveHit(ball: BasePart, target: Instance)
 	-- (the heat map is objective); the player's tier scales the effect at banking.
 	local pegHeat: number? = target:GetAttribute(Config.Attributes.PegHeat)
 	if pegHeat and state then
+		if pegHeat > 0 then
+			state.hotPegs += 1
+		elseif pegHeat < 0 then
+			state.coldPegs += 1
+		else
+			state.neutralPegs += 1
+		end
 		local heatFactor: number = ProfileStats.GetPegHeatFactor(ProfileService.GetUpgrades(player))
 		local heatDelta = pegHeat * heatFactor
 		state.heat = math.max(state.heat + heatDelta, 0)
@@ -228,6 +259,12 @@ local function resolveHit(ball: BasePart, target: Instance)
 			BallEffects.ApplyHeat(ball, state.heat / heatFactor)  -- Normalize by heat factor for cosmetic
 		end
 		BallEffects.DoClientEffect(player, "ShowHeatPopup", ball, heatDelta)
+	end
+
+	-- Jackpot: mark the ball; the bonus is applied to its banked value at banking.
+	-- Persists if this isn't also the destroy target.
+	if target:HasTag(Config.Tags.JackpotTarget) and state then
+		state.jackpotHit = true
 	end
 
 	if target:HasTag(Config.Tags.DestroyTarget) then
@@ -292,14 +329,29 @@ local function onHeartbeat()
 end
 
 local function onBallSpawn(ball: BasePart)
-	BallEffects.SetValueUI(ball, BallService.GetBallValue(ball))
 	ballState[ball] = {
 		spawnClock = os.clock(),
 		spawnValue = BallService.GetBallValue(ball),
 		hits = {},
 		heat = 0,
 		bounces = 0,
+		hotPegs = 0,
+		coldPegs = 0,
+		neutralPegs = 0,
+		jackpotHit = false,
 	}
+	-- The value billboard is a client-side smooth-follow attached by the owner's
+	-- client off the Ball tag (see BallEffects). Push the initial value once the ball
+	-- has replicated (deferred a frame so the ball arg isn't nil on the client).
+	local ownerId = ball:GetAttribute(Config.Attributes.OwnerUserId) :: number?
+	local player = if ownerId then Players:GetPlayerByUserId(ownerId) else nil
+	if player then
+		task.spawn(function()
+			task.wait()
+			if not BallService.IsBallActive(ball) then return end -- despawned within the frame
+			BallEffects.DoClientEffect(player, "SetValueUI", ball, BallService.GetBallValue(ball))
+		end)
+	end
 end
 
 local function onBallDespawn(ball: BasePart)

@@ -6,6 +6,7 @@ Config.Tags = {
 	ScoreTarget = "ScoreTarget",       -- Scores on ball collision
 	DestroyTarget = "DestroyTarget",   -- Destroys ball on collision
 	BounceTarget = "BounceTarget",      -- Counts towards bounce combo
+	JackpotTarget = "JackpotTarget",   -- Multiplies the ball's banked value by Config.Scoring.JackpotMultiplier
 	Ball = "Ball"
 }
 
@@ -32,6 +33,18 @@ Config.Scoring = {
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
 	-- (a ball wedged on geometry must not live forever). Tune above a normal fall.
 	MaxBallLifetime = 25,
+	-- Jackpot payout: hitting a JackpotTarget adds JackpotMultiplier × the ball's
+	-- otherwise-final banked value (so total = banked × (1 + this)). Tune.
+	JackpotMultiplier = 30,
+}
+
+-- Peg-field heat values PegService writes to each peg's PegHeat attribute. Fixed
+-- per category (we don't vary within hot or cold); ScoringService reads the sign
+-- of the attribute to classify a hit (>0 hot, <0 cold, 0 neutral).
+Config.Pegs = {
+	HotHeat = 1.0,
+	ColdHeat = -1.0,   -- TEMP: -1.0 for accurate EV testing; gameplay value was -1.1
+	NeutralHeat = 0.0,
 }
 
 Config.Currency = {
@@ -41,7 +54,7 @@ Config.Currency = {
 Config.Economy = {
 	StartMaxBet = 40,        -- guideline §4; base for the MaxBet track
 	TrickleFraction = 0.08,  -- × currentMaxBet, free per batch (§1.2)
-	VJackFraction = 0.4,     -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
+	VJackFraction = 0.8,     -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
 }
 
 -- Upgrade tracks. ProfileService stores the *tier* (an integer); the effective
@@ -189,6 +202,7 @@ Config.Templates = {
 table.freeze(Config.Tags)
 table.freeze(Config.Attributes)
 table.freeze(Config.Scoring)
+table.freeze(Config.Pegs)
 table.freeze(Config.Currency)
 table.freeze(Config.Economy)
 table.freeze(Config.Upgrades)
