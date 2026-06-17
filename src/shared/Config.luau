@@ -26,7 +26,7 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 20,
+	MinCombo = 18,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 0.25, -- temp value
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
@@ -34,7 +34,7 @@ Config.Scoring = {
 	MaxBallLifetime = 25,
 	-- Jackpot payout: hitting a JackpotTarget adds JackpotMultiplier × the ball's
 	-- otherwise-final banked value (so total = banked × (1 + this)). Tune.
-	JackpotMultiplier = 30,
+	JackpotMultiplier = 25,
 }
 
 -- Peg-field heat values PegService writes to each peg's PegHeat attribute. Fixed
@@ -51,9 +51,9 @@ Config.Currency = {
 }
 
 Config.Economy = {
-	StartMaxBet = 40,        -- guideline §4; base for the MaxBet track
-	TrickleFraction = 0.08,  -- × currentMaxBet, free per batch (§1.2)
-	VJackFraction = 0.8,     -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
+	StartMaxBet = 40,         -- guideline §4; base for the MaxBet track
+	TrickleFraction = 0.1,    -- × currentMaxBet, free per batch (§1.2)
+	VJackFraction = 0.55,     -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
 }
 
 -- Upgrade tracks. ProfileService stores the *tier* (an integer); the effective
@@ -78,29 +78,30 @@ Config.Economy = {
 Config.Upgrades = {
 	-- maxBet = Economy.StartMaxBet * (PerTier ^ tier)   [cap for loadout.Bet]
 	MaxBet = {
-		PerTier = 2,
-		Cost = { Base = 200, Growth = 2.3 },  -- Growth > 2 to outpace maxBet
+		PerTier = 3.2,
+		Cost = { Base = 250, Growth = 3.2 },  -- Growth > 2 to outpace maxBet
 		Name = "Max Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰"
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	FlatRate = {
-		Base = 1, PerTier = 2,
-		Cost = { Base = 150, Growth = 2.0 },
+		Base = 1.5, PerTier = 3.2,
+		Cost = { Base = 215, Growth = 3.2 },
 		Name = "Combo", Desc = "More points per bounce during a combo.",
 		Icon = "⚡"
 	},
 	-- baseAdditive = PerTier * tier  (additive)         [output-scaling]
 	BaseAdditive = {
-		PerTier = 0.05,  -- INFERRED: guideline gives no exact per-tier %
-		Cost = { Base = 200, Growth = 2.0 },
+		Base = 0.05, PerTier = 1.66,
+		Cost = { Base = 215, Growth = 3.2 },
 		Name = "Base Bonus", Desc = "Boost your final slot payout.",
 		Icon = "➕"
 	},
 	-- Minimum delay between launches
 	Frequency = {
-		Caps = { 4, 3, 2.5, 2, 1.5, 1, 0.5, 0.25 },
-		Cost = { Base = 500, Growth = 4.0 },
+		Base = 2, PerTier = 0.67,
+		MaxTier = 12,
+		Cost = { Base = 230, Growth = 3.2 },
 		Name = "Launch Delay", Desc = "Decrease time between launches",
 		Icon = "🔄"
 	},
@@ -108,8 +109,8 @@ Config.Upgrades = {
 	-- simplified): tier 0 = heat has no effect; higher = aimed hot pegs pay more
 	-- (and random cold paths cost more). Targeting channel; only pays with aim.
 	PegHeat = {
-		PerTier = 0.5,  -- INFERRED magnitude; tune against the heat map
-		Cost = { Base = 500, Growth = 2.0 },
+		PerTier = 0.05,  -- INFERRED magnitude; tune against the heat map
+		Cost = { Base = 180, Growth = 3.2 },
 		Name = "Peg Sense", Desc = "Hot and cold pegs affect you more strongly.",
 		Icon = "🔥"
 	},
@@ -139,9 +140,19 @@ Config.Axes = {
 	Elasticity = {
 		Default = 0.5,  -- 0 = low elasticity, 1 = high elasticity
 		Ranges = {
-			{ Min = 0.5, Max = 0.5 },    -- tier 0: locked at center
-			{ Min = 0.25, Max = 0.75 },  -- tier 1: partial
-			{ Min = 0.0, Max = 1.0 },    -- tier 2: full heavy↔light
+			{ Min = 0.5, Max = 0.5 },
+			{ Min = 0.45, Max = 0.55 },
+			{ Min = 0.41, Max = 0.59 },
+			{ Min = 0.37, Max = 0.63 },
+			{ Min = 0.33, Max = 0.67 },
+			{ Min = 0.29, Max = 0.71 },
+			{ Min = 0.25, Max = 0.75 },
+			{ Min = 0.2, Max = 0.8 },
+			{ Min = 0.16, Max = 0.84 },
+			{ Min = 0.12, Max = 0.88 },
+			{ Min = 0.08, Max = 0.92 },
+			{ Min = 0.04, Max = 0.96 },
+			{ Min = 0.0, Max = 1.0 },
 		},
 		Cost = { Base = 1000, Growth = 12 },
 		Name = "Bounciness", Desc = "How bouncy the ball is. More bounciness increases variance.",
@@ -150,23 +161,40 @@ Config.Axes = {
 	Size = {
 		Default = 1.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
 		Ranges = {
-			{ Min = 1.0, Max = 1.0 },   -- tier 0: locked at full
-			{ Min = 0.75, Max = 1.0 },  -- tier 1
-			{ Min = 0.5, Max = 1.0 },   -- tier 2
+			{ Min = 0.75, Max = 0.75 },
+			{ Min = 0.72, Max = 0.77 },
+			{ Min = 0.7, Max = 0.79 },
+			{ Min = 0.67, Max = 0.81 },
+			{ Min = 0.65, Max = 0.83 },
+			{ Min = 0.63, Max = 0.85 },
+			{ Min = 0.61, Max = 0.87 },
+			{ Min = 0.59, Max = 0.89 },
+			{ Min = 0.57, Max = 0.91 },
+			{ Min = 0.55, Max = 0.94 },
+			{ Min = 0.53, Max = 0.96 },
+			{ Min = 0.51, Max = 0.98 },
+			{ Min = 0.5, Max = 1 },
 		},
 		Cost = { Base = 1000, Growth = 12 },
-		Name = "Ball Size", Desc = "Unlock smaller balls.",
+		Name = "Ball Size", Desc = "Unlock different ball sizes.",
 		Icon = "◯"
 	},
 	Angle = {
 		Default = 0.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
 		Ranges = {
-			{ Min = 0.0, Max = 0.0 },   -- tier 0: locked at center
-			{ Min = -math.rad(10), Max = math.rad(10) },   -- tier 1
-			{ Min = -math.rad(15), Max = math.rad(15) },   -- tier 2
-			{ Min = -math.rad(20), Max = math.rad(20) },   -- tier 3
-			{ Min = -math.rad(40), Max = math.rad(40) },   -- tier 4
-			{ Min = -math.rad(60), Max = math.rad(60) },   -- tier 5
+			{ Min = -math.rad(0.0), Max = math.rad(0.0) },
+			{ Min = -math.rad(10.0), Max = math.rad(10.0) },
+			{ Min = -math.rad(13.7), Max = math.rad(13.7) },
+			{ Min = -math.rad(16.0), Max = math.rad(16.0) },
+			{ Min = -math.rad(18.7), Max = math.rad(18.7) },
+			{ Min = -math.rad(21.9), Max = math.rad(21.9) },
+			{ Min = -math.rad(25.5), Max = math.rad(25.5) },
+			{ Min = -math.rad(29.8), Max = math.rad(29.8) },
+			{ Min = -math.rad(34.9), Max = math.rad(34.9) },
+			{ Min = -math.rad(40.8), Max = math.rad(40.8) },
+			{ Min = -math.rad(47.6), Max = math.rad(47.6) },
+			{ Min = -math.rad(55.7), Max = math.rad(55.7) },
+			{ Min = -math.rad(65.0), Max = math.rad(65.0) },
 		},
 		Cost = { Base = 1000, Growth = 12 },
 		Name = "Angle", Desc = "Launch angle.",
@@ -175,10 +203,19 @@ Config.Axes = {
 	Arc = {
 		Default = math.rad(15),
 		Ranges = {
-			{ Min = math.rad(15), Max = math.rad(15) },  -- tier 0: locked at 15 deg swivel
-			{ Min = math.rad(12), Max = math.rad(25) },  -- tier 1
-			{ Min = math.rad(8), Max = math.rad(35) },   -- tier 3
-			{ Min = math.rad(5), Max = math.rad(45) },   -- tier 4
+			{ Min = math.rad(0), Max = math.rad(15.0) },
+			{ Min = math.rad(0), Max = math.rad(17.3) },
+			{ Min = math.rad(0), Max = math.rad(19.9) },
+			{ Min = math.rad(0), Max = math.rad(22.8) },
+			{ Min = math.rad(0), Max = math.rad(26.3) },
+			{ Min = math.rad(0), Max = math.rad(30.2) },
+			{ Min = math.rad(0), Max = math.rad(34.7) },
+			{ Min = math.rad(0), Max = math.rad(39.9) },
+			{ Min = math.rad(0), Max = math.rad(45.8) },
+			{ Min = math.rad(0), Max = math.rad(52.7) },
+			{ Min = math.rad(0), Max = math.rad(60.6) },
+			{ Min = math.rad(0), Max = math.rad(69.6) },
+			{ Min = math.rad(0), Max = math.rad(80.0) },
 		},
 		Cost = { Base = 400, Growth = 40 },
 		Name = "Launcher Swivel", Desc = "Widen or tighten the possible launch angles.",

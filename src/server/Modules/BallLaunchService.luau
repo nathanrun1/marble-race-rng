@@ -20,7 +20,8 @@ local requestLaunch = RS.Remote.RequestLaunch
 local BallLaunchService = {}
 
 -- Server-chosen trajectory constants. The client never touches these.
-local SPAWN_POS = Vector3.new(43.859, 190.14, 332.272)
+--local SPAWN_POS = Vector3.new(43.859, 190.14, 332.272)
+local SPAWN_POS = Vector3.new(21.45, 170.032, 296.331)
 local BATCH_SECONDS = 3                         -- seconds per batch; server owns timing
 local MAX_BALLS_PER_PLAYER = 40                 -- concurrency ceiling (well above max N)
 local LAUNCHER_ROT_PERIOD = 3                   -- Launcher full rotation period in seconds
@@ -98,12 +99,26 @@ local function launchFor(player: Player)
 	spawnBall(player)
 end
 
+export type TestLaunchOptions = {
+	phase: number?,   -- 0..1 swivel phase; nil = clock-derived
+	weight: number?,  -- overrides loadout Elasticity-derived weight
+	size: number?,    -- overrides loadout Size axis
+}
+
 -- Dev/test only: fire one ball immediately, bypassing the cooldown, the
--- affordability check, the concurrency cap, and the bet charge. For measuring
--- outcome distributions over many launches (DevService /test). Returns the ball
+-- affordability check, the concurrency cap, and the bet charge. Returns the ball
 -- so the caller can match it against ScoringService.BallScored.
-function BallLaunchService.LaunchTest(player: Player): BasePart
-	return spawnBall(player)
+function BallLaunchService.LaunchTest(player: Player, opts: TestLaunchOptions?): BasePart
+	local o = opts or {}
+	local loadout = ProfileService.GetLoadout(player)
+	local phase = o.phase or (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
+	return BallService.Spawn(genSpawnPos(), {
+		ownerUserId = player.UserId,
+		velocity = deriveLaunchVelocity(phase, loadout.axes.Arc, loadout.axes.Angle),
+		initialValue = loadout.Bet,
+		weight = o.weight or (1 - loadout.axes.Elasticity),
+		size = o.size or loadout.axes.Size,
+	})
 end
 
 -- Client configures its bet (intent only); the server clamps and stores it on

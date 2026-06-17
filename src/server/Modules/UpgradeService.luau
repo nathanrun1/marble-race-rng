@@ -30,6 +30,7 @@ type UpgradeDef = {
 	Caps: { number }?,                         -- Frequency: tier cap = #Caps - 1
 	Widths: { number }?,                       -- Arc: tier cap = #Widths - 1
 	Ranges: { { Min: number, Max: number } }?, -- continuous axes: cap = #Ranges - 1
+	MaxTier: number?
 }
 
 -- Everything purchasable: the idle/scoring tracks (Config.Upgrades) AND the
@@ -70,6 +71,8 @@ local function maxTierOf(def: UpgradeDef): number?
 		return #def.Widths - 1
 	elseif def.Ranges then
 		return #def.Ranges - 1
+	elseif def.MaxTier then
+		return def.MaxTier
 	end
 	return nil
 end
@@ -109,7 +112,7 @@ end
 function UpgradeService.GetAllInfo(player: Player): { [string]: Info }
 	local out: { [string]: Info } = {}
 	for track in UpgradeDefs do
-		out[track] = UpgradeService.GetInfo(player, track)
+		out[track] = UpgradeService.GetInfo(player, track) :: Info
 	end
 	return out
 end

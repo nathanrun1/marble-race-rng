@@ -55,11 +55,16 @@ local COMPR_BET_LEVELS = 2    -- bet sweeps i/COMPR_BET_LEVELS × maxBet for i =
 -- from several builds are in flight at once. This forced delay between the last
 -- launch of one batch and the first of the next caps how many pile up — raise it
 -- to lower peak concurrent ball count, lower it to run faster.
-local COMPR_BATCH_GAP = 0.5
+local COMPR_BATCH_GAP = 0.05
 -- Hard cap on how many build batches have balls in play at once: once this many
 -- are airborne, firing blocks until one fully lands before the next batch starts.
 -- Bounds peak concurrent balls to ~this × N. Raise for speed, lower for less load.
-local COMPR_MAX_ACTIVE_BUILDS = 8
+local COMPR_MAX_ACTIVE_BUILDS = 20
+
+-- /comprtest analysis. Intended (base - jackpot) / value for a non-jackpot slot;
+-- the analysis pass reports the observed ratio against this so a hot multiplier
+-- table is visible without leaving the console.
+local SLOT_EV_TARGET = 0.85
 
 -- Loose indexer views for dynamic (string-keyed) access under --!strict.
 local UPGRADES: { [string]: any } = Config.Upgrades :: any
@@ -163,6 +168,36 @@ local function meanVar(xs: { number }): (number, number)
 	return mean, sq / n
 end
 
+-- Pearson correlation of two equal-length samples. Returns 0 when either side
+-- has no variance (an all-constant axis can't correlate with anything), matching
+-- the "undefined -> ignore" treatment in the offline analysis. The analysis pass
+-- separately warns when an axis is constant, so a +0.000 from this isn't mistaken
+-- for a real null result.
+local function pearson(xs: { number }, ys: { number }): number
+	local n = #xs
+	if n ~= #ys or n < 2 then
+		return 0
+	end
+	local mx, my = 0, 0
+	for i = 1, n do
+		mx += xs[i]
+		my += ys[i]
+	end
+	mx /= n
+	my /= n
+	local sxy, sxx, syy = 0, 0, 0
+	for i = 1, n do
+		local dx, dy = xs[i] - mx, ys[i] - my
+		sxy += dx * dy
+		sxx += dx * dx
+		syy += dy * dy
+	end
+	if sxx == 0 or syy == 0 then
+		return 0
+	end
+	return sxy / math.sqrt(sxx * syy)
+end
+
 -- The per-ball numeric fields we summarize, in print order. Each adds up across
 -- balls; `banked` is the sum of base + heatBonus + comboBonus + additiveBonus +
 -- trickle (and the test prints all of them so the breakdown is verifiable).
@@ -262,8 +297,8 @@ local function runBatch(player: Player, count: number, interval: number): ({ Sco
 		end
 	end)
 
-	for _ = 1, count do
-		local ball = BallLaunchService.LaunchTest(player)
+	for i = 1, count do
+		local ball = BallLaunchService.LaunchTest(player, { phase = (i - 1) / count })
 		pending[ball] = true
 		launched += 1
 		task.wait(interval)
@@ -337,11 +372,266 @@ local function printComprBuild(idx: number, total: number, p: { [string]: number
 	print("        slots: " .. table.concat(parts, "  "))
 end
 
+-- A build reduced to its scalar inputs (axis settings, in display units) and the
+-- per-build mean of each output stat. One BuildRow is one data point for the
+-- cross-build correlations; the means come from the same arrays the per-build
+-- summary uses, so the analysis can't diverge from the printed numbers.
+type BuildRow = {
+	bet: number, arc: number, angle: number, size: number, elast: number,
+	stat: { [string]: number },
+}
+
+local function buildRow(p: { [string]: number }, results: { ScoringService.ScoreInfo }): BuildRow?
+	if #results == 0 then
+		return nil  -- a build with no resolved balls contributes no data point
+	end
+	local arrays = statArrays(results)
+	local stat: { [string]: number } = {}
+	for _, name in STAT_ORDER do
+		local mean = meanVar(arrays[name])
+		stat[name] = mean
+	end
+	return {
+		bet = p.Bet,
+		arc = math.deg(p.Arc),
+		angle = math.deg(p.Angle),
+		size = p.Size,
+		elast = p.Elasticity,
+		stat = stat,
+	}
+end
+
+-- Cross-build diagnostics over the finished comprtest. This is the offline
+-- correlation pass moved server-side: which axes drive jackpot access, whether
+-- edge-aiming actually moves landing mass to hot pegs (the aim-channel check),
+-- whether size is still the jackpot axis, the slot-EV ratio, and the value-gate
+-- check across bet tiers. Marginal correlations can mislead when two axes interact
+-- (a flat corr(size, jackpotHit) once hid an angle×size interaction), so the
+-- conditioned breakdowns below the corr tables are the ones to trust on conflict.
+local function printComprAnalysis(rows: { BuildRow })
+	local bar = string.rep("=", 78)
+	if #rows < 2 then
+		print(bar)
+		print("Analysis: too few resolved builds to correlate.")
+		print(bar)
+		return
+	end
+
+	-- Distinct bet tiers; the EV/aim sections use the top tier (jackpot reachable),
+	-- the gate check spans all tiers.
+	local betsSeen: { [number]: boolean } = {}
+	for _, r in rows do
+		betsSeen[r.bet] = true
+	end
+	local betList: { number } = {}
+	for b in betsSeen do
+		table.insert(betList, b)
+	end
+	table.sort(betList)
+	local topBet = betList[#betList]
+
+	-- Top-bet rows, and a representative ball value at that bet (initialValue mean).
+	local top: { BuildRow } = {}
+	for _, r in rows do
+		if r.bet == topBet then
+			table.insert(top, r)
+		end
+	end
+	local val = 0
+	for _, r in top do
+		val += r.stat.initialValue
+	end
+	val /= #top
+
+	-- Column extractors over the top-bet rows.
+	local function axisCol(name: string): { number }
+		local out: { number } = {}
+		for _, r in top do
+			local v
+			if name == "absAngle" then
+				v = math.abs(r.angle)
+			elseif name == "arc" then
+				v = r.arc
+			elseif name == "size" then
+				v = r.size
+			elseif name == "elast" then
+				v = r.elast
+			else
+				v = r.angle
+			end
+			table.insert(out, v)
+		end
+		return out
+	end
+	local function statCol(name: string): { number }
+		local out: { number } = {}
+		for _, r in top do
+			table.insert(out, r.stat[name])
+		end
+		return out
+	end
+
+	-- True only if a column actually varies — used to flag degenerate sweeps so a
+	-- constant axis reading +0.000 isn't mistaken for a real null finding.
+	local function varies(xs: { number }): boolean
+		for i = 2, #xs do
+			if xs[i] ~= xs[1] then
+				return true
+			end
+		end
+		return false
+	end
+
+	print(bar)
+	print(string.format("Analysis — %d builds resolved | bets seen: %d | top bet=%.0f (value~%.0f)",
+		#rows, #betList, topBet, val))
+	print(bar)
+
+	-- Warn on any constant landing axis (correlations against it are meaningless).
+	local flat: { string } = {}
+	for _, ax in { "absAngle", "size", "arc", "elast" } do
+		if not varies(axisCol(ax)) then
+			table.insert(flat, ax)
+		end
+	end
+	if #flat > 0 then
+		print("WARNING: constant across top-bet builds (corr = 0, not a finding): " .. table.concat(flat, ", "))
+		print("  (raise COMPR_LEVELS, or check the axis range is actually unlocked)\n")
+	end
+
+	print("JACKPOT ACCESS DRIVERS  (corr with jackpotHit, top bet)")
+	for _, ax in { "absAngle", "size", "arc", "elast" } do
+		print(string.format("  %-8s : %+.3f", ax, pearson(statCol("jackpotHit"), axisCol(ax))))
+	end
+
+	print("\nAIM DIAGNOSTIC — does edge-aiming move mass to hot pegs? (corr hotPegs)")
+	for _, ax in { "absAngle", "size", "arc", "elast" } do
+		print(string.format("  %-8s : %+.3f", ax, pearson(statCol("hotPegs"), axisCol(ax))))
+	end
+
+	-- Distinct sorted values of a row field over the top-bet rows.
+	local function distinct(getter: (BuildRow) -> number): { number }
+		local seen: { [number]: boolean } = {}
+		local out: { number } = {}
+		for _, r in top do
+			local v = getter(r)
+			if not seen[v] then
+				seen[v] = true
+				table.insert(out, v)
+			end
+		end
+		table.sort(out)
+		return out
+	end
+
+	-- Mean of a stat over top rows matching an exact size and exact |angle|.
+	local function meanSizeAngle(statName: string, sizeV: number, absAngleV: number): number
+		local sum, cnt = 0, 0
+		for _, r in top do
+			if r.size == sizeV and math.abs(r.angle) == absAngleV then
+				sum += r.stat[statName]
+				cnt += 1
+			end
+		end
+		return if cnt > 0 then sum / cnt else 0
+	end
+
+	-- Mean of a stat over top rows matching a single field value.
+	local function meanBySize(statName: string, sizeV: number): number
+		local sum, cnt = 0, 0
+		for _, r in top do
+			if r.size == sizeV then
+				sum += r.stat[statName]
+				cnt += 1
+			end
+		end
+		return if cnt > 0 then sum / cnt else 0
+	end
+	local function meanByAbsAngle(statName: string, absAngleV: number): number
+		local sum, cnt = 0, 0
+		for _, r in top do
+			if math.abs(r.angle) == absAngleV then
+				sum += r.stat[statName]
+				cnt += 1
+			end
+		end
+		return if cnt > 0 then sum / cnt else 0
+	end
+
+	local sizes = distinct(function(r)
+		return r.size
+	end)
+	local absAngles = distinct(function(r)
+		return math.abs(r.angle)
+	end)
+	local maxAbsAngle = absAngles[#absAngles]
+
+	-- Conditioned: hotPegs centered (|angle|=0) vs widest |angle|, per size. This
+	-- is the read that exposes an angle×size interaction the marginal corr hides.
+	print(string.format("\n  hotPegs centered(|angle|=0) vs edge(|angle|=%.0f), by size:", maxAbsAngle))
+	for _, sv in sizes do
+		local h0 = meanSizeAngle("hotPegs", sv, 0)
+		local h1 = meanSizeAngle("hotPegs", sv, maxAbsAngle)
+		print(string.format("    size=%-5.2f centered=%5.2f  edge=%5.2f  d=%+.2f", sv, h0, h1, h1 - h0))
+	end
+
+	print("\njackpotHit by SIZE (top bet) — is size the jackpot axis?")
+	for _, sv in sizes do
+		print(string.format("  size=%-5.2f : %.3f", sv, meanBySize("jackpotHit", sv)))
+	end
+
+	print("\njackpotHit by |angle| (top bet):")
+	for _, av in absAngles do
+		print(string.format("  |angle|=%-4.0f : %.3f", av, meanByAbsAngle("jackpotHit", av)))
+	end
+
+	-- Targeting ball: heaviest size, centered vs widest aim.
+	local heavy = sizes[#sizes]
+	local jc = meanSizeAngle("jackpotHit", heavy, 0)
+	local je = meanSizeAngle("jackpotHit", heavy, maxAbsAngle)
+	local hc = meanSizeAngle("hotPegs", heavy, 0)
+	local he = meanSizeAngle("hotPegs", heavy, maxAbsAngle)
+	print(string.format("\nTARGETING BALL (size=%.2f): centered jph=%.3f  edge jph=%.3f  hotPegs %.2f->%.2f",
+		heavy, jc, je, hc, he))
+
+	-- Slot EV at top bet.
+	local baseM, jpM = 0, 0
+	for _, r in top do
+		baseM += r.stat.base
+		jpM += r.stat.jackpot
+	end
+	baseM /= #top
+	jpM /= #top
+	print("\nSLOT EV (top bet)")
+	print(string.format("  base/value           = %.3f", baseM / val))
+	print(string.format("  (base-jackpot)/value = %.3f   (target ~%.2f)", (baseM - jpM) / val, SLOT_EV_TARGET))
+	print(string.format("  jackpot/value        = %.3f", jpM / val))
+	print(string.format("  --> non-jackpot floor is %.2fx target", ((baseM - jpM) / val) / SLOT_EV_TARGET))
+
+	-- Value gate: jackpotHit and any-jackpot count per bet tier.
+	print("\nVALUE GATE CHECK (gate = ball value >= fraction of max bet)")
+	for _, bv in betList do
+		local sumHit, cnt, anyJp = 0, 0, 0
+		for _, r in rows do
+			if r.bet == bv then
+				sumHit += r.stat.jackpotHit
+				cnt += 1
+				if r.stat.jackpot > 0 then
+					anyJp += 1
+				end
+			end
+		end
+		print(string.format("  bet=%-7.0f mean jackpotHit=%.3f  builds with any jackpot=%d/%d",
+			bv, if cnt > 0 then sumHit / cnt else 0, anyJp, cnt))
+	end
+	print(bar)
+end
+
 -- /comprtest: sweep every combination of the four landing axes (Arc, Angle, Size,
 -- Elasticity) × COMPR_BET_LEVELS bet sizes, firing N balls per combination, then
--- print a per-build summary of all of them. Unlocks those four axes' tiers so the
--- full range is sampleable; other upgrades are left as-is (constant across builds,
--- so comparisons hold).
+-- print a per-build summary of all of them followed by the cross-build analysis.
+-- Unlocks those four axes' tiers so the full range is sampleable; other upgrades
+-- are left as-is (constant across builds, so comparisons hold).
 local function runComprTest(player: Player, n: number)
 	for _, axis in COMPR_AXES do
 		ProfileService.SetUpgradeTier(player, axis, MAX_TIER)
@@ -409,8 +699,8 @@ local function runComprTest(player: Player, n: number)
 		local build: Build = { params = params, results = {}, launched = 0, fired = false, done = false }
 		table.insert(builds, build)
 		activeBuilds += 1
-		for _ = 1, n do
-			local ball = BallLaunchService.LaunchTest(player)
+		for i = 1, n do
+			local ball = BallLaunchService.LaunchTest(player, { phase = (i - 1) / n })
 			ballBuild[ball] = build
 			build.launched += 1
 			launchedTotal += 1
@@ -469,6 +759,16 @@ local function runComprTest(player: Player, n: number)
 		printComprBuild(i, #builds, b.params, b.results, b.launched)
 	end
 	print(bar)
+
+	-- Cross-build diagnostics on the finished sweep (one row per resolved build).
+	local rows: { BuildRow } = {}
+	for _, b in builds do
+		local row = buildRow(b.params, b.results)
+		if row then
+			table.insert(rows, row)
+		end
+	end
+	printComprAnalysis(rows)
 end
 
 -- Returns a short result string for the console.

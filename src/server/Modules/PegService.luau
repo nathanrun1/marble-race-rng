@@ -30,7 +30,7 @@ local CATEGORIES: { [string]: Category } = {
 
 -- Band thresholds on nd (0 = field edge .. 1 = center) and the category weights
 -- per band. Tunable; each band has a dominant category plus spillover for mixing.
-local EDGE_BAND, HOT_BAND, COLD_BAND = 0.12, 0.60, 0.90
+local EDGE_BAND, HOT_BAND, COLD_BAND = 0.12, 0.45, 0.80
 local HOT_WEIGHTS    = { Hot = 0.80, Cold = 0.1, Normal = 0.1 }
 local COLD_WEIGHTS   = { Cold = 0.60, Hot = 0.10, Normal = 0.30 }
 local CENTER_WEIGHTS = { Normal = 0.70, Hot = 0.20, Cold = 0.10 }

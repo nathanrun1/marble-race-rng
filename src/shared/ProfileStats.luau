@@ -17,8 +17,6 @@ local Config = require(RS.Shared.Config)
 
 local ProfileStats = {}
 
-local HEAT_SCALE_FACTOR = 0.16
-
 -- Raw tier map: { [trackOrAxisName] = tier }. Mirrors ProfileService's storage.
 export type Upgrades = { [string]: number }
 
@@ -44,7 +42,7 @@ end
 
 -- Additive bonus fraction on final slot payout (§2), output-scaling track.
 function ProfileStats.GetBaseAdditive(upgrades: Upgrades): number
-	return Config.Upgrades.BaseAdditive.PerTier * tier(upgrades, "BaseAdditive")
+	return Config.Upgrades.BaseAdditive.Base * (Config.Upgrades.BaseAdditive.PerTier ^ tier(upgrades, "BaseAdditive"))
 end
 
 -- Cap on ball count N unlocked at the current frequency tier (§3 axis A). The
@@ -56,8 +54,7 @@ end
 
 -- Delay between ball launches
 function ProfileStats.GetLaunchDelay(upgrades: Upgrades): number
-	local values = Config.Upgrades.Frequency.Caps
-	return values[math.clamp(tier(upgrades, "Frequency") + 1, 1, #values)]
+	return math.max(1/60, Config.Upgrades.Frequency.Base * (Config.Upgrades.Frequency.PerTier ^ tier(upgrades, "Frequency")))
 end
 
 -- Launcher swivel angle (radians) for a given phase. The launcher sweeps its aim
@@ -73,7 +70,7 @@ end
 -- Sensitivity to accumulated peg heat (§1.5, simplified). 0 at tier 0 (heat does
 -- nothing); banked payout is scaled by (1 + accumulatedHeat * this).
 function ProfileStats.GetPegHeatFactor(upgrades: Upgrades): number
-	return Config.Upgrades.PegHeat.PerTier * tier(upgrades, "PegHeat") * HEAT_SCALE_FACTOR
+	return Config.Upgrades.PegHeat.PerTier * tier(upgrades, "PegHeat")
 end
 
 -- [Min,Max] a continuous axis (Weight, Size, ...) may move within, from its tier.
