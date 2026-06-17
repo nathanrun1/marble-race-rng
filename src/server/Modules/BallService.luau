@@ -16,15 +16,12 @@ local Config = require(RS.Shared.Config)
 
 local BallService = {}
 
--- (ball: BasePart), fired when ball is spawned
+-- (ball: BasePart, ballInfo: BallInfo), fired when ball is spawned
 BallService.BallSpawned = Signal.new()
 -- (ball: BasePart), fired when ball is despawned
 BallService.BallDespawned = Signal.new()
--- (ball: BasePart, newValue: number), fired when ball's value changes
-BallService.BallValueChanged = Signal.new()
 
 local liveBalls: { [BasePart]: true } = {}    -- ballInstance: true
-local ballValue: { [BasePart]: number } = {} -- ballInstance: value
 local ownerCounts: { [number]: number } = {}
 
 -- Weight slider (0 light .. 1 heavy) → physics. Heavy = denser and less elastic
@@ -35,11 +32,16 @@ local LIGHT_ELASTICITY, HEAVY_ELASTICITY = 0.8, 0.15
 local BALL_FRICTION = 0.6
 
 export type SpawnOptions = {
-	ownerUserId: number?,  -- credited by ScoringService; nil = unowned/no score
+	ownerUserId: number?,  -- nil = unowned/no score
 	velocity: Vector3?,    -- initial velocity; nil = drop from rest
 	initialValue: number?, -- initial ball value
 	weight: number?,       -- 0 (light) .. 1 (heavy); sets density/elasticity
 	size: number?,         -- scale factor applied to the prefab's base size
+}
+
+export type BallInfo = {
+	ownerUserId: number?,
+	initialValue: number?
 }
 
 function BallService.Spawn(position: Vector3, options: SpawnOptions?): BasePart
@@ -77,10 +79,14 @@ function BallService.Spawn(position: Vector3, options: SpawnOptions?): BasePart
 	end
 	
 	liveBalls[ball] = true
-	ballValue[ball] = opts.initialValue or 0
 	ball:AddTag(Config.Tags.Ball)
+
+	local ballInfo: BallInfo = {
+		ownerUserId = opts.ownerUserId,
+		initialValue = opts.initialValue
+	}
 	
-	BallService.BallSpawned:Fire(ball)
+	BallService.BallSpawned:Fire(ball, ballInfo)
 	
 	return ball
 end
@@ -90,9 +96,8 @@ function BallService.Despawn(ball: BasePart)
 		return -- already gone; idempotent, prevents double-free
 	end
 	liveBalls[ball] = nil
-	ballValue[ball] = nil
 	
-	local ownerId = ball:GetAttribute(Config.Attributes.OwnerUserId)
+	local ownerId: number = ball:GetAttribute(Config.Attributes.OwnerUserId) :: number
 	if ownerId then
 		ownerCounts[ownerId] = math.max(ownerCounts[ownerId] - 1, 0)
 	end		
@@ -117,24 +122,6 @@ end
 
 function BallService.IsBallActive(ball: BasePart): boolean
 	return liveBalls[ball] ~= nil
-end
-
-function BallService.GetBallValue(ball: BasePart): number
-	if (not liveBalls[ball]) then
-		warn("BasePart is not a valid ball!: "..ball.Name)
-		return 0
-	end
-	return ballValue[ball]
-end
-
-function BallService.SetBallValue(ball: BasePart, value: number): number
-	if (not liveBalls[ball]) then
-		warn("BasePart is not a valid ball!: "..ball.Name)
-		return 0
-	end
-	ballValue[ball] = value
-	BallService.BallValueChanged:Fire(ball, value)
-	return value
 end
 
 function BallService.Init()

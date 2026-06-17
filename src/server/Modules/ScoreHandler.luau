@@ -1,0 +1,206 @@
+--!strict
+-- Pure scoring math: hit resolution, payout breakdown, effective value. Owns the
+-- per-ball state and score-info types. ScoringService drives this from the
+-- collision loop; nothing here touches ball lifecycle or the collision query.
+
+local SSS = game:GetService("ServerScriptService")
+local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local Config = require(RS.Shared.Config)
+local ProfileStats = require(RS.Shared.ProfileStats)
+local BallEffects = require(RS.Shared.BallEffects)
+local ScoreUI = require(RS.Shared.ScoreUI)
+local Signal = require(RS.Shared.Signal)
+local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+local BallService = require(SSS.Scripts.Modules.BallService)
+local ProfileService = require(SSS.Scripts.Modules.ProfileService)
+
+local ScoreHandler = {}
+
+-- Itemized breakdown of one ball's payout, built at banking. The contributions are
+-- additive: banked == base + heatBonus + comboBonus + additiveBonus + trickle.
+export type ScoreInfo = {
+	targetName: string,
+	finalMultiplier: number?, -- slot's × multiplier (nil if additive / no PointValue)
+	initialValue: number,     -- value at spawn (the stake)
+	base: number,             -- value at destruction, before bonuses
+	heatBonus: number,        -- signed peg-heat payout
+	comboBonus: number,       -- flat-per-bounce payout (0 below MinCombo)
+	additiveBonus: number,    -- base-additive upgrade contribution
+	trickle: number,          -- unconditional per-launch income
+	combo: number,            -- scoring bounces credited
+	banked: number,           -- total credited
+	hotPegs: number,
+	coldPegs: number,
+	neutralPegs: number,
+	jackpot: number,          -- jackpot bonus (0 if no JackpotTarget hit)
+	jackpotHit: boolean,
+}
+
+-- All per-ball scoring state. Created on spawn, cleared on despawn.
+export type BallState = {
+	value: number,            -- live ball value (mutated by scoring hits)
+	ownerUserId: number?,
+	spawnClock: number,       -- os.clock() at spawn; drives the stuck timeout
+	spawnValue: number,       -- the stake
+	hits: { [Instance]: number }, -- target -> os.clock() of last credited hit
+	heat: number,             -- running sum of applied peg heat (>= 0)
+	bounces: number,          -- combo count
+	hotPegs: number,
+	coldPegs: number,
+	neutralPegs: number,
+	jackpotHit: boolean,
+}
+
+-- (ball, info) — banked at a DestroyTarget, just before despawn.
+ScoreHandler.BallScored = Signal.new()
+-- (ball, effectiveValue) — after each non-destroying hit.
+ScoreHandler.EffectiveValueChanged = Signal.new()
+
+local MIN_HEAT_ACCUM = -0.75
+
+function ScoreHandler.GetEffectiveValue(info: ScoreInfo): number
+	return info.base + info.heatBonus
+end
+
+local function buildScoreInfo(player: Player, state: BallState, base: number, multiplier: number?, targetName: string): ScoreInfo
+	local upgrades = ProfileService.GetUpgrades(player)
+
+	local jackpot = if state.jackpotHit then base * Config.Scoring.JackpotMultiplier else 0
+	base += jackpot
+
+	local H = math.max(state.heat, MIN_HEAT_ACCUM)
+	local heatPayout = base * math.max(0, 1 + H)
+	local heatEffect = heatPayout - base
+
+	local combo = state.bounces
+	local comboBonus = if combo >= Config.Scoring.MinCombo then combo * ProfileStats.GetFlatPerBounce(upgrades) else 0
+	local banked = heatPayout + comboBonus
+
+	local baseAdditive = ProfileStats.GetBaseAdditive(upgrades) * banked
+	banked += baseAdditive
+	local trickle = ProfileStats.GetTrickle(upgrades)
+	banked += trickle
+
+	return {
+		targetName = targetName,
+		finalMultiplier = multiplier,
+		initialValue = state.spawnValue,
+		base = base,
+		heatBonus = heatEffect,
+		comboBonus = comboBonus,
+		additiveBonus = baseAdditive,
+		trickle = trickle,
+		combo = combo,
+		banked = banked,
+		hotPegs = state.hotPegs,
+		coldPegs = state.coldPegs,
+		neutralPegs = state.neutralPegs,
+		jackpot = jackpot,
+		jackpotHit = state.jackpotHit,
+	}
+end
+
+local function updateEffectiveValue(player: Player, ball: BasePart, state: BallState)
+	local info = buildScoreInfo(player, state, state.value, nil, "")
+	local effective = ScoreHandler.GetEffectiveValue(info)
+	BallEffects.DoClientEffect(player, "SetValueUI", ball, math.floor(effective))
+	ScoreHandler.EffectiveValueChanged:Fire(ball, effective)
+end
+
+function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState, base: number, multiplier: number?, targetName: string, stuck: boolean)
+	local info = buildScoreInfo(player, state, base, multiplier, targetName)
+	ScoreHandler.BallScored:Fire(ball, info)
+
+	ScoreUI.PostMessage(player, (if stuck then "Ball stuck: $" else "Ball scored! $") .. math.floor(base), Color3.new(1, 1, 1))
+	if math.abs(info.heatBonus) >= 0.5 then
+		if info.heatBonus > 0 then
+			ScoreUI.PostMessage(player, string.format("Heat Bonus! +$%d", math.floor(info.heatBonus)), Color3.fromRGB(255, 140, 0))
+		else
+			ScoreUI.PostMessage(player, string.format("Cold Penalty: -$%d", math.floor(math.abs(info.heatBonus))), Color3.fromRGB(80, 160, 255))
+		end
+	end
+	if info.comboBonus > 0 then
+		ScoreUI.PostMessage(player, "Combo! +$" .. math.floor(info.comboBonus) .. " (" .. info.combo .. ")", Color3.fromRGB(255, 60, 60))
+	end
+	if info.additiveBonus > 0 then
+		ScoreUI.PostMessage(player, "Additive Bonus! +$" .. math.floor(info.additiveBonus), Color3.fromRGB(98, 37, 209))
+	end
+	if info.jackpotHit then
+		ScoreUI.PostMessage(player, "JACKPOT! $" .. math.floor(info.jackpot), Color3.fromRGB(255, 105, 180))
+	end
+
+	BallService.Despawn(ball)
+	CurrencyService.AddPoints(player, info.banked, if stuck then "Ball stuck (timeout): " .. ball.Name else "Ball destroyed at target: " .. targetName)
+end
+
+-- Hit sub-handlers. Each mutates state and fires effects for one concern.
+
+local function handleBounce(ball: BasePart, player: Player, state: BallState)
+	state.bounces += 1
+	if ProfileStats.GetFlatPerBounce(ProfileService.GetUpgrades(player)) > 0 then
+		BallEffects.DoClientEffect(player, "ShowComboPopup", ball, ball.CFrame, state.bounces)
+	end
+end
+
+local function handlePegHeat(ball: BasePart, player: Player, state: BallState, pegHeat: number)
+	if pegHeat > 0 then
+		state.hotPegs += 1
+	elseif pegHeat < 0 then
+		state.coldPegs += 1
+	else
+		state.neutralPegs += 1
+	end
+	local heatFactor = ProfileStats.GetPegHeatFactor(ProfileService.GetUpgrades(player))
+	local heatDelta = pegHeat * heatFactor
+	state.heat = math.max(state.heat + heatDelta, 0)
+	if heatFactor ~= 0 then
+		BallEffects.ApplyHeat(ball, state.heat / heatFactor)
+	end
+	BallEffects.DoClientEffect(player, "ShowHeatPopup", ball, heatDelta)
+end
+
+-- Returns true if the ball was banked (caller should not continue processing).
+local function handleDestroy(ball: BasePart, player: Player, state: BallState, target: Instance): boolean
+	if not target:HasTag(Config.Tags.DestroyTarget) then
+		return false
+	end
+	if target:HasTag(Config.Tags.JackpotTarget) then
+		state.jackpotHit = true
+	end
+	local multiplier = target:GetAttribute(Config.Attributes.PointMul) :: number?
+	local base = if multiplier then state.value * multiplier else state.value
+	if multiplier then
+		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "×" .. tostring(multiplier))
+		if multiplier >= Config.Scoring.SpecialFXMinMultiplier then
+			BallEffects.ShowHighPointFX(ball)
+		end
+	end
+	ScoreHandler.BankBall(player, ball, state, base, multiplier, target.Name, false)
+	return true
+end
+
+function ScoreHandler.ResolveHit(ball: BasePart, target: Instance, state: BallState)
+	local player = if state.ownerUserId then Players:GetPlayerByUserId(state.ownerUserId) else nil
+	if not player then
+		return
+	end
+
+	if target:HasTag(Config.Tags.BounceTarget) then
+		handleBounce(ball, player, state)
+	end
+
+	local pegHeat = target:GetAttribute(Config.Attributes.PegHeat) :: number?
+	if pegHeat then
+		handlePegHeat(ball, player, state, pegHeat)
+	end
+
+	if handleDestroy(ball, player, state, target) then
+		return
+	end
+
+	updateEffectiveValue(player, ball, state)
+end
+
+return ScoreHandler

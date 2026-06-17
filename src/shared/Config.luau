@@ -14,8 +14,7 @@ Config.Attributes = {
 	OwnerUserId = "OwnerUserId",       -- Ball owner's user ID
 	Cooldown = "Cooldown",             -- Ball same-target repeat score cooldown
 
-	PointValue = "PointValue",         -- Score target value
-	IsPointMul = "IsPointMultiplier",  -- Whether ball value is multiplied by PointValue (if not, PointValue is added directly)
+	PointMul = "PointMul",             -- If defined, a destroy target's point multiplier
 	PegHeat = "PegHeat",               -- Peg heat (signed): hot >0, cold <0. Accumulated per ball, applied value-proportionally at banking, scaled by the player's PegHeat tier.
 
 	-- Per-ball config, set at spawn from the owner's loadout (see ProfileService)
@@ -166,8 +165,8 @@ Config.Axes = {
 			{ Min = -math.rad(10), Max = math.rad(10) },   -- tier 1
 			{ Min = -math.rad(15), Max = math.rad(15) },   -- tier 2
 			{ Min = -math.rad(20), Max = math.rad(20) },   -- tier 3
-			{ Min = -math.rad(30), Max = math.rad(30) },   -- tier 4
-			{ Min = -math.rad(40), Max = math.rad(40) },   -- tier 5
+			{ Min = -math.rad(40), Max = math.rad(40) },   -- tier 4
+			{ Min = -math.rad(60), Max = math.rad(60) },   -- tier 5
 		},
 		Cost = { Base = 1000, Growth = 12 },
 		Name = "Angle", Desc = "Launch angle.",

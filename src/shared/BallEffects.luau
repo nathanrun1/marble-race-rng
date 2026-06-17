@@ -17,6 +17,8 @@ local Config = require(RS.Shared.Config)
 
 local BallEffects = {}
 
+local GetEffectiveBallValueRF = RS.Remote.GetEffectiveBallValue 
+
 ----------------------------------------------------------------------------------
 -- Constants
 ----------------------------------------------------------------------------------
@@ -350,6 +352,10 @@ if RunService:IsClient() then
 	local function onBallTagged(ball: BasePart)
 		if ball:GetAttribute(Config.Attributes.OwnerUserId) == localUserId then
 			BallEffects.AttachValueUI(ball)
+			local effectiveValue = GetEffectiveBallValueRF:InvokeServer(ball)
+			if effectiveValue then
+				BallEffects.SetValueUI(ball, effectiveValue)
+			end
 		end
 	end
 

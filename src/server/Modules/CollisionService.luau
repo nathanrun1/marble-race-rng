@@ -83,11 +83,11 @@ local function applyGroupForValue(ball: BasePart, effectiveValue: number)
 	setBallGroup(ball, group)
 end
 
-local function onBallSpawn(ball: BasePart)
+local function onBallSpawn(ball: BasePart, ballInfo: BallService.BallInfo)
 	registeredBalls[ball] = true
 	-- A fresh ball has no combo/heat yet, so its effective value equals its spawn
 	-- value; the first scoring hit pushes an EffectiveValueChanged update.
-	applyGroupForValue(ball, BallService.GetBallValue(ball))
+	applyGroupForValue(ball, ballInfo.initialValue or 0)
 end
 
 local function onBallDespawn(ball: BasePart)
