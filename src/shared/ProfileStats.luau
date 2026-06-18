@@ -111,7 +111,7 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 	elseif track == "BaseAdditive" then
 		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
 	elseif track == "Frequency" then
-		return tostring(ProfileStats.GetLaunchDelay(u)).."s"
+		return tostring(ProfileStats.GetLaunchDelay(u)).."%.1fs"
 	elseif track == "PegHeat" then
 		return string.format("%.1f×", ProfileStats.GetPegHeatFactor(u))
 	else

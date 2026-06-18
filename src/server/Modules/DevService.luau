@@ -37,11 +37,11 @@ local DevService = {}
 -- Add your UserId here to enable the commands in a live (non-Studio) server.
 local ALLOWED_USERIDS: { number } = {}
 
-local MAX_TIER = 5    -- /maxall and presets set every track to this (caps self-clamp)
+local MAX_TIER = 12    -- /maxall and presets set every track to this (caps self-clamp)
 local BIG_BET = 1e9   -- SetBet clamps this down to the player's current max bet
 
 -- /test tuning.
-local TEST_INTERVAL = 0.01   -- default seconds between launches; spaced so balls don't pile up
+local TEST_INTERVAL = 0.001   -- default seconds between launches; spaced so balls don't pile up
 local TEST_TIMEOUT = 45      -- max seconds to wait for stragglers after the last launch
 local TEST_MAX_BALLS = 1000  -- hard cap on n, so a typo can't spawn forever
 
@@ -51,11 +51,12 @@ local TEST_MAX_BALLS = 1000  -- hard cap on n, so a typo can't spawn forever
 local COMPR_AXES = { "Arc", "Angle", "Size", "Elasticity" }
 local COMPR_LEVELS = 3        -- evenly-spaced samples per axis across its full range
 local COMPR_BET_LEVELS = 2    -- bet sweeps i/COMPR_BET_LEVELS × maxBet for i = 1..this (=> tests the jackpot gate)
+local COMPR_PEGHEAT_TIERS = { 0, 6, 12 } -- PegHeat upgrade tiers to sweep (12-tier system)
 -- Batches fire back-to-back (no waiting for the previous batch to land), so balls
 -- from several builds are in flight at once. This forced delay between the last
 -- launch of one batch and the first of the next caps how many pile up — raise it
 -- to lower peak concurrent ball count, lower it to run faster.
-local COMPR_BATCH_GAP = 0.05
+local COMPR_BATCH_GAP = 0.001
 -- Hard cap on how many build batches have balls in play at once: once this many
 -- are airborne, firing blocks until one fully lands before the next batch starts.
 -- Bounds peak concurrent balls to ~this × N. Raise for speed, lower for less load.
@@ -338,8 +339,8 @@ end
 -- Stored axis units → display: Angle/Arc are radians (show degrees); Size and
 -- Elasticity are plain scalars; Bet is a coin amount.
 local function fmtBuildParams(p: { [string]: number }): string
-	return string.format("Bet=%6.0f  Arc=%2d°  Angle=%3d°  Size=%.2f  Elast=%.2f",
-		p.Bet, math.round(math.deg(p.Arc)), math.round(math.deg(p.Angle)), p.Size, p.Elasticity)
+	return string.format("Bet=%6.0f  Arc=%2d°  Angle=%3d°  Size=%.2f  Elast=%.2f  PegHeat=%d",
+		p.Bet, math.round(math.deg(p.Arc)), math.round(math.deg(p.Angle)), p.Size, p.Elasticity, p.PegHeatTier)
 end
 
 -- One build's summary: params, resolve count, mean/var/std for every stat, and a
@@ -377,13 +378,13 @@ end
 -- cross-build correlations; the means come from the same arrays the per-build
 -- summary uses, so the analysis can't diverge from the printed numbers.
 type BuildRow = {
-	bet: number, arc: number, angle: number, size: number, elast: number,
+	bet: number, arc: number, angle: number, size: number, elast: number, pegHeatTier: number,
 	stat: { [string]: number },
 }
 
 local function buildRow(p: { [string]: number }, results: { ScoringService.ScoreInfo }): BuildRow?
 	if #results == 0 then
-		return nil  -- a build with no resolved balls contributes no data point
+		return nil
 	end
 	local arrays = statArrays(results)
 	local stat: { [string]: number } = {}
@@ -397,6 +398,7 @@ local function buildRow(p: { [string]: number }, results: { ScoringService.Score
 		angle = math.deg(p.Angle),
 		size = p.Size,
 		elast = p.Elasticity,
+		pegHeatTier = p.PegHeatTier,
 		stat = stat,
 	}
 end
@@ -632,10 +634,11 @@ end
 -- print a per-build summary of all of them followed by the cross-build analysis.
 -- Unlocks those four axes' tiers so the full range is sampleable; other upgrades
 -- are left as-is (constant across builds, so comparisons hold).
-local function runComprTest(player: Player, n: number)
+local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 	for _, axis in COMPR_AXES do
 		ProfileService.SetUpgradeTier(player, axis, MAX_TIER)
 	end
+	ProfileService.SetUpgradeTier(player, "PegHeat", MAX_TIER)
 
 	local levels: { [string]: { number } } = {}
 	local total = 1
@@ -644,21 +647,20 @@ local function runComprTest(player: Player, n: number)
 		total *= #levels[axis]
 	end
 
-	-- Bet sweep: i/COMPR_BET_LEVELS × maxBet for i = 1..COMPR_BET_LEVELS, to push
-	-- ball value across the jackpot gate (V_JACK is a fraction of maxBet).
 	local maxBet = ProfileStats.GetMaxBet(ProfileService.GetUpgrades(player))
 	local betLevels: { number } = {}
 	for i = 1, COMPR_BET_LEVELS do
 		table.insert(betLevels, ((COMPR_BET_LEVELS - i + 1) / COMPR_BET_LEVELS) * maxBet)
 	end
 	total *= #betLevels
+	total *= #COMPR_PEGHEAT_TIERS
 
-	-- Restore the player's chosen positions afterward (tiers stay raised — monotonic).
 	local saved: { [string]: number } = {}
 	for _, axis in COMPR_AXES do
 		saved[axis] = ProfileService.GetAxis(player, axis)
 	end
 	local savedBet = ProfileService.GetLoadout(player).Bet
+	local savedPegHeatTier = ProfileService.GetUpgrades(player).PegHeat or 0
 
 	print(string.format("[Dev] comprtest: %d builds × %d balls = %d launches; running...", total, n, total * n))
 
@@ -692,6 +694,8 @@ local function runComprTest(player: Player, n: number)
 		for key, value in params do
 			if key == "Bet" then
 				ProfileService.SetBet(player, value)
+			elseif key == "PegHeatTier" then
+				ProfileService.SetUpgradeTier(player, "PegHeat", value)
 			else
 				ProfileService.SetAxis(player, key, value)
 			end
@@ -699,11 +703,16 @@ local function runComprTest(player: Player, n: number)
 		local build: Build = { params = params, results = {}, launched = 0, fired = false, done = false }
 		table.insert(builds, build)
 		activeBuilds += 1
-		for i = 1, n do
-			local ball = BallLaunchService.LaunchTest(player, { phase = (i - 1) / n })
-			ballBuild[ball] = build
-			build.launched += 1
-			launchedTotal += 1
+		local i = 0
+		while i < n do
+			local batch = math.min(ballsPerInterval, n - i)
+			for j = 0, batch - 1 do
+				local ball = BallLaunchService.LaunchTest(player, { phase = (i + j) / n })
+				ballBuild[ball] = build
+				build.launched += 1
+				launchedTotal += 1
+			end
+			i += batch
 			task.wait(TEST_INTERVAL)
 		end
 		build.fired = true
@@ -719,19 +728,21 @@ local function runComprTest(player: Player, n: number)
 	-- once COMPR_MAX_ACTIVE_BUILDS are airborne, wait for one to fully land first.
 	local first = true
 	for _, bet in betLevels do
-		for _, arc in levels.Arc do
-			for _, angle in levels.Angle do
-				for _, size in levels.Size do
-					for _, elasticity in levels.Elasticity do
-						if not first then
-							task.wait(COMPR_BATCH_GAP)
+		for _, pegHeatTier in COMPR_PEGHEAT_TIERS do
+			for _, arc in levels.Arc do
+				for _, angle in levels.Angle do
+					for _, size in levels.Size do
+						for _, elasticity in levels.Elasticity do
+							if not first then
+								task.wait(COMPR_BATCH_GAP)
+							end
+							first = false
+							while activeBuilds >= COMPR_MAX_ACTIVE_BUILDS do
+								task.wait(0.1)
+							end
+							fireBuild({ Bet = bet, PegHeatTier = pegHeatTier, Arc = arc, Angle = angle, Size = size, Elasticity = elasticity })
+							print(string.format("[Dev] comprtest progress: %d/%d builds launched (%d in play)", #builds, total, activeBuilds))
 						end
-						first = false
-						while activeBuilds >= COMPR_MAX_ACTIVE_BUILDS do
-							task.wait(0.1)
-						end
-						fireBuild({ Bet = bet, Arc = arc, Angle = angle, Size = size, Elasticity = elasticity })
-						print(string.format("[Dev] comprtest progress: %d/%d builds launched (%d in play)", #builds, total, activeBuilds))
 					end
 				end
 			end
@@ -742,6 +753,7 @@ local function runComprTest(player: Player, n: number)
 		ProfileService.SetAxis(player, axis, saved[axis])
 	end
 	ProfileService.SetBet(player, savedBet)
+	ProfileService.SetUpgradeTier(player, "PegHeat", savedPegHeatTier)
 
 	-- Single drain: wait for the balls still in flight across all batches.
 	print(string.format("[Dev] comprtest: all %d builds launched; draining in-flight balls...", #builds))
@@ -828,11 +840,12 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?): st
 	elseif cmd == "comprtest" then
 		local n = tonumber(a2)
 		if not n then
-			return "usage: /comprtest <n>  (n balls per build)"
+			return "usage: /comprtest <n> [ballsPerInterval]"
 		end
 		n = math.clamp(math.floor(n), 1, TEST_MAX_BALLS)
-		task.spawn(runComprTest, player, n)
-		return string.format("running comprehensive build test: %d balls/build (results in server console)", n)
+		local bpi = math.max(1, math.floor(tonumber(a3) or 1))
+		task.spawn(runComprTest, player, n, bpi)
+		return string.format("running comprehensive build test: %d balls/build × %d per interval (results in server console)", n, bpi)
 	end
 	return nil -- not a dev command; ignore
 end

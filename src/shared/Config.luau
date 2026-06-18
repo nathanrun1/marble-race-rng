@@ -50,6 +50,11 @@ Config.Currency = {
 	StartingBalance = 100,
 }
 
+Config.Groups = {
+	GroupId = 559054633,
+	ScoreBoost = 0.10, -- multiplier bonus for group members (0.10 = +10%)
+}
+
 Config.Economy = {
 	StartMaxBet = 40,         -- guideline §4; base for the MaxBet track
 	TrickleFraction = 0.1,    -- × currentMaxBet, free per batch (§1.2)
@@ -240,6 +245,7 @@ table.freeze(Config.Attributes)
 table.freeze(Config.Scoring)
 table.freeze(Config.Pegs)
 table.freeze(Config.Currency)
+table.freeze(Config.Groups)
 table.freeze(Config.Economy)
 table.freeze(Config.Upgrades)
 table.freeze(Config.Axes)

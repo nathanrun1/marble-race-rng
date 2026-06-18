@@ -102,6 +102,10 @@ local function buildScoreInfo(player: Player, state: BallState, base: number, mu
 	}
 end
 
+local function getGroupBoostMult(player: Player): number
+	return if player:IsInGroup(Config.Groups.GroupId) then 1 + Config.Groups.ScoreBoost else 1
+end
+
 local function updateEffectiveValue(player: Player, ball: BasePart, state: BallState)
 	local info = buildScoreInfo(player, state, state.value, nil, "")
 	local effective = ScoreHandler.GetEffectiveValue(info)
@@ -131,6 +135,13 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 		ScoreUI.PostMessage(player, "JACKPOT! $" .. math.floor(info.jackpot), Color3.fromRGB(255, 105, 180))
 	end
 
+	local groupBoostMult = getGroupBoostMult(player)
+	if groupBoostMult > 1 then
+		local boost = info.banked * (groupBoostMult - 1)
+		info.banked += boost
+		ScoreUI.PostMessage(player, "Group Boost! +$" .. math.floor(boost), Color3.fromRGB(160, 60, 255))
+	end
+
 	BallService.Despawn(ball)
 	CurrencyService.AddPoints(player, info.banked, if stuck then "Ball stuck (timeout): " .. ball.Name else "Ball destroyed at target: " .. targetName)
 end
@@ -154,11 +165,14 @@ local function handlePegHeat(ball: BasePart, player: Player, state: BallState, p
 	end
 	local heatFactor = ProfileStats.GetPegHeatFactor(ProfileService.GetUpgrades(player))
 	local heatDelta = pegHeat * heatFactor
+	local prevHeat: number = state.heat
 	state.heat = math.max(state.heat + heatDelta, 0)
 	if heatFactor ~= 0 then
-		BallEffects.ApplyHeat(ball, state.heat / heatFactor)
+		BallEffects.ApplyHeat(ball, state.heat, heatFactor)
 	end
-	BallEffects.DoClientEffect(player, "ShowHeatPopup", ball, heatDelta)
+	if prevHeat > 0 or heatDelta > 0 then
+		BallEffects.DoClientEffect(player, "ShowHeatPopup", ball, heatDelta)
+	end
 end
 
 -- Returns true if the ball was banked (caller should not continue processing).

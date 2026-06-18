@@ -45,6 +45,7 @@ local MIN_COMBO_TO_SHOW  = 5
 -- Exponential follow rate for the value-UI anchor (higher = snappier / less lag,
 -- lower = smoother). Frame-rate independent via 1 - exp(-rate * dt).
 local VALUE_FOLLOW_RATE  = 30
+local HEAT_EFFECT_SCALE_BY_FACTOR = 0.5  -- This * 1/heatFactor is how fast progress is made toward heat effects from heat accumulation
 
 -- Per-ball base color resolved at spawn (server-populated; client reads default).
 local baseColors: { [BasePart]: Color3 } = {}
@@ -114,8 +115,10 @@ end
 ----------------------------------------------------------------------------------
 -- Public API (both contexts)
 ----------------------------------------------------------------------------------
-function BallEffects.ApplyHeat(ball: BasePart, heat: number)
+function BallEffects.ApplyHeat(ball: BasePart, heat: number, heatFactor: number)
 	if not ball.Parent then return end
+	if heatFactor == nil then heatFactor = 1 end
+	heat = (heat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
 	local base = baseColors[ball] or DEFAULT_BASE_COLOR
 	local weight = (ball:GetAttribute(Config.Attributes.Weight) :: number?) or 0.5
 	applyColor(ball, base, heat)
@@ -243,7 +246,7 @@ end
 
 function BallEffects.ShowHeatPopup(ball: BasePart?, heatDelta: number)
 	if heatDelta == 0 or not ball or not ball.Parent then return end
-	local label = string.format("%+.1f", heatDelta)
+	local label = string.format("x%.1f", 1 + heatDelta)
 	local color = if heatDelta > 0 then HEAT_COLOR_POS else HEAT_COLOR_NEG
 	BallEffects.ShowValuePopup(ball, ball.CFrame, label, color)
 end
