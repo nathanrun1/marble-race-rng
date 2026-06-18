@@ -26,7 +26,7 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 18,
+	MinCombo = 20,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 0.25, -- temp value
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
@@ -159,7 +159,7 @@ Config.Axes = {
 			{ Min = 0.04, Max = 0.96 },
 			{ Min = 0.0, Max = 1.0 },
 		},
-		Cost = { Base = 1000, Growth = 12 },
+		Cost = { Base = 105, Growth = 3.2 },
 		Name = "Bounciness", Desc = "How bouncy the ball is. More bounciness increases variance.",
 		Icon = "💨"
 	},
@@ -180,7 +180,7 @@ Config.Axes = {
 			{ Min = 0.51, Max = 0.98 },
 			{ Min = 0.5, Max = 1 },
 		},
-		Cost = { Base = 1000, Growth = 12 },
+		Cost = { Base = 105, Growth = 3.2 },
 		Name = "Ball Size", Desc = "Unlock different ball sizes.",
 		Icon = "◯"
 	},
@@ -201,7 +201,7 @@ Config.Axes = {
 			{ Min = -math.rad(55.7), Max = math.rad(55.7) },
 			{ Min = -math.rad(65.0), Max = math.rad(65.0) },
 		},
-		Cost = { Base = 1000, Growth = 12 },
+		Cost = { Base = 105, Growth = 3.2 },
 		Name = "Angle", Desc = "Launch angle.",
 		Icon = "🏹"
 	},
@@ -222,7 +222,7 @@ Config.Axes = {
 			{ Min = math.rad(0), Max = math.rad(69.6) },
 			{ Min = math.rad(0), Max = math.rad(80.0) },
 		},
-		Cost = { Base = 400, Growth = 40 },
+		Cost = { Base = 105, Growth = 3.2 },
 		Name = "Launcher Swivel", Desc = "Widen or tighten the possible launch angles.",
 		Icon = "🎯"
 	},

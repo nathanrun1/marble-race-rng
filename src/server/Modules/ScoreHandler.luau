@@ -103,7 +103,7 @@ local function buildScoreInfo(player: Player, state: BallState, base: number, mu
 end
 
 local function getGroupBoostMult(player: Player): number
-	return if player:IsInGroup(Config.Groups.GroupId) then 1 + Config.Groups.ScoreBoost else 1
+	return if player:IsInGroupAsync(Config.Groups.GroupId) then Config.Groups.ScoreBoost else 0
 end
 
 local function updateEffectiveValue(player: Player, ball: BasePart, state: BallState)
@@ -136,8 +136,8 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	end
 
 	local groupBoostMult = getGroupBoostMult(player)
-	if groupBoostMult > 1 then
-		local boost = info.banked * (groupBoostMult - 1)
+	if groupBoostMult > 0 then
+		local boost = info.banked * groupBoostMult
 		info.banked += boost
 		ScoreUI.PostMessage(player, "Group Boost! +$" .. math.floor(boost), Color3.fromRGB(160, 60, 255))
 	end
