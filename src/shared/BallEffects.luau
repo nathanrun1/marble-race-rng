@@ -14,6 +14,8 @@ local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 
 local Config = require(RS.Shared.Config)
+local StringUtils = require(RS.Shared.StringUtils)
+local SoundService = require(RS.Shared.SoundService)
 
 local BallEffects = {}
 
@@ -46,6 +48,16 @@ local MIN_COMBO_TO_SHOW  = 10
 -- lower = smoother). Frame-rate independent via 1 - exp(-rate * dt).
 local VALUE_FOLLOW_RATE  = 30
 local HEAT_EFFECT_SCALE_BY_FACTOR = 0.5  -- This * 1/heatFactor is how fast progress is made toward heat effects from heat accumulation
+local MULT_COLORS = {
+	[0.25] = Color3.fromRGB(86, 36, 36),
+	[0.5]  = Color3.fromRGB(151, 0, 0),
+	[1.0]  = Color3.fromRGB(151, 0, 0),
+	[1.5]  = Color3.fromRGB(140, 91, 159),
+	[2.0]  = Color3.fromRGB(98, 37, 209),
+	[3.0]  = Color3.fromRGB(255, 0, 191),
+	[8.0]  = Color3.fromRGB(255, 255, 255),
+	[Config.Scoring.JackpotMultiplier] = Color3.fromRGB(255, 255, 255)
+}
 
 -- Per-ball base color resolved at spawn (server-populated; client reads default).
 local baseColors: { [BasePart]: Color3 } = {}
@@ -100,7 +112,7 @@ local function applyColor(ball: BasePart, base: Color3, heat: number)
 	)
 end
 
-local function applyMaterial(ball: BasePart, weight: number, heat: number)
+local function applyHeatMatAndSound(ball: BasePart, weight: number, heat: number)
 	if heat <= HEAT_COLD_AT then
 		ball.Material = COLD_MATERIAL
 	elseif heat >= HEAT_NEON_AT then
@@ -122,8 +134,22 @@ function BallEffects.ApplyHeat(ball: BasePart, heat: number, heatFactor: number)
 	local base = baseColors[ball] or DEFAULT_BASE_COLOR
 	local weight = (ball:GetAttribute(Config.Attributes.Weight) :: number?) or 0.5
 	applyColor(ball, base, heat)
-	applyMaterial(ball, weight, heat)
+	applyHeatMatAndSound(ball, weight, heat)
 	applyHeatParticles(ball, heat)
+end
+
+-- Play heat transition sound if applicable
+function BallEffects.PlayHeatSound(ball: BasePart, prevHeat: number, curHeat: number, heatFactor: number)
+	if heatFactor == nil then heatFactor = 1 end
+	prevHeat = (prevHeat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
+	curHeat = (curHeat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
+	if prevHeat < HEAT_NEON_AT and curHeat >= HEAT_NEON_AT then
+		SoundService.Play({ soundId = Config.Sounds.Hot, position = ball.CFrame.Position, volume = 3 })
+	elseif prevHeat < HEAT_FIRE_AT and curHeat >= HEAT_FIRE_AT then
+		SoundService.Play({ soundId = Config.Sounds.Fire, position = ball.CFrame.Position, volume = 3 })
+	elseif prevHeat >= HEAT_NEON_AT and curHeat < HEAT_NEON_AT then
+		SoundService.Play({ soundId = Config.Sounds.Cold, position = ball.CFrame.Position, volume = 4})
+	end
 end
 
 -- Per-ball smooth-follow value UI. The ball itself carries no ValueUI; AttachValueUI
@@ -187,7 +213,7 @@ end
 function BallEffects.SetValueUI(ball: BasePart, value: number)
 	local f = valueFollowers[ball]
 	if f then
-		f.label.Text = tostring(value)
+		f.label.Text = StringUtils.FormatMoney(value)
 	end
 end
 
@@ -235,11 +261,17 @@ local COMBO_COLOR_NORMAL = Color3.new(1, 1, 1)
 local COMBO_COLOR_HOT    = Color3.fromRGB(255, 60, 60)
 
 function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: number)
+	if RunService:IsClient() then
+		SoundService.Play({ soundId = Config.Sounds.Bounce, position = cframe.Position, jitter = 0.06, volume = 3 })
+	end
 	if combo < MIN_COMBO_TO_SHOW then return end
 	if combo < Config.Scoring.MinCombo then
 		BallEffects.ShowValuePopup(ball, cframe, "BOUNCE x" .. combo, COMBO_COLOR_NORMAL)
 	else
 		BallEffects.ShowValuePopup(ball, cframe, "COMBO! x" .. combo, COMBO_COLOR_HOT)
+		if RunService:IsClient() then
+			SoundService.Play({ soundId = Config.Sounds.Combo, position = cframe.Position, jitter = 0.06 })
+		end
 	end
 	
 end
@@ -265,8 +297,23 @@ local HIGH_POINT_MAX_LIFETIME   = 1.5
 -- not replicate from server to client, so a server-side Emit produces nothing on
 -- any player's screen. Rate/Enabled DO replicate, so we run a high rate for a brief
 -- window then switch it off — every client renders the same burst.
-function BallEffects.ShowHighPointFX(ball: BasePart?)
-	if not ball or not ball.Parent then return end
+function BallEffects.ShowPointFX(ball: BasePart?, cframe: CFrame, multiplier: number)
+	if not (cframe and multiplier) then return end
+	print(multiplier)
+	-- Check if below special FX threshold
+	if multiplier < Config.Scoring.SpecialFXMinMultiplier then
+		SoundService.Play({ soundId = Config.Sounds.Collect1, position = cframe.Position, volume = 1.5 })  -- Default collect sound
+		return
+	end
+
+	local isJackpot = multiplier == Config.Scoring.JackpotMultiplier
+
+	if isJackpot then
+		print("jackpot sound!")
+		SoundService.Play({ soundId = Config.Sounds.Jackpot, position = cframe.Position, volume = 2.5})
+	else
+		SoundService.Play({ soundId = Config.Sounds.Collect2, position = cframe.Position, volume = 1.5 })
+	end
 
 	local anchor = Instance.new("Part")
 	anchor.Size = Vector3.new(0.05, 0.05, 0.05)
@@ -275,20 +322,28 @@ function BallEffects.ShowHighPointFX(ball: BasePart?)
 	anchor.CanQuery = false
 	anchor.CanTouch = false
 	anchor.Transparency = 1
-	anchor.CFrame = CFrame.new(ball.CFrame.Position)
+	anchor.CFrame = CFrame.new(cframe.Position)
 	anchor.Parent = workspace
 
 	local emitter = Instance.new("ParticleEmitter")
 	emitter.Brightness = 4
-	emitter.Color = ColorSequence.new(Color3.new(1, 1, 1))
-	emitter.Lifetime = NumberRange.new(1.0, HIGH_POINT_MAX_LIFETIME)
-	emitter.Speed = NumberRange.new(22, 30)
-	emitter.SpreadAngle = Vector2.new(18, 18)
+	if isJackpot then
+		emitter.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 0, 191))
+		emitter.Lifetime = NumberRange.new(1.0, HIGH_POINT_MAX_LIFETIME * 2)
+		emitter.Speed = NumberRange.new(32, 40)
+		emitter.SpreadAngle = Vector2.new(22, 22)
+		emitter.Rate = (HIGH_POINT_PARTICLE_COUNT / HIGH_POINT_EMIT_TIME) * 2
+	else
+		emitter.Color = ColorSequence.new(MULT_COLORS[multiplier] or Color3.fromRGB(255, 255, 255))
+		emitter.Lifetime = NumberRange.new(1.0, HIGH_POINT_MAX_LIFETIME)
+		emitter.Speed = NumberRange.new(22, 30)
+		emitter.SpreadAngle = Vector2.new(18, 18)
+		emitter.Rate = HIGH_POINT_PARTICLE_COUNT / HIGH_POINT_EMIT_TIME
+	end
 	emitter.Size = NumberSequence.new(1.0, 0)
 	emitter.Transparency = NumberSequence.new(0.05, 1)
 	emitter.EmissionDirection = Enum.NormalId.Top
 	emitter.Acceleration = Vector3.new(0, 18, 0)
-	emitter.Rate = HIGH_POINT_PARTICLE_COUNT / HIGH_POINT_EMIT_TIME
 	emitter.Enabled = true
 	emitter.Parent = anchor
 
@@ -350,6 +405,7 @@ end
 if RunService:IsClient() then
 	local Players = game:GetService("Players")
 	local CollectionService = game:GetService("CollectionService")
+local TouchInputService = game:GetService("TouchInputService")
 	local localUserId = Players.LocalPlayer.UserId
 
 	local function onBallTagged(ball: BasePart)

@@ -7,6 +7,8 @@ local RS               = game:GetService("ReplicatedStorage")
 -- Shared, pure derivation + config — the same source the server clamps against, so
 -- the client computes identical axis ranges locally (no extra "get ranges" remote).
 local ProfileStats = require(RS.Shared.ProfileStats)
+local SoundService = require(RS.Shared.SoundService)
+local Config = require(RS.Shared.Config)
 
 local player = Players.LocalPlayer
 
@@ -23,12 +25,11 @@ local RequestLaunchRE = Remote:WaitForChild("RequestLaunch")
 local Controller = {}
 print("requried")
 
-----------------------------------------------------------------
--- ASSET IDS  (replace the zeros — single source of truth)
-----------------------------------------------------------------
+local BALL_LAUNCH_POS = Vector3.new(21.45, 170.032, 296.331)
+
 Controller.ASSETS = {
 	btnUpImage = "rbxassetid://81241010426987",
-    btnDownImage = "rbxassetid://133100387605055"
+	btnDownImage = "rbxassetid://133100387605055"
 }
 
 Controller.STYLE = {
@@ -41,7 +42,7 @@ Controller.UI = {
     launchBtnText = MainGui:WaitForChild("Launch"):WaitForChild("TextLabel") :: TextLabel, 
     autoBtn = MainGui:WaitForChild("Auto") :: ImageButton,
     autoBtnText = MainGui:WaitForChild("Auto"):WaitForChild("TextLabel") :: TextLabel,
-    betAmount = MainGui:WaitForChild("Bet"):WaitForChild("BetAmount"):WaitForChild("BetBox") :: TextBox
+    betAmount = MainGui:WaitForChild("LeftBar"):WaitForChild("Bet"):WaitForChild("BetAmount"):WaitForChild("BetBox") :: TextBox
 }
 
 local doAutoLaunch = false
@@ -53,6 +54,9 @@ local launchBtnDefaultText: string = Controller.UI.launchBtnText.Text
 local function onLaunchBtnActivated()
     if not launchBtnActive then return end
 	launchBtnActive = false
+
+    SoundService.Play({ soundId = Config.Sounds.Launch, volume = 1.5 })
+
 	local betAmount = tonumber(Controller.UI.betAmount.Text)
     print(Controller.UI.betAmount.Text)
 	if (betAmount) then

@@ -12,6 +12,7 @@ local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
+local SoundService = require(RS.Shared.SoundService)
 local DevService = require(SSS.Scripts.Modules.DevService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
@@ -32,6 +33,8 @@ BallService.Init()
 -- each ball from its owner's profile.
 BallEffects.Init()
 ScoreUI.Init()
+-- SoundService: creates the PlaySound remote so clients can receive server-driven SFX.
+SoundService.Init()
 -- CollisionService before launches start: it self-connects to BallSpawned to put
 -- each ball in the right gate-collision group from its first frame.
 CollisionService.Init()

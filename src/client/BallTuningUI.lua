@@ -104,7 +104,7 @@ for _, a in ipairs(Controller.AXES) do
 end
 
 -- placeholder reference to the GUI root (set this before init)
-Controller.root = player.PlayerGui.MainGui.BallTuning
+Controller.root = player.PlayerGui.MainGui.LeftBar.BallTuning
 
 ----------------------------------------------------------------
 -- helpers

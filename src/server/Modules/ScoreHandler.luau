@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 
 local Config = require(RS.Shared.Config)
 local ProfileStats = require(RS.Shared.ProfileStats)
+local StringUtils = require(RS.Shared.StringUtils)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local Signal = require(RS.Shared.Signal)
@@ -118,34 +119,39 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	local info = buildScoreInfo(player, state, base, multiplier, targetName)
 	ScoreHandler.BallScored:Fire(ball, info)
 
-	ScoreUI.PostMessage(player, (if stuck then "Ball stuck: $" else "Ball scored! $") .. math.floor(base), Color3.new(1, 1, 1))
+	ScoreUI.PostMessage(player, (if stuck then "Ball stuck: " else "Ball scored! ") .. StringUtils.FormatMoney(base), Color3.new(1, 1, 1))
 	if math.abs(info.heatBonus) >= 0.5 then
 		if info.heatBonus > 0 then
-			ScoreUI.PostMessage(player, string.format("Heat Bonus! +$%d", math.floor(info.heatBonus)), Color3.fromRGB(255, 140, 0))
+			ScoreUI.PostMessage(player, "Heat Bonus! +" .. StringUtils.FormatMoney(info.heatBonus), Color3.fromRGB(255, 140, 0))
 		else
-			ScoreUI.PostMessage(player, string.format("Cold Penalty: -$%d", math.floor(math.abs(info.heatBonus))), Color3.fromRGB(80, 160, 255))
+			ScoreUI.PostMessage(player, "Cold Penalty: -" .. StringUtils.FormatMoney(math.abs(info.heatBonus)), Color3.fromRGB(80, 160, 255))
 		end
 	end
 	if info.comboBonus > 0 then
-		ScoreUI.PostMessage(player, "Combo! +$" .. math.floor(info.comboBonus) .. " (" .. info.combo .. ")", Color3.fromRGB(255, 60, 60))
+		ScoreUI.PostMessage(player, "Combo! +" .. StringUtils.FormatMoney(info.comboBonus) .. " (" .. info.combo .. ")", Color3.fromRGB(255, 60, 60))
 	end
 	if info.additiveBonus > 0 then
-		ScoreUI.PostMessage(player, "Additive Bonus! +$" .. math.floor(info.additiveBonus), Color3.fromRGB(98, 37, 209))
+		ScoreUI.PostMessage(player, "Additive Bonus! +" .. StringUtils.FormatMoney(info.additiveBonus), Color3.fromRGB(98, 37, 209))
 	end
 	if info.jackpotHit then
-		ScoreUI.PostMessage(player, "JACKPOT! $" .. math.floor(info.jackpot), Color3.fromRGB(255, 105, 180))
+		ScoreUI.PostMessage(player, "JACKPOT! " .. StringUtils.FormatMoney(info.jackpot), Color3.fromRGB(255, 105, 180))
 	end
 
 	local groupBoostMult = getGroupBoostMult(player)
 	if groupBoostMult > 0 then
 		local boost = info.banked * groupBoostMult
 		info.banked += boost
-		ScoreUI.PostMessage(player, "Group Boost! +$" .. math.floor(boost), Color3.fromRGB(160, 60, 255))
+		ScoreUI.PostMessage(player, "Group Boost! +" .. StringUtils.FormatMoney(boost), Color3.fromRGB(160, 60, 255))
 	end
 
+	-- Prestige is the final global multiplier: it scales the whole breakdown
+	-- (including the group boost). Surface its contribution so the posted messages
+	-- reconcile with the credited balance instead of looking "off".
 	local prestigeMult = PrestigeService.GetMultiplier(player)
 	if prestigeMult > 1 then
-		info.banked *= prestigeMult
+		local prestigeBonus = info.banked * (prestigeMult - 1)
+		info.banked += prestigeBonus
+		ScoreUI.PostMessage(player, string.format("Prestige Bonus! +%s (×%.2f)", StringUtils.FormatMoney(prestigeBonus), prestigeMult), Color3.fromRGB(124, 58, 237))
 	end
 
 	PrestigeService.AddLifetimeBanked(player, info.banked)
@@ -179,6 +185,7 @@ local function handlePegHeat(ball: BasePart, player: Player, state: BallState, p
 	end
 	if prevHeat > 0 or heatDelta > 0 then
 		BallEffects.DoClientEffect(player, "ShowHeatPopup", ball, heatDelta)
+		BallEffects.DoClientEffect(player, "PlayHeatSound", ball, prevHeat, state.heat, heatFactor)
 	end
 end
 
@@ -192,11 +199,11 @@ local function handleDestroy(ball: BasePart, player: Player, state: BallState, t
 	end
 	local multiplier = target:GetAttribute(Config.Attributes.PointMul) :: number?
 	local base = if multiplier then state.value * multiplier else state.value
-	if multiplier then
-		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "×" .. tostring(multiplier))
-		if multiplier >= Config.Scoring.SpecialFXMinMultiplier then
-			BallEffects.ShowHighPointFX(ball)
-		end
+	if multiplier or state.jackpotHit then
+		local effMultiplier = multiplier
+		if state.jackpotHit then effMultiplier = Config.Scoring.JackpotMultiplier end
+		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "×" .. tostring(effMultiplier))
+		BallEffects.DoClientEffect(player, "ShowPointFX", ball, ball.CFrame, effMultiplier)
 	end
 	ScoreHandler.BankBall(player, ball, state, base, multiplier, target.Name, false)
 	return true

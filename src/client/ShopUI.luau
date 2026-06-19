@@ -7,6 +7,9 @@ local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local ProfileStats = require(RS.Shared.ProfileStats)
+local StringUtils = require(RS.Shared.StringUtils)
+local SoundService = require(RS.Shared.SoundService)
+local Config = require(RS.Shared.Config)
 
 local player: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
@@ -87,6 +90,49 @@ local function stroke(parent, color, thickness)
 	}, parent)
 end
 
+-- Celebratory pop on a successful purchase (same feel as the prestige button):
+-- scale up quick, then settle back with a slight overshoot.
+local shopScale: any = ShopFrame:FindFirstChildOfClass("UIScale") or f("UIScale", { Scale = 1 }, ShopFrame)
+local function punch()
+	shopScale.Scale = 1
+	local upT = TweenService:Create(shopScale, TweenInfo.new(0.1), { Scale = 1.04 })
+	upT.Completed:Connect(function()
+		TweenService:Create(shopScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	end)
+	upT:Play()
+end
+
+-- Rising fade-out flare announcing the purchased tier. The authored label is kept
+-- hidden as a template; each call clones it so spammed upgrades animate
+-- independently (no shared tween to interrupt). The clone drifts up while fading
+-- text (+ outline) out, then dies. Style left as authored.
+local flareTemplate: any = ShopGui:FindFirstChild("UpgradeFlare")
+local flareBasePos: UDim2 = flareTemplate and flareTemplate.Position
+local FLARE_RISE = UDim2.fromOffset(0, -60)
+local FLARE_INFO = TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+if flareTemplate then flareTemplate.Visible = false end
+local function playFlare(text: string)
+	if not flareTemplate then return end
+
+	local flare = flareTemplate:Clone()
+	flare.Text = text
+	flare.Position = flareBasePos
+	flare.TextTransparency = 0
+	flare.Visible = true
+	local flareStroke = flare:FindFirstChildOfClass("UIStroke")
+	if flareStroke then flareStroke.Transparency = 0 end
+	flare.Parent = flareTemplate.Parent
+
+	local move = TweenService:Create(flare, FLARE_INFO, { Position = flareBasePos + FLARE_RISE, TextTransparency = 1 })
+	move.Completed:Once(function()
+		flare:Destroy()
+	end)
+	move:Play()
+	if flareStroke then
+		TweenService:Create(flareStroke, FLARE_INFO, { Transparency = 1 }):Play()
+	end
+end
+
 
 -- Colour one pip for a given state: "fill" | "empty" | "next"
 local function stylePip(pip: Frame, state: string)
@@ -154,8 +200,8 @@ function adjustButton(canAfford: boolean)
 	end
 end
 
--- Loads ShopGui contents with the given track
-function loadShop(track: string)
+-- Loads ShopGui contents with the given track. Returns the loaded upgrade info.
+function loadShop(track: string): Info
 	local allUpgradeInfo: { [string]: Info } = GetUpgradeInfoRF:InvokeServer()
 	local upgradeInfo: Info = allUpgradeInfo[track]
 	assert(upgradeInfo)
@@ -169,7 +215,7 @@ function loadShop(track: string)
 		UI.tiers.Text = upgradeInfo.tier
 	end
     if upgradeInfo.price then
-        UI.price.Text = "$"..tostring(upgradeInfo.price)
+        UI.price.Text = "$"..StringUtils.FormatShort(upgradeInfo.price)
     else
         UI.price.Text = "MAXED"
     end
@@ -183,8 +229,9 @@ function loadShop(track: string)
 	end
 	
 	createPips(UI.track, upgradeInfo.maxTier, upgradeInfo.tier)
-    
+
     loadedTrack = track
+    return upgradeInfo
 end
 
 -- Invoked when purchase button pressed
@@ -195,8 +242,10 @@ function onBuyPressed()
 
 	local purchaseResult: PurchaseResult = PurchaseUpgradeRF:InvokeServer(loadedTrack)
     if purchaseResult.ok then
-        -- TODO: if purchase good, trigger +tier animation
-        loadShop(loadedTrack :: string)
+		SoundService.Play({ soundId = Config.Sounds.Upgrade })
+        local upgradeInfo = loadShop(loadedTrack :: string)
+        punch()
+        playFlare("Tier " .. upgradeInfo.tier)
     end
 end
 

@@ -12,6 +12,7 @@ local Players = game:GetService("Players")
 local Config = require(RS.Shared.Config)
 local Signal = require(RS.Shared.Signal)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
+local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 
 local PrestigeService = {}
 
@@ -106,6 +107,9 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	end
 	d.count += 1
 	ProfileService.ResetProfile(player)
+	-- Wipe the run's balance too: prestige resets upgrades AND money back to the
+	-- configured starting balance.
+	CurrencyService.SetPoints(player, Config.Currency.StartingBalance, "Prestige reset")
 	PrestigeService.Changed:Fire(player, buildInfo(d))
 	return true, nil
 end

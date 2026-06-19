@@ -2,12 +2,27 @@ local RS = game:GetService("ReplicatedStorage")
 
 local Config = {}
 
+Config.Sounds = {
+	Upgrade = "rbxassetid://106356556379520",
+	Collect1 = "rbxassetid://104023881731125",
+	Collect2 = "rbxassetid://83285744063515",
+	Jackpot = "rbxassetid://84581872132549",
+	Launch = "rbxassetid://87587182495338",
+	Combo = "rbxassetid://112485190367588",
+	Bounce = "rbxassetid://107174499116544",
+	Hot = "rbxassetid://115023474688736",
+	Fire = "rbxassetid://105137237689649",
+	Cold = "rbxassetid://116320134099218",
+	Prestige = "rbxassetid://84051226507785"
+}
+
 Config.Tags = {
 	ScoreTarget = "ScoreTarget",       -- Scores on ball collision
 	DestroyTarget = "DestroyTarget",   -- Destroys ball on collision
 	BounceTarget = "BounceTarget",      -- Counts towards bounce combo
 	JackpotTarget = "JackpotTarget",   -- Multiplies the ball's banked value by Config.Scoring.JackpotMultiplier
-	Ball = "Ball"
+	Ball = "Ball",
+	AutoScale = "AutoScale"             -- GuiObject auto-scaled to viewport (see client AutoScale)
 }
 
 Config.Attributes = {
@@ -28,7 +43,7 @@ Config.Scoring = {
 	DefaultCooldown = 1.5,
 	MinCombo = 20,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
-	SpecialFXMinMultiplier = 0.25, -- temp value
+	SpecialFXMinMultiplier = 1.25,
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
 	-- (a ball wedged on geometry must not live forever). Tune above a normal fall.
 	MaxBallLifetime = 25,
@@ -258,4 +273,5 @@ table.freeze(Config.Prestige)
 table.freeze(Config.Economy)
 table.freeze(Config.Upgrades)
 table.freeze(Config.Axes)
+table.freeze(Config.Sounds)
 return Config

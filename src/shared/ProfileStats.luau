@@ -14,6 +14,7 @@
 
 local RS = game:GetService("ReplicatedStorage")
 local Config = require(RS.Shared.Config)
+local StringUtils = require(RS.Shared.StringUtils)
 
 local ProfileStats = {}
 
@@ -105,7 +106,7 @@ local ANGLE_AXES: { [string]: boolean } = { Angle = true, Arc = true }
 function ProfileStats.GetDisplayString(track: string, tier: number): string
 	local u: Upgrades = { [track] = tier }
 	if track == "MaxBet" then
-		return tostring(math.floor(ProfileStats.GetMaxBet(u)))
+		return StringUtils.FormatShort(ProfileStats.GetMaxBet(u))
 	elseif track == "FlatRate" then
 		return string.format("%.2f", ProfileStats.GetFlatPerBounce(u))
 	elseif track == "BaseAdditive" then
