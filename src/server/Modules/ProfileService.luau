@@ -209,6 +209,26 @@ function ProfileService.SetAxis(player: Player, axis: string, value: number): bo
 	return true
 end
 
+-- Wipes all upgrade tiers and resets the loadout to defaults. Used only by
+-- PrestigeService — bypasses the monotonic guard intentionally.
+function ProfileService.ResetProfile(player: Player)
+	local profile = get(player)
+	for name in Config.Upgrades do
+		profile.upgrades[name] = 0
+	end
+	for name in Config.Axes do
+		profile.upgrades[name] = 0
+	end
+	local axes: { [string]: number } = {}
+	for name, def in Config.Axes do
+		axes[name] = def.Default
+	end
+	local d = Config.LoadoutDefaults
+	profile.loadout = { Bet = d.Bet, LaunchPhase = d.LaunchPhase, axes = axes }
+	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile)
+end
+
 -- (definition for the forward-declared local above; assigns the local, not a
 -- global, so the reference in SetUpgradeTier resolves)
 reclampLoadout = function(profile: Profile)

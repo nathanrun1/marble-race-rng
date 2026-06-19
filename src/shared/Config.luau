@@ -55,6 +55,14 @@ Config.Groups = {
 	ScoreBoost = 0.10, -- multiplier bonus for group members (0.10 = +10%)
 }
 
+Config.Prestige = {
+	Scale      = 10000, -- denominator in PP formula
+	Exponent   = 0.45,  -- sublinear compression
+	CostBase   = 10,    -- PP cost of first prestige
+	CostGrowth = 1.40,  -- geometric cost multiplier per prestige level
+	MultPer    = 1.25,  -- global banked multiplier per prestige (multiplicative)
+}
+
 Config.Economy = {
 	StartMaxBet = 40,         -- guideline §4; base for the MaxBet track
 	TrickleFraction = 0.1,    -- × currentMaxBet, free per batch (§1.2)
@@ -208,19 +216,19 @@ Config.Axes = {
 	Arc = {
 		Default = math.rad(15),
 		Ranges = {
-			{ Min = math.rad(0), Max = math.rad(15.0) },
-			{ Min = math.rad(0), Max = math.rad(17.3) },
-			{ Min = math.rad(0), Max = math.rad(19.9) },
-			{ Min = math.rad(0), Max = math.rad(22.8) },
-			{ Min = math.rad(0), Max = math.rad(26.3) },
-			{ Min = math.rad(0), Max = math.rad(30.2) },
-			{ Min = math.rad(0), Max = math.rad(34.7) },
-			{ Min = math.rad(0), Max = math.rad(39.9) },
-			{ Min = math.rad(0), Max = math.rad(45.8) },
-			{ Min = math.rad(0), Max = math.rad(52.7) },
-			{ Min = math.rad(0), Max = math.rad(60.6) },
-			{ Min = math.rad(0), Max = math.rad(69.6) },
-			{ Min = math.rad(0), Max = math.rad(80.0) },
+			{ Min = math.rad(5), Max = math.rad(15.0) },
+			{ Min = math.rad(5), Max = math.rad(17.3) },
+			{ Min = math.rad(5), Max = math.rad(19.9) },
+			{ Min = math.rad(5), Max = math.rad(22.8) },
+			{ Min = math.rad(5), Max = math.rad(26.3) },
+			{ Min = math.rad(5), Max = math.rad(30.2) },
+			{ Min = math.rad(5), Max = math.rad(34.7) },
+			{ Min = math.rad(5), Max = math.rad(39.9) },
+			{ Min = math.rad(5), Max = math.rad(45.8) },
+			{ Min = math.rad(5), Max = math.rad(52.7) },
+			{ Min = math.rad(5), Max = math.rad(60.6) },
+			{ Min = math.rad(5), Max = math.rad(69.6) },
+			{ Min = math.rad(5), Max = math.rad(80.0) },
 		},
 		Cost = { Base = 105, Growth = 3.2 },
 		Name = "Launcher Swivel", Desc = "Widen or tighten the possible launch angles.",
@@ -246,6 +254,7 @@ table.freeze(Config.Scoring)
 table.freeze(Config.Pegs)
 table.freeze(Config.Currency)
 table.freeze(Config.Groups)
+table.freeze(Config.Prestige)
 table.freeze(Config.Economy)
 table.freeze(Config.Upgrades)
 table.freeze(Config.Axes)

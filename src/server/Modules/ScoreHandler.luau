@@ -15,6 +15,7 @@ local Signal = require(RS.Shared.Signal)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local BallService = require(SSS.Scripts.Modules.BallService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
+local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 
 local ScoreHandler = {}
 
@@ -142,6 +143,12 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 		ScoreUI.PostMessage(player, "Group Boost! +$" .. math.floor(boost), Color3.fromRGB(160, 60, 255))
 	end
 
+	local prestigeMult = PrestigeService.GetMultiplier(player)
+	if prestigeMult > 1 then
+		info.banked *= prestigeMult
+	end
+
+	PrestigeService.AddLifetimeBanked(player, info.banked)
 	BallService.Despawn(ball)
 	CurrencyService.AddPoints(player, info.banked, if stuck then "Ball stuck (timeout): " .. ball.Name else "Ball destroyed at target: " .. targetName)
 end

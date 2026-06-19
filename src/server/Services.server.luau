@@ -9,6 +9,7 @@ local CollisionService = require(SSS.Scripts.Modules.CollisionService)
 local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PegService = require(SSS.Scripts.Modules.PegService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
+local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local DevService = require(SSS.Scripts.Modules.DevService)
@@ -18,6 +19,8 @@ CurrencyService.Init()
 ProfileService.Init()
 -- UpgradeService after Currency + Profile (it spends/sets through them).
 UpgradeService.Init()
+-- PrestigeService after Profile (it resets through it).
+PrestigeService.Init()
 -- DevService: Studio-only chat commands for testing tiers/loadout (inert in live).
 DevService.Init()
 ScoringService.Init()

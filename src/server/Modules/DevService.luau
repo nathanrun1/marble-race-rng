@@ -31,6 +31,7 @@ local ProfileStats = require(RS.Shared.ProfileStats)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ScoringService = require(SSS.Scripts.Modules.ScoringService)
 local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
+local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 
 local DevService = {}
 
@@ -786,7 +787,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, show"
+		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, show, reset_upgrades, prestige, pmoney, attempt_prestige"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -846,6 +847,32 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?): st
 		local bpi = math.max(1, math.floor(tonumber(a3) or 1))
 		task.spawn(runComprTest, player, n, bpi)
 		return string.format("running comprehensive build test: %d balls/build × %d per interval (results in server console)", n, bpi)
+	elseif cmd == "reset_upgrades" then
+		ProfileService.ResetProfile(player)
+		return "profile reset: all tiers 0, loadout defaults"
+	elseif cmd == "prestige" then
+		local n = tonumber(a2)
+		if not n then return "usage: /prestige <count>" end
+		n = math.max(0, math.floor(n))
+		PrestigeService.SetCount(player, n)
+		local mult = PrestigeService.GetMultiplier(player)
+		return string.format("prestige count -> %d  multiplier -> %.4fx", n, mult)
+	elseif cmd == "pmoney" then
+		local n = tonumber(a2)
+		if not n then return "usage: /pmoney <lifetimeBanked>" end
+		PrestigeService.SetLifetimeBanked(player, math.max(0, n))
+		local info = PrestigeService.GetInfo(player)
+		return string.format("lifetimeBanked -> %.0f  PP -> %d  nextCost -> %d  canPrestige -> %s",
+			info.lifetimeBanked, info.prestigePoints, info.nextCost, tostring(info.canPrestige))
+	elseif cmd == "attempt_prestige" then
+		local ok, reason = PrestigeService.Prestige(player)
+		if ok then
+			local info = PrestigeService.GetInfo(player)
+			return string.format("prestige! count -> %d  multiplier -> %.4fx", info.count, info.multiplier)
+		else
+			local info = PrestigeService.GetInfo(player)
+			return string.format("prestige failed: %s (PP=%d, need=%d)", tostring(reason), info.prestigePoints, info.nextCost)
+		end
 	end
 	return nil -- not a dev command; ignore
 end
