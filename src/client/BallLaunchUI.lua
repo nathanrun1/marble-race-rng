@@ -17,6 +17,7 @@ local player = Players.LocalPlayer
 -- any mutation, GetProfile is the initial pull.
 local Remote           = RS:WaitForChild("Remote")
 local GetProfileRF     = Remote:WaitForChild("GetProfile")     :: RemoteFunction
+local GetBalanceRF     = Remote:WaitForChild("GetBalance")     :: RemoteFunction
 
 local MainGui = player.PlayerGui:WaitForChild("MainGui")
 
@@ -37,13 +38,53 @@ Controller.STYLE = {
     autoBtnDownColor = Color3.fromRGB(4, 255, 0)
 }
 
+local betAmountFrame = MainGui:WaitForChild("LeftBar"):WaitForChild("Bet"):WaitForChild("BetAmount")
+
 Controller.UI = {
     launchBtn = MainGui:WaitForChild("Launch") :: ImageButton,
-    launchBtnText = MainGui:WaitForChild("Launch"):WaitForChild("TextLabel") :: TextLabel, 
+    launchBtnText = MainGui:WaitForChild("Launch"):WaitForChild("TextLabel") :: TextLabel,
     autoBtn = MainGui:WaitForChild("Auto") :: ImageButton,
     autoBtnText = MainGui:WaitForChild("Auto"):WaitForChild("TextLabel") :: TextLabel,
-    betAmount = MainGui:WaitForChild("LeftBar"):WaitForChild("Bet"):WaitForChild("BetAmount"):WaitForChild("BetBox") :: TextBox
+    betAmount = betAmountFrame:WaitForChild("BetBox") :: TextBox,
+    betQuarterBtn = betAmountFrame:WaitForChild("quarter") :: GuiButton,
+    betHalfBtn = betAmountFrame:WaitForChild("half") :: GuiButton,
+    betMaxBtn = betAmountFrame:WaitForChild("max") :: GuiButton,
 }
+
+-- Max bet the player's current upgrades allow (same pure derivation the server
+-- clamps against), and their current balance.
+local function getMaxBet(): number
+    return ProfileStats.GetMaxBet(GetProfileRF:InvokeServer().upgrades)
+end
+
+local function getPlrBalance(): number
+    return GetBalanceRF:InvokeServer()
+end
+
+-- On focus loss, clamp the typed bet to what the player can actually afford
+-- (min of balance and the upgrade-allowed max). Launching is handled by the
+-- launch button, so we only normalise the value here.
+local function onBetBoxFocusLost()
+    local betAmount = tonumber(Controller.UI.betAmount.Text)
+    if not betAmount then
+        Controller.UI.betAmount.Text = tostring(Config.LoadoutDefaults.Bet)
+        return
+    end
+    local maxBet = math.min(getPlrBalance(), getMaxBet())
+    Controller.UI.betAmount.Text = tostring(math.min(betAmount, maxBet))
+end
+
+local function onBetQuarterActivated()
+    Controller.UI.betAmount.Text = string.format("%.1f", math.ceil(getMaxBet() / 4))
+end
+
+local function onBetHalfActivated()
+    Controller.UI.betAmount.Text = string.format("%.1f", math.ceil(getMaxBet() / 2))
+end
+
+local function onBetMaxActivated()
+    Controller.UI.betAmount.Text = string.format("%.1f", getMaxBet())
+end
 
 local doAutoLaunch = false
 
@@ -113,6 +154,9 @@ local function initStyle()
     Controller.UI.autoBtn.ImageColor3 = Controller.STYLE.autoBtnUpColor
     Controller.UI.autoBtn.Image = Controller.ASSETS.btnUpImage
     Controller.UI.autoBtnText.Position = autoBtnTextRestPos
+
+    -- Bet box default
+    Controller.UI.betAmount.Text = tostring(Config.LoadoutDefaults.Bet)
 end
 
 
@@ -120,6 +164,11 @@ function Controller.Init()
     RunService.Heartbeat:Connect(onHeartbeat)
     Controller.UI.launchBtn.Activated:Connect(onLaunchBtnActivated)
     Controller.UI.autoBtn.Activated:Connect(onAutoBtnActivated)
+
+    Controller.UI.betAmount.FocusLost:Connect(onBetBoxFocusLost)
+    Controller.UI.betQuarterBtn.Activated:Connect(onBetQuarterActivated)
+    Controller.UI.betHalfBtn.Activated:Connect(onBetHalfActivated)
+    Controller.UI.betMaxBtn.Activated:Connect(onBetMaxActivated)
 
     initStyle()
 end
