@@ -244,26 +244,56 @@ end
 -- Lifecycle
 --------------------------------------------------------------------------------
 
-local function onPlayerAdded(player: Player)
-	profiles[player.UserId] = newProfile()
-	-- later: profiles[player.UserId] = DataService.LoadProfile(player)
-	ProfileService.Changed:Fire(player, profiles[player.UserId])
-	ProfileChangedRE:FireClient(player, profiles[player.UserId])
+-- Build a profile from saved data, overlaying it on a fresh default so newly added
+-- tracks/axes get their defaults and unknown saved keys are ignored. Loadout is
+-- re-clamped to the unlocked bounds. Called by DataService on join.
+function ProfileService.ApplyData(player: Player, saved: Profile?)
+	local profile = newProfile()
+	if saved then
+		if saved.upgrades then
+			for name in profile.upgrades do
+				local tier = saved.upgrades[name]
+				if type(tier) == "number" then
+					profile.upgrades[name] = tier
+				end
+			end
+		end
+		if saved.loadout then
+			local sl = saved.loadout
+			if type(sl.Bet) == "number" then
+				profile.loadout.Bet = sl.Bet
+			end
+			if type(sl.LaunchPhase) == "number" then
+				profile.loadout.LaunchPhase = sl.LaunchPhase
+			end
+			if sl.axes then
+				for name in profile.loadout.axes do
+					local v = sl.axes[name]
+					if type(v) == "number" then
+						profile.loadout.axes[name] = v
+					end
+				end
+			end
+		end
+	end
+	profiles[player.UserId] = profile
+	reclampLoadout(profile)
+	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile)
 end
 
-local function onPlayerRemoving(player: Player)
-	-- later: DataService.SaveProfile(player, profiles[player.UserId])
+-- The profile to persist for this player.
+function ProfileService.SerializeData(player: Player): Profile
+	return get(player)
+end
+
+function ProfileService.Clear(player: Player)
 	profiles[player.UserId] = nil
 end
 
 function ProfileService.Init()
-	Players.PlayerAdded:Connect(onPlayerAdded)
-	Players.PlayerRemoving:Connect(onPlayerRemoving)
 	RS.Remote.GetProfile.OnServerInvoke = get
 	SetAxisRF.OnServerInvoke = ProfileService.SetAxis
-	for _, p in Players:GetPlayers() do
-		onPlayerAdded(p)
-	end
 end
 
 return ProfileService

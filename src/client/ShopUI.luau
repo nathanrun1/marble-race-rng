@@ -91,15 +91,29 @@ local function stroke(parent, color, thickness)
 end
 
 -- Celebratory pop on a successful purchase (same feel as the prestige button):
--- scale up quick, then settle back with a slight overshoot.
+-- scale up quick, then settle back with a slight overshoot. Pops *relative* to the
+-- UIScale's resting value (whatever AutoScale set it to) rather than snapping to 1,
+-- and rebases only when idle so rapid (auto-buy) pops don't drift.
+local PUNCH_FACTOR = 1.04
 local shopScale: any = ShopFrame:FindFirstChildOfClass("UIScale") or f("UIScale", { Scale = 1 }, ShopFrame)
+local punchRest: number? = nil
+local punchTweens: { Tween } = {}
 local function punch()
-	shopScale.Scale = 1
-	local upT = TweenService:Create(shopScale, TweenInfo.new(0.1), { Scale = 1.04 })
-	upT.Completed:Connect(function()
-		TweenService:Create(shopScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	for _, t in punchTweens do t:Cancel() end
+	-- Capture the resting scale only when not mid-pop; if AutoScale changed it since
+	-- the last settle, the fresh read picks that up.
+	local base = punchRest or shopScale.Scale
+	punchRest = base
+	local up = TweenService:Create(shopScale, TweenInfo.new(0.1), { Scale = base * PUNCH_FACTOR })
+	local down = TweenService:Create(shopScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = base })
+	punchTweens = { up, down }
+	up.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed then down:Play() end
 	end)
-	upT:Play()
+	down.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed then punchRest = nil end
+	end)
+	up:Play()
 end
 
 -- Rising fade-out flare announcing the purchased tier. The authored label is kept

@@ -122,6 +122,24 @@ function ScoringService.GetEffectiveBallValue(player: Player, ball: BasePart): n
 	return effectiveValue[ball]
 end
 
+-- Open a no-score window of `seconds` for the player. Called by PrestigeService
+-- before the reset so balls in flight during the transition can't bank. The window
+-- is enforced at banking time in ScoreHandler (the ball still plays out normally,
+-- it just gets destroyed instead of banked at a DestroyTarget).
+function ScoringService.BeginNoScore(userId: number, seconds: number)
+	ScoreHandler.BeginNoScore(userId, seconds)
+end
+
+-- Strip ownership from any tracked ball state owned by userId so those in-flight
+-- balls stop crediting the player (paired with BallService.RemoveOwnership).
+function ScoringService.ClearOwner(userId: number)
+	for _, state in ballState do
+		if state.ownerUserId == userId then
+			state.ownerUserId = nil
+		end
+	end
+end
+
 function ScoringService.Init()
 	BallService.BallSpawned:Connect(onBallSpawn)
 	BallService.BallDespawned:Connect(onBallDespawn)

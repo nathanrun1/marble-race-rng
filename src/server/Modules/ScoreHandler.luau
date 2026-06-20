@@ -62,6 +62,24 @@ ScoreHandler.EffectiveValueChanged = Signal.new()
 
 local MIN_HEAT_ACCUM = -0.75
 
+-- Players in a post-prestige no-score window: userId -> os.clock() expiry. A ball
+-- owned by such a player still plays out normally; it just gets destroyed instead
+-- of banked when it reaches a DestroyTarget (exploit guard, see PrestigeService).
+local noScoreUntil: { [number]: number } = {}
+
+local function isNoScore(userId: number?): boolean
+	if not userId then
+		return false
+	end
+	local expiry = noScoreUntil[userId]
+	return expiry ~= nil and os.clock() < expiry
+end
+
+-- Open a no-score window of `seconds` for the player.
+function ScoreHandler.BeginNoScore(userId: number, seconds: number)
+	noScoreUntil[userId] = os.clock() + seconds
+end
+
 function ScoreHandler.GetEffectiveValue(info: ScoreInfo): number
 	return info.base + info.heatBonus
 end
@@ -193,6 +211,12 @@ end
 local function handleDestroy(ball: BasePart, player: Player, state: BallState, target: Instance): boolean
 	if not target:HasTag(Config.Tags.DestroyTarget) then
 		return false
+	end
+	-- Post-prestige no-score window: the ball reached a DestroyTarget but must not
+	-- bank into the (reset) account. Just remove it.
+	if isNoScore(player.UserId) then
+		BallService.Despawn(ball)
+		return true
 	end
 	if target:HasTag(Config.Tags.JackpotTarget) then
 		state.jackpotHit = true

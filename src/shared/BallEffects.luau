@@ -27,8 +27,11 @@ local GetEffectiveBallValueRF = RS.Remote.GetEffectiveBallValue
 local DEFAULT_BASE_COLOR = Color3.fromRGB(163, 163, 163)
 local DEFAULT_MATERIAL   = Enum.Material.Plastic
 local HEAVY_AT           = 0.66
-local LIGHT_AT           = 0.34
-local LIGHT_TRANSPARENCY = 0.45
+-- Ownership visibility: every viewer sees a ball at UNOWNED_TRANSPARENCY (set
+-- server-side, replicated). Each client then makes its OWN balls fully opaque
+-- locally, so a player can pick their balls out from everyone else's.
+local UNOWNED_TRANSPARENCY = 0.5
+local OWNED_TRANSPARENCY    = 0
 local FREQ_PARTICLE_AT   = 4
 local HEAT_NEON_AT       = 1
 local HEAT_FIRE_AT       = 2
@@ -52,10 +55,10 @@ local MULT_COLORS = {
 	[0.25] = Color3.fromRGB(86, 36, 36),
 	[0.5]  = Color3.fromRGB(151, 0, 0),
 	[1.0]  = Color3.fromRGB(151, 0, 0),
-	[1.5]  = Color3.fromRGB(140, 91, 159),
+	[1.25]  = Color3.fromRGB(140, 91, 159),
 	[2.0]  = Color3.fromRGB(98, 37, 209),
 	[3.0]  = Color3.fromRGB(255, 0, 191),
-	[8.0]  = Color3.fromRGB(255, 255, 255),
+	[6.0]  = Color3.fromRGB(255, 255, 255),
 	[Config.Scoring.JackpotMultiplier] = Color3.fromRGB(255, 255, 255)
 }
 
@@ -65,10 +68,6 @@ local baseColors: { [BasePart]: Color3 } = {}
 ----------------------------------------------------------------------------------
 -- Internal helpers
 ----------------------------------------------------------------------------------
-local function applyTransparency(ball: BasePart, weight: number)
-	ball.Transparency = if weight <= LIGHT_AT then LIGHT_TRANSPARENCY else 0
-end
-
 local function applyFreqParticles(ball: BasePart, n: number)
 	local existing = ball:FindFirstChild(FREQ_EMITTER_NAME)
 	if n >= FREQ_PARTICLE_AT then
@@ -136,6 +135,13 @@ function BallEffects.ApplyHeat(ball: BasePart, heat: number, heatFactor: number)
 	applyColor(ball, base, heat)
 	applyHeatMatAndSound(ball, weight, heat)
 	applyHeatParticles(ball, heat)
+end
+
+-- Set the ball's cosmetic base colour (e.g. from a ball skin) and repaint at neutral
+-- heat. Heat applied later still brightens from this base. Used by CosmeticService.
+function BallEffects.SetBaseColor(ball: BasePart, color: Color3)
+	baseColors[ball] = color
+	applyColor(ball, color, 0)
 end
 
 -- Play heat transition sound if applicable
@@ -270,7 +276,7 @@ function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: numb
 	else
 		BallEffects.ShowValuePopup(ball, cframe, "COMBO! x" .. combo, COMBO_COLOR_HOT)
 		if RunService:IsClient() then
-			SoundService.Play({ soundId = Config.Sounds.Combo, position = cframe.Position, jitter = 0.06 })
+			SoundService.Play({ soundId = Config.Sounds.Combo, position = cframe.Position, jitter = 0.06, volume = 3 })
 		end
 	end
 	
@@ -376,8 +382,8 @@ if RunService:IsServer() then
 		local ownerId = ball:GetAttribute(Config.Attributes.OwnerUserId) :: number?
 		local player = if ownerId then Players:GetPlayerByUserId(ownerId) else nil
 		baseColors[ball] = if player then DEFAULT_BASE_COLOR else DEFAULT_BASE_COLOR
-		local weight = (ball:GetAttribute(Config.Attributes.Weight) :: number?) or 0.5
-		applyTransparency(ball, weight)
+		-- Default everyone sees; the owning client overrides to opaque (see client block).
+		ball.Transparency = UNOWNED_TRANSPARENCY
 		BallEffects.ApplyHeat(ball, 0)
 	end
 
@@ -410,6 +416,8 @@ local TouchInputService = game:GetService("TouchInputService")
 
 	local function onBallTagged(ball: BasePart)
 		if ball:GetAttribute(Config.Attributes.OwnerUserId) == localUserId then
+			-- Our own ball: make it fully opaque for us (local-only; others keep 0.5).
+			ball.Transparency = OWNED_TRANSPARENCY
 			BallEffects.AttachValueUI(ball)
 			local effectiveValue = GetEffectiveBallValueRF:InvokeServer(ball)
 			if effectiveValue then

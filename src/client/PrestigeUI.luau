@@ -147,15 +147,27 @@ local function setReady(on: boolean)
 	end
 end
 
--- Celebratory pop on the panel after a successful prestige.
+-- Celebratory pop on the panel after a successful prestige. Pops *relative* to the
+-- UIScale's resting value (whatever AutoScale set it to) rather than snapping to 1,
+-- and rebases only when idle so rapid pops don't drift.
+local PUNCH_FACTOR = 1.04
 local panelScale: any = panel:FindFirstChildOfClass("UIScale") or f("UIScale", { Scale = 1 }, panel)
+local punchRest: number? = nil
+local punchTweens: { Tween } = {}
 local function punch()
-	panelScale.Scale = 1
-	local upT = TweenService:Create(panelScale, TweenInfo.new(0.1), { Scale = 1.04 })
-	upT.Completed:Connect(function()
-		TweenService:Create(panelScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	for _, t in punchTweens do t:Cancel() end
+	local base = punchRest or panelScale.Scale
+	punchRest = base
+	local up = TweenService:Create(panelScale, TweenInfo.new(0.1), { Scale = base * PUNCH_FACTOR })
+	local down = TweenService:Create(panelScale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = base })
+	punchTweens = { up, down }
+	up.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed then down:Play() end
 	end)
-	upT:Play()
+	down.Completed:Connect(function(state)
+		if state == Enum.PlaybackState.Completed then punchRest = nil end
+	end)
+	up:Play()
 end
 
 -- Rising fade-out flare. The authored label is kept hidden as a template; each

@@ -55,25 +55,25 @@ function CurrencyService.SetPoints(player: Player, amount: number, reason: strin
 end
 
 
-local function _onPlayerAdded(player: Player)
-	local start = startingBalance()
+-- Set the balance from saved data (or the starting balance for a new player) and
+-- announce it. Called by DataService on join (defaults pass, then saved pass).
+function CurrencyService.ApplyData(player: Player, savedBalance: number?)
+	local start = savedBalance or startingBalance()
 	balances[player.UserId] = start
 	CurrencyService.Changed:Fire(player, start, 0, "Initial")
 	BalanceChangedRE:FireClient(player, start, 0, "Initial")
-	-- later: balances[player.UserId] = DataService.Load(player)
 end
 
-local function _onPlayerRemoving(player: Player)
-	-- later: DataService.Save(player, balances[player.UserId])
+-- The value to persist for this player.
+function CurrencyService.SerializeData(player: Player): number
+	return balances[player.UserId] or startingBalance()
+end
+
+function CurrencyService.Clear(player: Player)
 	balances[player.UserId] = nil
 end
 
 function CurrencyService.Init()
-	Players.PlayerAdded:Connect(_onPlayerAdded)
-	Players.PlayerRemoving:Connect(_onPlayerRemoving)
-	for _, p in Players:GetPlayers() do
-		_onPlayerAdded(p)
-	end
 	GetBalanceRF.OnServerInvoke = CurrencyService.GetPoints
 end
 

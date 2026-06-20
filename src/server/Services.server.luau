@@ -3,6 +3,7 @@ local RS = game:GetService("ReplicatedStorage")
 
 local ScoringService = require(SSS.Scripts.Modules.ScoringService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+local LeaderboardService = require(SSS.Scripts.Modules.LeaderboardService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local BallService = require(SSS.Scripts.Modules.BallService)
 local CollisionService = require(SSS.Scripts.Modules.CollisionService)
@@ -10,6 +11,8 @@ local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PegService = require(SSS.Scripts.Modules.PegService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local DataService = require(SSS.Scripts.Modules.DataService)
+local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local SoundService = require(RS.Shared.SoundService)
@@ -22,6 +25,12 @@ ProfileService.Init()
 UpgradeService.Init()
 -- PrestigeService after Profile (it resets through it).
 PrestigeService.Init()
+-- DataService after the three data services are set up: it owns the player-data
+-- lifecycle (seeds defaults, loads/saves persistence) and drives their ApplyData.
+DataService.Init()
+-- LeaderboardService after data is loading: it seeds leaderstats from current state
+-- and mirrors Currency/Prestige Changed signals (so it corrects once data loads).
+LeaderboardService.Init()
 -- DevService: Studio-only chat commands for testing tiers/loadout (inert in live).
 DevService.Init()
 ScoringService.Init()
@@ -32,6 +41,9 @@ BallService.Init()
 -- BallEffects before launches start: it self-connects to BallSpawned to paint
 -- each ball from its owner's profile.
 BallEffects.Init()
+-- CosmeticService after BallEffects: it self-connects to BallSpawned to paint each
+-- ball with its owner's equipped skin, overriding BallEffects' default base colour.
+CosmeticService.Init()
 ScoreUI.Init()
 -- SoundService: creates the PlaySound remote so clients can receive server-driven SFX.
 SoundService.Init()

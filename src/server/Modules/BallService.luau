@@ -112,6 +112,18 @@ function BallService.DespawnAll()
 	end
 end
 
+-- Strip ownership from every live ball owned by userId: clears the OwnerUserId
+-- attribute and zeroes the owner count, without despawning. Used by prestige so
+-- balls already in flight can no longer bank into the (now-reset) account.
+function BallService.RemoveOwnership(userId: number)
+	for ball in liveBalls do
+		if ball:GetAttribute(Config.Attributes.OwnerUserId) == userId then
+			ball:SetAttribute(Config.Attributes.OwnerUserId, nil)
+		end
+	end
+	ownerCounts[userId] = nil
+end
+
 function BallService.GetLiveCount(userId: number): number
 	return ownerCounts[userId] or 0
 end

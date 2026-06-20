@@ -13,13 +13,14 @@ local Config = require(RS.Shared.Config)
 local Signal = require(RS.Shared.Signal)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+local BallService = require(SSS.Scripts.Modules.BallService)
 
 local PrestigeService = {}
 
 -- (player, info) — fired after prestige state changes.
 PrestigeService.Changed = Signal.new()
 
-type PrestigeData = {
+export type PrestigeData = {
 	count: number,
 	lifetimeBanked: number,
 }
@@ -68,6 +69,14 @@ function PrestigeService.GetInfo(player: Player): PrestigeInfo
 	return buildInfo(get(player))
 end
 
+-- Non-asserting prestige count (0 if the player's data isn't present yet). Safe for
+-- systems that may run before DataService seeds the player (e.g. the leaderboard),
+-- which then correct themselves on PrestigeService.Changed.
+function PrestigeService.GetCount(player: Player): number
+	local d = data[player.UserId]
+	return if d then d.count else 0
+end
+
 -- MultPer ^ count; applied to banked by ScoreHandler.
 function PrestigeService.GetMultiplier(player: Player): number
 	return Config.Prestige.MultPer ^ get(player).count
@@ -105,6 +114,17 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	if not info.canPrestige then
 		return false, "not_enough_pp"
 	end
+	-- Exploit guard: balls fired before prestige still carry their (large) pre-reset
+	-- value and would bank into the fresh account. Before applying the reset, open a
+	-- no-score window, strip ownership off in-flight balls, and detach them from
+	-- their tracked ball state so none of them can credit this player.
+	-- ScoringService is lazy-required here to avoid a load-time require cycle
+	-- (ScoringService -> ScoreHandler -> PrestigeService).
+	local ScoringService = require(SSS.Scripts.Modules.ScoringService)
+	ScoringService.BeginNoScore(player.UserId, Config.Prestige.NoScoreSeconds)
+	BallService.RemoveOwnership(player.UserId)
+	ScoringService.ClearOwner(player.UserId)
+
 	d.count += 1
 	ProfileService.ResetProfile(player)
 	-- Wipe the run's balance too: prestige resets upgrades AND money back to the
@@ -126,22 +146,27 @@ local function getRemote(name: string, class: string): Instance
 	return r
 end
 
-local function onPlayerAdded(player: Player)
-	data[player.UserId] = { count = 0, lifetimeBanked = 0 }
+-- Set prestige state from saved data (or fresh zero). Called by DataService on join.
+function PrestigeService.ApplyData(player: Player, saved: PrestigeData?)
+	local d: PrestigeData = {
+		count = (saved and saved.count) or 0,
+		lifetimeBanked = (saved and saved.lifetimeBanked) or 0,
+	}
+	data[player.UserId] = d
+	PrestigeService.Changed:Fire(player, buildInfo(d))
 end
 
-local function onPlayerRemoving(player: Player)
+-- The prestige state to persist for this player.
+function PrestigeService.SerializeData(player: Player): PrestigeData
+	return get(player)
+end
+
+function PrestigeService.Clear(player: Player)
 	data[player.UserId] = nil
 end
 
 function PrestigeService.Init()
-	Players.PlayerAdded:Connect(onPlayerAdded)
-	Players.PlayerRemoving:Connect(onPlayerRemoving)
-	for _, p in Players:GetPlayers() do
-		onPlayerAdded(p)
-	end
-
-	;(getRemote("GetPrestigeInfo", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player)
+	(getRemote("GetPrestigeInfo", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player)
 		return PrestigeService.GetInfo(player)
 	end
 	;(getRemote("Prestige", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player)

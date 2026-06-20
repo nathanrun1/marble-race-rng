@@ -41,7 +41,7 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 20,
+	MinCombo = 21,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 1.25,
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
@@ -49,7 +49,7 @@ Config.Scoring = {
 	MaxBallLifetime = 25,
 	-- Jackpot payout: hitting a JackpotTarget adds JackpotMultiplier × the ball's
 	-- otherwise-final banked value (so total = banked × (1 + this)). Tune.
-	JackpotMultiplier = 25,
+	JackpotMultiplier = 20,
 }
 
 -- Peg-field heat values PegService writes to each peg's PegHeat attribute. Fixed
@@ -73,15 +73,17 @@ Config.Groups = {
 Config.Prestige = {
 	Scale      = 10000, -- denominator in PP formula
 	Exponent   = 0.45,  -- sublinear compression
-	CostBase   = 10,    -- PP cost of first prestige
+	CostBase   = 30,    -- PP cost of first prestige (3× the prior 10; triples every tier)
 	CostGrowth = 1.40,  -- geometric cost multiplier per prestige level
 	MultPer    = 1.25,  -- global banked multiplier per prestige (multiplicative)
+	NoScoreSeconds = 5, -- post-prestige no-score window (exploit guard)
 }
 
 Config.Economy = {
 	StartMaxBet = 40,         -- guideline §4; base for the MaxBet track
-	TrickleFraction = 0.1,    -- × currentMaxBet, free per batch (§1.2)
+	TrickleFraction = 0.01,    -- × currentMaxBet, free per batch (§1.2)
 	VJackFraction = 0.55,     -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
+	BasePriceGrowth = 4.5,    -- default upgrade Cost.Growth (price multiplier per tier)
 }
 
 -- Upgrade tracks. ProfileService stores the *tier* (an integer); the effective
@@ -107,21 +109,21 @@ Config.Upgrades = {
 	-- maxBet = Economy.StartMaxBet * (PerTier ^ tier)   [cap for loadout.Bet]
 	MaxBet = {
 		PerTier = 3.2,
-		Cost = { Base = 250, Growth = 3.2 },  -- Growth > 2 to outpace maxBet
+		Cost = { Base = 250, Growth = Config.Economy.BasePriceGrowth },  -- Growth > 2 to outpace maxBet
 		Name = "Max Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰"
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	FlatRate = {
-		Base = 1.5, PerTier = 3.2,
-		Cost = { Base = 215, Growth = 3.2 },
+		Base = 0.25, PerTier = 3.2,
+		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Combo", Desc = "More points per bounce during a combo.",
 		Icon = "⚡"
 	},
 	-- baseAdditive = PerTier * tier  (additive)         [output-scaling]
 	BaseAdditive = {
 		Base = 0.05, PerTier = 1.66,
-		Cost = { Base = 215, Growth = 3.2 },
+		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Base Bonus", Desc = "Boost your final slot payout.",
 		Icon = "➕"
 	},
@@ -129,7 +131,7 @@ Config.Upgrades = {
 	Frequency = {
 		Base = 2, PerTier = 0.67,
 		MaxTier = 12,
-		Cost = { Base = 230, Growth = 3.2 },
+		Cost = { Base = 230, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Launch Delay", Desc = "Decrease time between launches",
 		Icon = "🔄"
 	},
@@ -138,7 +140,7 @@ Config.Upgrades = {
 	-- (and random cold paths cost more). Targeting channel; only pays with aim.
 	PegHeat = {
 		PerTier = 0.05,  -- INFERRED magnitude; tune against the heat map
-		Cost = { Base = 180, Growth = 3.2 },
+		Cost = { Base = 180, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Peg Sense", Desc = "Hot and cold pegs affect you more strongly.",
 		Icon = "🔥"
 	},
@@ -182,7 +184,7 @@ Config.Axes = {
 			{ Min = 0.04, Max = 0.96 },
 			{ Min = 0.0, Max = 1.0 },
 		},
-		Cost = { Base = 105, Growth = 3.2 },
+		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Bounciness", Desc = "How bouncy the ball is. More bounciness increases variance.",
 		Icon = "💨"
 	},
@@ -203,7 +205,7 @@ Config.Axes = {
 			{ Min = 0.51, Max = 0.98 },
 			{ Min = 0.5, Max = 1 },
 		},
-		Cost = { Base = 105, Growth = 3.2 },
+		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Ball Size", Desc = "Unlock different ball sizes.",
 		Icon = "◯"
 	},
@@ -224,7 +226,7 @@ Config.Axes = {
 			{ Min = -math.rad(55.7), Max = math.rad(55.7) },
 			{ Min = -math.rad(65.0), Max = math.rad(65.0) },
 		},
-		Cost = { Base = 105, Growth = 3.2 },
+		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Angle", Desc = "Launch angle.",
 		Icon = "🏹"
 	},
@@ -245,7 +247,7 @@ Config.Axes = {
 			{ Min = math.rad(5), Max = math.rad(69.6) },
 			{ Min = math.rad(5), Max = math.rad(80.0) },
 		},
-		Cost = { Base = 105, Growth = 3.2 },
+		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Launcher Swivel", Desc = "Widen or tighten the possible launch angles.",
 		Icon = "🎯"
 	},
