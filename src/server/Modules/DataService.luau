@@ -53,7 +53,27 @@ local HANDSHAKE_POLL = 1          -- seconds between re-acquire polls during the
 -- Unique id for this server instance; owns the locks we hold.
 local SESSION_ID = HttpService:GenerateGUID(false)
 local persistenceEnabled = (not RunService:IsStudio()) or PERSIST_IN_STUDIO
-local store = DataStoreService:GetDataStore(STORE_NAME)
+
+-- GetDataStore can throw if the DataStore API is unreachable — e.g. Studio with no
+-- internet, or "Enable Studio Access to API Services" off. That can't happen for a
+-- live server (the API is always present there), so we only tolerate it in Studio:
+-- log it and run with persistence off, instead of letting the whole module error out
+-- and break every gameplay service that depends on it.
+local store: GlobalDataStore? = nil
+if persistenceEnabled then
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(STORE_NAME)
+	end)
+	if ok then
+		store = result
+	elseif RunService:IsStudio() then
+		warn("DataService: DataStore unavailable in Studio, running without persistence: " .. tostring(result))
+		persistenceEnabled = false
+	else
+		-- Live server with no DataStore is unexpected; surface it loudly.
+		error("DataService: GetDataStore failed on a live server: " .. tostring(result))
+	end
+end
 
 export type PlayerBlob = {
 	currency: number?,
@@ -123,7 +143,7 @@ end
 local function attemptAcquire(userId: number, steal: boolean): (string, PlayerBlob?)
 	local denied = false
 	local ok, result = pcall(function()
-		return store:UpdateAsync(keyFor(userId), function(record)
+		return (store :: GlobalDataStore):UpdateAsync(keyFor(userId), function(record)
 			record = record or {}
 			if not (steal or lockIsAvailable(record.lock)) then
 				denied = true
@@ -193,7 +213,7 @@ end
 -- so we never clobber a server that legitimately stole an abandoned slot.
 local function writeData(userId: number, blob: PlayerBlob, release: boolean)
 	withRetry(function()
-		return store:UpdateAsync(keyFor(userId), function(record)
+		return (store :: GlobalDataStore):UpdateAsync(keyFor(userId), function(record)
 			record = record or {}
 			if not lockIsAvailable(record.lock) then
 				return nil -- someone else owns it now; don't overwrite
@@ -207,7 +227,7 @@ end
 
 local function releaseLock(userId: number)
 	withRetry(function()
-		return store:UpdateAsync(keyFor(userId), function(record)
+		return (store :: GlobalDataStore):UpdateAsync(keyFor(userId), function(record)
 			if record and record.lock and record.lock.owner == SESSION_ID then
 				record.lock = nil
 			end

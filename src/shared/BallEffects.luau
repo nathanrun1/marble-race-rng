@@ -16,6 +16,7 @@ local Debris = game:GetService("Debris")
 local Config = require(RS.Shared.Config)
 local StringUtils = require(RS.Shared.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
+local AutoScale = require(RS.Shared.AutoScale)
 
 local BallEffects = {}
 
@@ -46,7 +47,7 @@ local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
 local HEAT_COLOR_POS     = Color3.fromRGB(255, 140, 0)
 local HEAT_COLOR_NEG     = Color3.fromRGB(80, 160, 255)
-local MIN_COMBO_TO_SHOW  = 10
+local MIN_COMBO_TO_SHOW  = 22
 -- Exponential follow rate for the value-UI anchor (higher = snappier / less lag,
 -- lower = smoother). Frame-rate independent via 1 - exp(-rate * dt).
 local VALUE_FOLLOW_RATE  = 30
@@ -150,11 +151,11 @@ function BallEffects.PlayHeatSound(ball: BasePart, prevHeat: number, curHeat: nu
 	prevHeat = (prevHeat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
 	curHeat = (curHeat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
 	if prevHeat < HEAT_NEON_AT and curHeat >= HEAT_NEON_AT then
-		SoundService.Play({ soundId = Config.Sounds.Hot, position = ball.CFrame.Position, volume = 3 })
+		SoundService.Play({ soundId = Config.Sounds.Hot, position = ball.CFrame.Position, volume = 1.5 })
 	elseif prevHeat < HEAT_FIRE_AT and curHeat >= HEAT_FIRE_AT then
-		SoundService.Play({ soundId = Config.Sounds.Fire, position = ball.CFrame.Position, volume = 3 })
+		SoundService.Play({ soundId = Config.Sounds.Fire, position = ball.CFrame.Position, volume = 1.5 })
 	elseif prevHeat >= HEAT_NEON_AT and curHeat < HEAT_NEON_AT then
-		SoundService.Play({ soundId = Config.Sounds.Cold, position = ball.CFrame.Position, volume = 4})
+		SoundService.Play({ soundId = Config.Sounds.Cold, position = ball.CFrame.Position, volume = 1.5})
 	end
 end
 
@@ -235,7 +236,7 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 	anchor.Parent = workspace
 
 	local billboard = Instance.new("BillboardGui")
-	billboard.Size = UDim2.new(0, 100, 0, 50)
+	billboard.Size = UDim2.new(0, 150, 0, 75)
 	billboard.StudsOffset = POPUP_OFFSET_START
 	billboard.AlwaysOnTop = true
 	billboard.Parent = anchor
@@ -250,6 +251,8 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 	text.TextScaled = true
 	text.Font = Enum.Font.GothamBold
 	text.Parent = billboard
+	-- Shrink the popup on smaller viewports (sizes authored at 1080p).
+	AutoScale.Apply(text)
 
 	local t1 = TweenService:Create(billboard, POPUP_TWEEN, { StudsOffset = POPUP_OFFSET_END })
 	local t2 = TweenService:Create(text, POPUP_TWEEN, {
@@ -266,17 +269,17 @@ end
 local COMBO_COLOR_NORMAL = Color3.new(1, 1, 1)
 local COMBO_COLOR_HOT    = Color3.fromRGB(255, 60, 60)
 
-function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: number)
+function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: number, flatRate: number)
 	if RunService:IsClient() then
-		SoundService.Play({ soundId = Config.Sounds.Bounce, position = cframe.Position, jitter = 0.06, volume = 3 })
+		SoundService.Play({ soundId = Config.Sounds.Bounce, position = cframe.Position, jitter = 0.06, volume = 1.5 })
 	end
 	if combo < MIN_COMBO_TO_SHOW then return end
 	if combo < Config.Scoring.MinCombo then
-		BallEffects.ShowValuePopup(ball, cframe, "BOUNCE x" .. combo, COMBO_COLOR_NORMAL)
+		BallEffects.ShowValuePopup(ball, cframe, tostring(combo), COMBO_COLOR_NORMAL)
 	else
-		BallEffects.ShowValuePopup(ball, cframe, "COMBO! x" .. combo, COMBO_COLOR_HOT)
+		BallEffects.ShowValuePopup(ball, cframe, tostring(combo), COMBO_COLOR_HOT)
 		if RunService:IsClient() then
-			SoundService.Play({ soundId = Config.Sounds.Combo, position = cframe.Position, jitter = 0.06, volume = 3 })
+			SoundService.Play({ soundId = Config.Sounds.Combo, position = cframe.Position, jitter = 0.06, volume = 1.5 })
 		end
 	end
 	

@@ -41,7 +41,7 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 21,
+	MinCombo = 24,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 1.25,
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
@@ -49,7 +49,7 @@ Config.Scoring = {
 	MaxBallLifetime = 25,
 	-- Jackpot payout: hitting a JackpotTarget adds JackpotMultiplier × the ball's
 	-- otherwise-final banked value (so total = banked × (1 + this)). Tune.
-	JackpotMultiplier = 20,
+	JackpotMultiplier = 20	,
 }
 
 -- Peg-field heat values PegService writes to each peg's PegHeat attribute. Fixed
@@ -108,21 +108,21 @@ Config.Economy = {
 Config.Upgrades = {
 	-- maxBet = Economy.StartMaxBet * (PerTier ^ tier)   [cap for loadout.Bet]
 	MaxBet = {
-		PerTier = 3.2,
+		PerTier = Config.Economy.BasePriceGrowth * 0.9,
 		Cost = { Base = 250, Growth = Config.Economy.BasePriceGrowth },  -- Growth > 2 to outpace maxBet
 		Name = "Max Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰"
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	FlatRate = {
-		Base = 0.25, PerTier = 3.2,
+		Base = 0.1, PerTier = Config.Economy.BasePriceGrowth * 0.3,
 		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Combo", Desc = "More points per bounce during a combo.",
 		Icon = "⚡"
 	},
-	-- baseAdditive = PerTier * tier  (additive)         [output-scaling]
+	-- baseAdditive = Base + BaseRate * tier + RatePerTier * (tier)(tier-1)/2 
 	BaseAdditive = {
-		Base = 0.05, PerTier = 1.66,
+		Base = 0.05, BaseRate = 0.05, RatePerTier = 0.01,
 		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Base Bonus", Desc = "Boost your final slot payout.",
 		Icon = "➕"

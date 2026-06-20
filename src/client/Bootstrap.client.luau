@@ -11,7 +11,7 @@ local SoundService = require(RS.Shared:WaitForChild("SoundService"))
 local BallTuningUI = require(PlayerScripts:WaitForChild("BallTuningUI"))
 local BallLaunchUI = require(PlayerScripts:WaitForChild("BallLaunchUI"))
 local PrestigeUI = require(PlayerScripts:WaitForChild("PrestigeUI"))
-local AutoScale = require(PlayerScripts:WaitForChild("AutoScale"))
+local AutoScale = require(RS.Shared:WaitForChild("AutoScale"))
 
 UpgradeShop.Init()
 BallEffects.Init()

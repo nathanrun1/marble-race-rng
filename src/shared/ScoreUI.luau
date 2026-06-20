@@ -32,6 +32,7 @@ end
 if RunService:IsClient() then
 	local TweenService = game:GetService("TweenService")
 	local Players = game:GetService("Players")
+	local AutoScale = require(RS.Shared.AutoScale)
 
 	local FADE_IN    = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	local FADE_OUT   = TweenInfo.new(0.4,  Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -105,7 +106,7 @@ if RunService:IsClient() then
 
 		local frame = Instance.new("Frame")
 		frame.Name = "MessageLog"
-		frame.Size = UDim2.new(0, 260, 0, 400)
+		frame.Size = UDim2.new(0, 460, 0, 400)
 		frame.Position = UDim2.new(1, -14, 1, -14)
 		frame.AnchorPoint = Vector2.new(1, 1)
 		frame.BackgroundTransparency = 1
@@ -119,6 +120,9 @@ if RunService:IsClient() then
 		layout.SortOrder = Enum.SortOrder.LayoutOrder
 		layout.Padding = UDim.new(0, 3)
 		layout.Parent = frame
+
+		-- Shrink the whole log on smaller viewports (sizes authored at 1080p).
+		AutoScale.Apply(frame)
 
 		msgFrame = frame
 	end

@@ -3,6 +3,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
+local StringUtils = require(ReplicatedStorage.Shared.StringUtils)
+
 local remote = ReplicatedStorage:WaitForChild("LeaderboardRemote")
 
 local medals = { "🥇", "🥈", "🥉", "4️⃣", "5️⃣" }
@@ -41,7 +43,7 @@ local function updatePhysicalBoard(data)
 		if label then
 			local entry = data[i]
 			if entry then
-				label.Text = medals[i] .. " " .. entry.name .. "  |  " .. formatNumber(entry.coins)
+				label.Text = medals[i] .. " " .. entry.name .. "  |  " .. StringUtils.FormatShort(n)
 			else
 				label.Text = medals[i] .. " ---"
 			end

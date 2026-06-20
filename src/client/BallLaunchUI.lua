@@ -96,7 +96,9 @@ local function onLaunchBtnActivated()
     if not launchBtnActive then return end
 	launchBtnActive = false
 
-    SoundService.Play({ soundId = Config.Sounds.Launch, volume = 1.5 })
+    if not doAutoLaunch then
+        SoundService.Play({ soundId = Config.Sounds.Launch, volume = 1.0 })
+    end
 
 	local betAmount = tonumber(Controller.UI.betAmount.Text)
     print(Controller.UI.betAmount.Text)

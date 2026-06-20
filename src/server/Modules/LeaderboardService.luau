@@ -1,8 +1,12 @@
 --!strict
 -- Populates Roblox's built-in player-list leaderboard with each player's currency
 -- and prestige level. The default leaderboard renders a "leaderstats" folder under
--- the Player, showing each value object as a column (ordered alphabetically) and
--- sorting the list by them. IntValues give clean, numerically-sorted columns.
+-- the Player, showing each value object as a column (ordered alphabetically).
+--
+-- Cash is a StringValue so it can show a StringUtils-formatted balance ("$1.2M")
+-- rather than a raw integer. The core player list only sorts rows by NUMBER-typed
+-- leaderstats, so it won't order rows by a string Cash; rows fall back to the
+-- remaining numeric column (Prestige). True cash-ranked ordering needs a custom UI.
 --
 -- The stats mirror their services: seeded from current state and updated on
 -- CurrencyService.Changed / PrestigeService.Changed. Both of those services'
@@ -10,9 +14,11 @@
 
 local Players = game:GetService("Players")
 local SSS = game:GetService("ServerScriptService")
+local RS = game:GetService("ReplicatedStorage")
 
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local StringUtils = require(RS.Shared.StringUtils)
 
 local LeaderboardService = {}
 
@@ -20,15 +26,15 @@ local CASH_STAT = "Cash"
 local PRESTIGE_STAT = "Prestige"
 
 -- userId -> the value objects we update
-local stats: { [number]: { cash: IntValue, prestige: IntValue } } = {}
+local stats: { [number]: { cash: StringValue, prestige: IntValue } } = {}
 
 local function onPlayerAdded(player: Player)
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
 
-	local cash = Instance.new("IntValue")
+	local cash = Instance.new("StringValue")
 	cash.Name = CASH_STAT
-	cash.Value = math.floor(CurrencyService.GetPoints(player))
+	cash.Value = StringUtils.FormatMoney(math.floor(CurrencyService.GetPoints(player)))
 	cash.Parent = leaderstats
 
 	local prestige = Instance.new("IntValue")
@@ -55,7 +61,7 @@ function LeaderboardService.Init()
 	CurrencyService.Changed:Connect(function(player: Player, newBalance: number)
 		local s = stats[player.UserId]
 		if s then
-			s.cash.Value = math.floor(newBalance)
+			s.cash.Value = StringUtils.FormatMoney(math.floor(newBalance))
 		end
 	end)
 

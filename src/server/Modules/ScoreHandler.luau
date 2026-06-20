@@ -181,8 +181,9 @@ end
 
 local function handleBounce(ball: BasePart, player: Player, state: BallState)
 	state.bounces += 1
-	if ProfileStats.GetFlatPerBounce(ProfileService.GetUpgrades(player)) > 0 then
-		BallEffects.DoClientEffect(player, "ShowComboPopup", ball, ball.CFrame, state.bounces)
+	local flatRate = ProfileStats.GetFlatPerBounce(ProfileService.GetUpgrades(player))
+	if flatRate > 0 then
+		BallEffects.DoClientEffect(player, "ShowComboPopup", ball, ball.CFrame, state.bounces, flatRate)
 	end
 end
 

@@ -8,23 +8,36 @@ end
 
 function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: number): string
     precision = precision or 2
+    local SCI_AT = 1e15
+    local FACTORS_ORD = {1e12, 1e9, 1e6, 1e3}
     local FACTORS = {
-        [1e15] = "Q",
         [1e12] = "T",
         [1e9]  = "B",
         [1e6]  = "M",
         [1e3]  = "K",
     }
+    print("format for number: " .. n)
 
-    for f, l in FACTORS do
+    if n >= SCI_AT then
+        local factor = math.floor(math.log10(n))
+        n /= 10 ^ factor
+        print("factor: "..factor)
+        if floorRound then
+            n = math.floor(n * 10 ^ precision) / (10 ^ precision)
+        end
+        return string.format("%."..precision.."fe%d", n, factor) 
+    end 
+
+    for _, f in ipairs(FACTORS_ORD) do
+        local l = FACTORS[f]
         if n < f then continue end
         n /= f
         if floorRound then
             n = math.floor(n * 10 ^ precision) / (10 ^ precision)
         end
-        return ("%.2f"..l):format(n)
+        return ("%."..precision.."f"..l):format(n)
     end
-    return string.format("%.2f", n)
+    return string.format("%."..precision.."f", n)
 end
 
 -- Money string: comma-grouped below 1K (so small balances read exactly), short
