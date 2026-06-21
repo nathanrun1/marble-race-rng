@@ -32,14 +32,20 @@ export type SoundSpec = {
 	rollOffMinDistance: number?, -- 3D only: full volume within this radius
 	rollOffMaxDistance: number?, -- 3D only: inaudible beyond this radius
 	offset: number?,       -- Sound start offset in seconds
-	jitter: number?        -- random ±fraction applied to pitch (e.g. 0.06 = ±3%);
+	jitter: number?,       -- random ±fraction applied to pitch (e.g. 0.06 = ±3%);
 	                       -- keeps rapid retriggers of the same sound audibly distinct
+	loop: boolean?         -- play on repeat; the returned Sound must be stopped by the
+	                       -- caller (it never auto-recycles). nil/false = one-shot.
 }
 
 local DEFAULT_VOLUME = 0.5
 -- Safety net: if a sound never fires Ended (e.g. the asset fails to load), reclaim
 -- it anyway. Comfortably longer than any SFX we play.
 local MAX_LIFETIME = 60
+
+-- When true, every Play() sound is forced to volume 0 (the "mute SFX" toggle).
+-- Background music goes through SetBackgroundMusic, not Play(), so it's unaffected.
+local sfxMuted = false
 
 -- Idle sounds are pooled and reused rather than destroyed after each play. Once
 -- the last instance of a SoundId is destroyed, Roblox can evict its audio data, so
@@ -94,7 +100,7 @@ end
 -- Apply the per-play (transient) properties. SoundId is owned by acquire and never
 -- reassigned here — reassigning would re-trigger a load on a reused instance.
 local function applyCommon(sound: Sound, spec: SoundSpec)
-	sound.Volume = spec.volume or DEFAULT_VOLUME
+	sound.Volume = if sfxMuted then 0 else (spec.volume or DEFAULT_VOLUME)
 	local pitch = spec.pitch or 1
 	if spec.jitter then
 		-- ±jitter fraction around the base pitch, so overlapping copies of the same
@@ -108,9 +114,10 @@ end
 -- Play a single sound described by `spec`, reusing a pooled instance. Positional
 -- sounds ride a temporary Attachment at `spec.position`; global sounds play flat
 -- 2D from the pool holder. The instance returns to the pool when it finishes.
-function SoundService.Play(spec: SoundSpec)
+function SoundService.Play(spec: SoundSpec): Sound
 	local sound = acquire(spec.soundId)
 	applyCommon(sound, spec)
+	sound.Looped = spec.loop or false
 
 	local attachment: Attachment? = nil
 	if spec.position then
@@ -124,21 +131,28 @@ function SoundService.Play(spec: SoundSpec)
 		sound.Parent = POOL_HOLDER
 	end
 
-	local finished = false
-	local function finish()
-		if finished then
-			return
+	-- Looped sounds never end, so they don't auto-recycle: the caller owns the
+	-- returned instance and stops it (which recycles it via release()). One-shots
+	-- recycle themselves on Ended, with MAX_LIFETIME as a load-failure fallback.
+	if not spec.loop then
+		local finished = false
+		local function finish()
+			if finished then
+				return
+			end
+			finished = true
+			release(sound)               -- reparents out of the attachment first
+			if attachment then
+				attachment:Destroy()
+			end
 		end
-		finished = true
-		release(sound)               -- reparents out of the attachment first
-		if attachment then
-			attachment:Destroy()
-		end
+
+		sound.Ended:Once(finish)
+		task.delay(MAX_LIFETIME, finish) -- fallback if Ended never fires
 	end
 
-	sound.Ended:Once(finish)
-	task.delay(MAX_LIFETIME, finish) -- fallback if Ended never fires
 	sound:Play()
+	return sound
 end
 
 -- Optional: warm the audio cache (and seed the pool) for a set of sound ids so the
@@ -154,6 +168,66 @@ function SoundService.Preload(soundIds: { string })
 	for _, sound in sounds do
 		release(sound)
 	end
+end
+
+----------------------------------------------------------------------------------
+-- Background music + mute toggles (run in the calling context; meant for the client)
+----------------------------------------------------------------------------------
+
+local MUSIC_VOLUME = 0.2
+-- The single looping background track, managed independently of the SFX pool so it
+-- can be replaced/stopped and muted separately from one-shot sounds.
+local backgroundMusic: Sound? = nil
+local musicMuted = false
+
+-- Play `soundId` on loop as the background track, replacing whatever SetBackgroundMusic
+-- was already playing. Self-contained (not routed through Play), so the SFX mute never
+-- touches it. An empty id just clears the current track (e.g. unset Config.Sounds.Music).
+function SoundService.SetBackgroundMusic(soundId: string)
+	SoundService.StopBackgroundMusic()
+	if soundId == "" then
+		return
+	end
+	local sound = Instance.new("Sound")
+	sound.Name = "BackgroundMusic"
+	sound.SoundId = soundId
+	sound.Looped = true
+	sound.Volume = if musicMuted then 0 else MUSIC_VOLUME
+	sound.Parent = POOL_HOLDER
+	backgroundMusic = sound
+	sound:Play()
+end
+
+-- Stop and clear the current background track (no-op if none is playing).
+function SoundService.StopBackgroundMusic()
+	if backgroundMusic then
+		backgroundMusic:Stop()
+		backgroundMusic:Destroy()
+		backgroundMusic = nil
+	end
+end
+
+-- Music mute toggle: silences the background track in place (keeps it playing/in sync
+-- so unmuting resumes seamlessly), rather than stopping it. For the music mute button.
+function SoundService.SetMusicMuted(muted: boolean)
+	musicMuted = muted
+	if backgroundMusic then
+		backgroundMusic.Volume = if muted then 0 else MUSIC_VOLUME
+	end
+end
+
+function SoundService.IsMusicMuted(): boolean
+	return musicMuted
+end
+
+-- SFX mute toggle: forces every Play() sound to volume 0 (see applyCommon). Does not
+-- affect background music. For the (ball-effects / SFX) sound mute button.
+function SoundService.SetSFXMuted(muted: boolean)
+	sfxMuted = muted
+end
+
+function SoundService.IsSFXMuted(): boolean
+	return sfxMuted
 end
 
 ----------------------------------------------------------------------------------

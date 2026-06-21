@@ -12,6 +12,9 @@ local BallTuningUI = require(PlayerScripts:WaitForChild("BallTuningUI"))
 local BallLaunchUI = require(PlayerScripts:WaitForChild("BallLaunchUI"))
 local PrestigeUI = require(PlayerScripts:WaitForChild("PrestigeUI"))
 local AutoScale = require(RS.Shared:WaitForChild("AutoScale"))
+local CameraService = require(PlayerScripts:WaitForChild("CameraService"))
+local MiscUI = require(PlayerScripts:WaitForChild("MiscUI"))
+local Config = require(RS.Shared:WaitForChild("Config"))
 
 UpgradeShop.Init()
 BallEffects.Init()
@@ -21,3 +24,8 @@ BallTuningUI.init()
 BallLaunchUI.Init()
 PrestigeUI.Init()
 AutoScale.Init()
+CameraService.Init()
+MiscUI.Init()
+
+-- Start looping background music on join (no-op until Config.Sounds.Music is set).
+SoundService.SetBackgroundMusic(Config.Sounds.Music)

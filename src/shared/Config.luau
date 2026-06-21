@@ -13,7 +13,8 @@ Config.Sounds = {
 	Hot = "rbxassetid://115023474688736",
 	Fire = "rbxassetid://105137237689649",
 	Cold = "rbxassetid://116320134099218",
-	Prestige = "rbxassetid://84051226507785"
+	Prestige = "rbxassetid://84051226507785",
+	Music = ""   -- TODO: background music asset id (looped on join via SoundService.SetBackgroundMusic)
 }
 
 Config.Tags = {
@@ -265,6 +266,15 @@ Config.Templates = {
 	Ball = RS.Assets.BallPrefab
 }
 
+-- "Better view" camera angle the player can toggle to (see CameraService).
+-- Placeholder — set Position/Orientation to the board-facing shot you want.
+-- Orientation is in degrees, matching a Part's Orientation property (Y, X, Z order).
+Config.Camera = {
+	Position = Vector3.new(22.273, 257.588, -39.821),
+	Orientation = Vector3.new(-45, 180, 0),
+	FieldOfView = 70,
+}
+
 table.freeze(Config.Tags)
 table.freeze(Config.Attributes)
 table.freeze(Config.Scoring)
@@ -276,4 +286,5 @@ table.freeze(Config.Economy)
 table.freeze(Config.Upgrades)
 table.freeze(Config.Axes)
 table.freeze(Config.Sounds)
+table.freeze(Config.Camera)
 return Config
