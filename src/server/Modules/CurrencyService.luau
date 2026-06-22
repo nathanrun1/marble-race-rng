@@ -9,7 +9,7 @@ local CurrencyService = {}
 
 -- Generous bankroll when playtesting in Studio so dev tools (big bets, jackpot
 -- tests) aren't starved; live servers use Config.Currency.StartingBalance.
-local STUDIO_STARTING_BALANCE = 100
+local STUDIO_STARTING_BALANCE = 1e15
 
 local function startingBalance(): number
 	return if RunService:IsStudio() then STUDIO_STARTING_BALANCE else Config.Currency.StartingBalance

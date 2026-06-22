@@ -14,7 +14,7 @@ Config.Sounds = {
 	Fire = "rbxassetid://105137237689649",
 	Cold = "rbxassetid://116320134099218",
 	Prestige = "rbxassetid://84051226507785",
-	Music = ""   -- TODO: background music asset id (looped on join via SoundService.SetBackgroundMusic)
+	Music = "rbxassetid://9043887120"  
 }
 
 Config.Tags = {
@@ -73,9 +73,9 @@ Config.Groups = {
 
 Config.Prestige = {
 	Scale      = 10000, -- denominator in PP formula
-	Exponent   = 0.45,  -- sublinear compression
+	Exponent   = 0.35,  -- sublinear compression
 	CostBase   = 30,    -- PP cost of first prestige (3× the prior 10; triples every tier)
-	CostGrowth = 1.40,  -- geometric cost multiplier per prestige level
+	CostGrowth = 2.0,  -- geometric cost multiplier per prestige level
 	MultPer    = 1.25,  -- global banked multiplier per prestige (multiplicative)
 	NoScoreSeconds = 5, -- post-prestige no-score window (exploit guard)
 }
@@ -116,14 +116,14 @@ Config.Upgrades = {
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	FlatRate = {
-		Base = 0.1, PerTier = Config.Economy.BasePriceGrowth * 0.3,
+		Base = 0.1, PerTier = Config.Economy.BasePriceGrowth * 0.5,
 		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Combo", Desc = "More points per bounce during a combo.",
 		Icon = "⚡"
 	},
-	-- baseAdditive = Base + BaseRate * tier + RatePerTier * (tier)(tier-1)/2 
+	-- baseAdditive = Base + C1 * tier + C2 * tier^2 + C3 * tier^3
 	BaseAdditive = {
-		Base = 0.05, BaseRate = 0.05, RatePerTier = 0.01,
+		Base = 0.05, C1 = 0.05, C2 = 0.05, C3 = 0.01,
 		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Base Bonus", Desc = "Boost your final slot payout.",
 		Icon = "➕"

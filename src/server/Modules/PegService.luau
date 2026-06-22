@@ -23,7 +23,7 @@ local COLOR_TWEEN = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirecti
 -- hot or cold); color/material remain peg-field presentation owned here.
 type Category = { Heat: number, Color: Color3, Material: Enum.Material }
 local CATEGORIES: { [string]: Category } = {
-	Hot    = { Heat = Config.Pegs.HotHeat,     Color = Color3.fromRGB(255,   0, 191), Material = Enum.Material.Neon },
+	Hot    = { Heat = Config.Pegs.HotHeat,     Color = Color3.fromRGB(255,   0, 191), Material = Enum.Material.Plastic },
 	Cold   = { Heat = Config.Pegs.ColdHeat,    Color = Color3.fromRGB( 98,  37, 209), Material = Enum.Material.Limestone },
 	Normal = { Heat = Config.Pegs.NeutralHeat, Color = Color3.fromRGB(180, 128, 255), Material = Enum.Material.Plastic },
 }

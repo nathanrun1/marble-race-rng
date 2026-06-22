@@ -44,7 +44,7 @@ end
 -- Additive bonus fraction on final slot payout (§2), output-scaling track.
 function ProfileStats.GetBaseAdditive(upgrades: Upgrades): number
 	local t = tier(upgrades, "BaseAdditive")
-	return Config.Upgrades.BaseAdditive.Base + Config.Upgrades.BaseAdditive.BaseRate * t + Config.Upgrades.BaseAdditive.RatePerTier * t * (t - 1) * 0.5
+	return Config.Upgrades.BaseAdditive.Base + Config.Upgrades.BaseAdditive.C1 * t + Config.Upgrades.BaseAdditive.C2 * t^2 + Config.Upgrades.BaseAdditive.C3 * t^3
 end
 
 -- Cap on ball count N unlocked at the current frequency tier (§3 axis A). The

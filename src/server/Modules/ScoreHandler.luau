@@ -170,7 +170,7 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	if prestigeMult > 1 then
 		local prestigeBonus = info.banked * (prestigeMult - 1)
 		info.banked += prestigeBonus
-		ScoreUI.PostMessage(player, string.format("Prestige Bonus! +%s (×%s)", StringUtils.FormatMoney(prestigeBonus), StringUtils.FormatShort(prestigeMult)), Color3.fromRGB(124, 58, 237))
+		ScoreUI.PostMessage(player, string.format("Rebirth Multiplier! +%s (×%s)", StringUtils.FormatMoney(prestigeBonus), StringUtils.FormatShort(prestigeMult)), Color3.fromRGB(124, 58, 237))
 	end
 
 	-- Cash multiplier (Robux perk): another flat global multiplier on the whole payout.

@@ -184,6 +184,7 @@ local musicMuted = false
 -- was already playing. Self-contained (not routed through Play), so the SFX mute never
 -- touches it. An empty id just clears the current track (e.g. unset Config.Sounds.Music).
 function SoundService.SetBackgroundMusic(soundId: string)
+	print("setting bg music")
 	SoundService.StopBackgroundMusic()
 	if soundId == "" then
 		return

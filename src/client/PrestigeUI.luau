@@ -202,7 +202,7 @@ local function render(info: PrestigeInfo)
 	heroNext.Text = "×" .. StringUtils.FormatShort(nxt)
 	ptsVal.Text   = StringUtils.FormatCompact(pp) .. " / " .. StringUtils.FormatCompact(cost)
 	statLife.Text = StringUtils.FormatMoney(info.lifetimeBanked)
-	statCost.Text = StringUtils.FormatCompact(cost) .. " PP"
+	statCost.Text = StringUtils.FormatCompact(cost) .. " RP"
 	statNum.Text  = info.count .. " → " .. (info.count + 1)
 
 	local frac = math.clamp(cost > 0 and pp / cost or 0, 0, 1)
@@ -225,7 +225,7 @@ local function render(info: PrestigeInfo)
 			g.Color = if can then ColorSequence.new(VIOLET_LT, VIOLET) else ColorSequence.new(LOCK_FACE, LOCK_BASE)
 		end
 	end
-	goLabel.Text = if can then "PRESTIGE" else ("NEED " .. StringUtils.FormatCompact(cost - pp) .. " MORE PP")
+	goLabel.Text = if can then "REBIRTH" else ("NEED " .. StringUtils.FormatCompact(cost - pp) .. " MORE RP")
 	goLabel.TextSize = if can then 32 else 23
 	goFace.Active = can
 end
@@ -257,7 +257,7 @@ local function onPrestigePressed()
 		lastInfo = result.info
 		render(result.info)
 		punch()
-		playFlare("PRESTIGE " .. result.info.count .. "!")
+		playFlare("REBIRTH Lv " .. result.info.count .. "!")
 		SoundService.Play({ soundId = Config.Sounds.Prestige })
 	end
 end
