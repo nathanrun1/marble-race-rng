@@ -16,12 +16,10 @@ function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: num
         [1e6]  = "M",
         [1e3]  = "K",
     }
-    print("format for number: " .. n)
 
     if n >= SCI_AT then
         local factor = math.floor(math.log10(n))
         n /= 10 ^ factor
-        print("factor: "..factor)
         if floorRound then
             n = math.floor(n * 10 ^ precision) / (10 ^ precision)
         end
@@ -47,6 +45,15 @@ function StringUtils.FormatMoney(n: number): string
         return "$" .. StringUtils.Commas(n)
     end
     return "$" .. StringUtils.FormatShort(n)
+end
+
+-- Like FormatMoney but for non-currency counts (PP, costs, ...): comma-grouped below
+-- 1K, short-suffixed (K/M/B/T) above, no "$".
+function StringUtils.FormatCompact(n: number): string
+    if n < 1000 then
+        return StringUtils.Commas(n)
+    end
+    return StringUtils.FormatShort(n)
 end
 
 return StringUtils

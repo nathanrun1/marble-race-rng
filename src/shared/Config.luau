@@ -270,9 +270,81 @@ Config.Templates = {
 -- Placeholder — set Position/Orientation to the board-facing shot you want.
 -- Orientation is in degrees, matching a Part's Orientation property (Y, X, Z order).
 Config.Camera = {
-	Position = Vector3.new(22.273, 257.588, -39.821),
-	Orientation = Vector3.new(-45, 180, 0),
+	Position = Vector3.new(22.273, 237.588, -39.821),
+	Orientation = Vector3.new(-47, 180, 0),
 	FieldOfView = 70,
+}
+
+Config.BallTuningCamera = {
+	Position = Vector3.new(21.45, 190, 300),
+	Orientation = Vector3.new(-65, 0, 0),
+	FieldOfView = 70
+}
+
+-- The 3D launcher model, rotated client-side (LauncherView) to match the player's
+-- live aim. Orientation is yaw-only (X/Z = 0): default faces straight down the ramp,
+-- and the swivel deflects it between the right and left extremes.
+local functionalFolder = workspace:FindFirstChild("Functional")
+Config.Launcher = {
+	Model = functionalFolder and functionalFolder:FindFirstChild("Launcher"), -- workspace.Functional.Launcher
+	RotationPeriod = 3, -- seconds for one full swivel cycle (shared with BallLaunchService)
+	SyncInterval = 30,  -- seconds between client→server phase resyncs
+	DefaultOrientation = Vector3.new(0, 90, 0), -- straight (swivel 0)
+	RightOrientation = Vector3.new(0, 0, 0),    -- full right (left facing the board)
+	LeftOrientation = Vector3.new(0, 180, 0),   -- full left (right facing the launcher)
+	-- Launch geometry, shared by the server (actual launches) and the client (aim-line
+	-- preview) so they can't drift. BaseDirection is the neutral aim (down the ramp);
+	-- the swivel rotates it about +Y. LaunchOrigin is where balls spawn / lines start.
+	BaseDirection = Vector3.new(0, 0, -1),
+	LaunchOrigin = Vector3.new(21.3205, 172.855, 295.361),
+}
+
+-- Ball-tuning preview (client, shown while the tuning menu is open): three aim lines
+-- from the launch origin (green = center aim, blue = the two arc extremes) and an
+-- appearance-only ball that reflects the Size / Elasticity axes.
+Config.BallTuningPreview = {
+	LineLength = 45,
+	LineThickness = 0.35,
+	LineTransparency = 0.55,
+	CenterColor = Color3.fromRGB(70, 230, 110), -- center aim
+	SideColor = Color3.fromRGB(70, 150, 255),   -- arc extremes
+	BallPosition = Vector3.new(30, 172.855, 295.361), -- right of the launcher (tune to taste)
+}
+
+-- Robux developer products. Logical key -> product id. The server (MonetizationService)
+-- registers a grant handler per id; client UI prompts a purchase by looking the id up
+-- here. Fill in real product ids from the Creator Dashboard.
+Config.Products = {
+	-- e.g. UpgradeBoost = 0,
+	UpgradeBoost  = "3605952101",
+	Multiplier2x  = "3605951905",
+	Multiplier4x  = "3605951969",
+	Multiplier8x  = "3605951998",
+	Multiplier16x = "3605952025",
+}
+
+-- Robux game passes (permanent, one-time ownership — distinct from consumable dev
+-- products above). Granted via ownership, not ProcessReceipt (see ProductService).
+Config.GamePasses = {
+	StarterPack = "1882812049",
+}
+
+-- Cash multiplier (Robux): a permanent global multiplier on banked cash. Each level
+-- is its own dev product (Config.Products["Multiplier"..level.."x"]); the shop button
+-- offers the next level in order, and disappears once the top one is owned.
+Config.CashMultiplier = {
+	Levels = { 2, 4, 8, 16 }, -- purchasable multipliers, ascending; last = max
+}
+
+-- Starter pack (Robux): a one-time new-player boost. Grants UpgradeTiers on every
+-- upgrade track and Balance cash. Only offered while the player has fewer than
+-- MaxUpgrades total upgrade tiers and hasn't already bought it. Once owned, every
+-- prestige thereafter grants PostPrestigeFreeTier on all tracks.
+Config.StarterPack = {
+	Balance = 50000,           -- cash granted on purchase
+	UpgradeTiers = 2,          -- tier every upgrade track is raised to
+	MaxUpgrades = 4,           -- hide the pack once the player has this many total upgrades
+	PostPrestigeFreeTier = 1,  -- free tier on all tracks after each prestige (owners only)
 }
 
 table.freeze(Config.Tags)
@@ -287,4 +359,11 @@ table.freeze(Config.Upgrades)
 table.freeze(Config.Axes)
 table.freeze(Config.Sounds)
 table.freeze(Config.Camera)
+table.freeze(Config.BallTuningCamera)
+table.freeze(Config.Launcher)
+table.freeze(Config.BallTuningPreview)
+table.freeze(Config.Products)
+table.freeze(Config.GamePasses)
+table.freeze(Config.CashMultiplier)
+table.freeze(Config.StarterPack)
 return Config

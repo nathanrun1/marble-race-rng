@@ -31,7 +31,7 @@ local HEAVY_AT           = 0.66
 -- Ownership visibility: every viewer sees a ball at UNOWNED_TRANSPARENCY (set
 -- server-side, replicated). Each client then makes its OWN balls fully opaque
 -- locally, so a player can pick their balls out from everyone else's.
-local UNOWNED_TRANSPARENCY = 0.5
+local UNOWNED_TRANSPARENCY = 0.7
 local OWNED_TRANSPARENCY    = 0
 local FREQ_PARTICLE_AT   = 4
 local HEAT_NEON_AT       = 1

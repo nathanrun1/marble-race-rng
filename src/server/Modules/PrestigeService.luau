@@ -14,6 +14,7 @@ local Signal = require(RS.Shared.Signal)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local BallService = require(SSS.Scripts.Modules.BallService)
+local StatsService = require(SSS.Scripts.Modules.StatsService)
 
 local PrestigeService = {}
 
@@ -130,6 +131,15 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	-- Wipe the run's balance too: prestige resets upgrades AND money back to the
 	-- configured starting balance.
 	CurrencyService.SetPoints(player, Config.Currency.StartingBalance, "Prestige reset")
+
+	-- Starter pack perk: owners get a free tier on every track after each prestige, so
+	-- the reset doesn't start them from bare zero. Lazy-require UpgradeService to avoid
+	-- a load-time cycle (UpgradeService -> ProductService -> DataService -> Prestige).
+	if StatsService.OwnsStarterPack(player) then
+		local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
+		UpgradeService.RaiseAllTracksTo(player, Config.StarterPack.PostPrestigeFreeTier)
+	end
+
 	PrestigeService.Changed:Fire(player, buildInfo(d))
 	return true, nil
 end
@@ -173,6 +183,14 @@ function PrestigeService.Init()
 		local ok, reason = PrestigeService.Prestige(player)
 		return { ok = ok, reason = reason, info = PrestigeService.GetInfo(player) }
 	end
+
+	-- Push prestige info to the client on every change (join load, banking, prestige),
+	-- so the UI/badge (e.g. the availability glow) updates live without waiting for a
+	-- BalanceChanged or the menu being opened. Changed already carries the PrestigeInfo.
+	local prestigeChangedRE = getRemote("PrestigeChanged", "RemoteEvent") :: RemoteEvent
+	PrestigeService.Changed:Connect(function(player: Player, info: PrestigeInfo)
+		prestigeChangedRE:FireClient(player, info)
+	end)
 end
 
 return PrestigeService

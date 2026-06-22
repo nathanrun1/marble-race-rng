@@ -17,6 +17,7 @@ local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local BallService = require(SSS.Scripts.Modules.BallService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local StatsService = require(SSS.Scripts.Modules.StatsService)
 
 local ScoreHandler = {}
 
@@ -169,7 +170,15 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	if prestigeMult > 1 then
 		local prestigeBonus = info.banked * (prestigeMult - 1)
 		info.banked += prestigeBonus
-		ScoreUI.PostMessage(player, string.format("Prestige Bonus! +%s (×%.2f)", StringUtils.FormatMoney(prestigeBonus), prestigeMult), Color3.fromRGB(124, 58, 237))
+		ScoreUI.PostMessage(player, string.format("Prestige Bonus! +%s (×%s)", StringUtils.FormatMoney(prestigeBonus), StringUtils.FormatShort(prestigeMult)), Color3.fromRGB(124, 58, 237))
+	end
+
+	-- Cash multiplier (Robux perk): another flat global multiplier on the whole payout.
+	local cashMult = StatsService.GetCashMultiplier(player)
+	if cashMult > 1 then
+		local cashBonus = info.banked * (cashMult - 1)
+		info.banked += cashBonus
+		ScoreUI.PostMessage(player, string.format("Cash Multiplier! +%s (×%d)", StringUtils.FormatMoney(cashBonus), cashMult), Color3.fromRGB(255, 196, 0))
 	end
 
 	PrestigeService.AddLifetimeBanked(player, info.banked)

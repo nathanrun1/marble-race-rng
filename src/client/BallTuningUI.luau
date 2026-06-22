@@ -28,6 +28,9 @@ local RS               = game:GetService("ReplicatedStorage")
 -- the client computes identical axis ranges locally (no extra "get ranges" remote).
 local Config       = require(RS.Shared.Config)
 local ProfileStats = require(RS.Shared.ProfileStats)
+local UIButton     = require(RS.Shared.UIButton)
+local CameraService = require(script.Parent:WaitForChild("CameraService"))
+local BallTuningPreview = require(script.Parent:WaitForChild("BallTuningPreview"))
 
 local player = Players.LocalPlayer
 
@@ -383,6 +386,8 @@ local function openTuning(triggerHost: GuiObject)
 
 	triggerHost.Visible = false
 	Controller.root.Visible = true
+	CameraService.SetTuningView(true) -- swing to the ball-tuning camera while open
+	BallTuningPreview.SetVisible(true) -- aim lines + preview ball
 
 	local scale = tuningScale()
 	tuningRestScale = scale.Scale   -- whatever it normally rests at (AutoScale or 1)
@@ -402,17 +407,18 @@ local function closeTuning(triggerHost: GuiObject)
 	tuningScale().Scale = tuningRestScale   -- restore resting size for the next open
 	Controller.root.Visible = false
 	triggerHost.Visible = true
+	CameraService.SetTuningView(false) -- back to board view / default camera
+	BallTuningPreview.SetVisible(false)
 end
 
 local function initTuningMenu()
 	local leftBar = Controller.root.Parent
 	local triggerHost = leftBar:WaitForChild("TuneTriggerHost") :: GuiObject
-	local trigger = triggerHost:WaitForChild("Button") :: GuiButton
 	local closeBtn = Controller.root:WaitForChild("UIListIgnore"):WaitForChild("CloseButton") :: GuiButton
 
 	Controller.root.Visible = false   -- closed by default
 	triggerHost.Visible = true
-	trigger.Activated:Connect(function() openTuning(triggerHost) end)
+	UIButton.bind(triggerHost, { onClick = function() openTuning(triggerHost) end })
 	closeBtn.Activated:Connect(function() closeTuning(triggerHost) end)
 end
 

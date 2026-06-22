@@ -1,10 +1,11 @@
 --!strict
--- Client camera controller. Lets the player toggle between Roblox's default
--- character camera and a fixed "board view" — a nicer angle on the marble board,
--- defined by Config.Camera (Position / Orientation / FieldOfView).
+-- Client camera controller. Switches between Roblox's default character camera and
+-- fixed scripted shots defined in Config (each { Position, Orientation, FieldOfView }):
+--   * board view  — a nicer angle on the marble board (Config.Camera), toggled by UI.
+--   * tuning view  — Config.BallTuningCamera, shown while the ball-tuning menu is open.
 --
--- Board view sets the camera Scriptable and tweens to the configured shot; toggling
--- off restores the default Custom camera. Wire a UI button to CameraService.Toggle.
+-- Both are independent requests; the tuning view takes priority while active, and
+-- closing it falls back to the board view (if on) or the default Custom camera.
 
 local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -17,35 +18,48 @@ local DEFAULT_FOV = 70
 local TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local boardView = false
+local tuningView = false
 local activeTween: Tween? = nil
 
--- The configured board shot as a CFrame. Orientation is in degrees, applied in the
--- same Y,X,Z order as a Part's Orientation property (CFrame.fromOrientation).
-local function boardCFrame(): CFrame
-	local o = Config.Camera.Orientation
-	return CFrame.new(Config.Camera.Position)
+type Shot = { Position: Vector3, Orientation: Vector3, FieldOfView: number? }
+
+-- A configured shot as a CFrame. Orientation is in degrees, applied in the same
+-- Y,X,Z order as a Part's Orientation property (CFrame.fromOrientation).
+local function cframeFor(shot: Shot): CFrame
+	local o = shot.Orientation
+	return CFrame.new(shot.Position)
 		* CFrame.fromOrientation(math.rad(o.X), math.rad(o.Y), math.rad(o.Z))
 end
 
--- Switch the board view on or off.
-function CameraService.SetBoardView(enabled: boolean)
+-- The shot that should currently be showing (tuning wins over board), or nil for the
+-- default Custom camera.
+local function activeShot(): Shot?
+	if tuningView then
+		return Config.BallTuningCamera
+	elseif boardView then
+		return Config.Camera
+	end
+	return nil
+end
+
+-- Apply whichever shot is active (or hand back to the Custom camera).
+local function refresh()
 	local cam = workspace.CurrentCamera
 	if not cam then
 		return
 	end
-	boardView = enabled
-
 	if activeTween then
 		activeTween:Cancel()
 		activeTween = nil
 	end
 
-	if enabled then
+	local shot = activeShot()
+	if shot then
 		-- Must be Scriptable before tweening CFrame, or Custom would fight the tween.
 		cam.CameraType = Enum.CameraType.Scriptable
 		activeTween = TweenService:Create(cam, TWEEN_INFO, {
-			CFrame = boardCFrame(),
-			FieldOfView = Config.Camera.FieldOfView or DEFAULT_FOV,
+			CFrame = cframeFor(shot),
+			FieldOfView = shot.FieldOfView or DEFAULT_FOV,
 		})
 		activeTween:Play()
 	else
@@ -55,9 +69,22 @@ function CameraService.SetBoardView(enabled: boolean)
 	end
 end
 
--- Flip between board view and default. Returns the new state.
+-- Switch the board view on or off.
+function CameraService.SetBoardView(enabled: boolean)
+	boardView = enabled
+	refresh()
+end
+
+-- Switch the ball-tuning view on or off (driven by the tuning menu open/close).
+function CameraService.SetTuningView(enabled: boolean)
+	tuningView = enabled
+	refresh()
+end
+
+-- Flip the board view. Returns the new state.
 function CameraService.Toggle(): boolean
-	CameraService.SetBoardView(not boardView)
+	boardView = not boardView
+	refresh()
 	return boardView
 end
 
@@ -66,10 +93,10 @@ function CameraService.IsBoardView(): boolean
 end
 
 function CameraService.Init()
-	-- Nothing to wire yet; the board view is driven by Toggle/SetBoardView from UI.
-	-- A CurrentCamera swap (e.g. respawn) resets to Custom, which clears board view.
+	-- A CurrentCamera swap (e.g. respawn) resets to Custom, so drop our view state.
 	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		boardView = false
+		tuningView = false
 	end)
 end
 

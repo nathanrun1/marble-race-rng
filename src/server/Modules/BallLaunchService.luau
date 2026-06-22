@@ -14,24 +14,24 @@ local BallService = require(SSS.Scripts.Modules.BallService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local ProfileStats = require(RS.Shared.ProfileStats)
+local Config = require(RS.Shared.Config)
 
 local requestLaunch = RS.Remote.RequestLaunch
 
 local BallLaunchService = {}
 
--- Server-chosen trajectory constants. The client never touches these.
---local SPAWN_POS = Vector3.new(43.859, 190.14, 332.272)
-local SPAWN_POS = Vector3.new(21.45, 170.032, 296.331)
+-- Server-chosen trajectory constants. The client never touches these. (Spawn origin
+-- and base aim live in Config.Launcher, shared with the client aim-line preview.)
 local BATCH_SECONDS = 3                         -- seconds per batch; server owns timing
-local MAX_BALLS_PER_PLAYER = 40                 -- concurrency ceiling (well above max N)
-local LAUNCHER_ROT_PERIOD = 3                   -- Launcher full rotation period in seconds
+local MAX_BALLS_PER_PLAYER = 160                 -- concurrency ceiling (well above max N)
+local LAUNCHER_ROT_PERIOD = Config.Launcher.RotationPeriod  -- full swivel period (shared w/ client)
 
 -- Launcher geometry — TUNE to the actual ramp. BASE_LAUNCH_DIR is the launcher's
 -- neutral direction (aim 0, mid-phase), i.e. straight down the ramp; the swivel
 -- rotates it left/right about the vertical axis. Two per-player loadout axes shape
 -- the aim: Arc (swivel half-width) and Angle (the center the launcher swivels
 -- around, default 0 = straight down). Both are passed into deriveLaunchVelocity.
-local BASE_LAUNCH_DIR = Vector3.new(0, 0, -1)   -- down-ramp; align with real geometry
+local BASE_LAUNCH_DIR = Config.Launcher.BaseDirection   -- down-ramp; shared w/ client preview
 local LAUNCH_SPEED = 20                          -- studs/s initial speed
 local LAUNCH_SPEED_VARIATION = 0.2              -- Launch speed can vary by up to this portion
 local LAUNCH_DIR_VARIATION = math.rad(10)                -- Launch angle can vary by up to this angle
@@ -45,11 +45,8 @@ local function genLaunchSpeed(): number
 end
 
 local function genSpawnPos(): Vector3
-	local left: number = 43.859
-	local right: number = -1.218
-
-	--return Vector3.new(math.random(right, left), SPAWN_POS.Y, SPAWN_POS.Z)
-	return Vector3.new((right + left) / 2, SPAWN_POS.Y, SPAWN_POS.Z)
+	-- Shared with the client aim-line preview so they originate from the same point.
+	return Config.Launcher.LaunchOrigin
 end
 
 -- Launcher swivels continuously: as phase runs 0→1 the aim sweeps aim ± arcWidth
@@ -121,6 +118,12 @@ function BallLaunchService.LaunchTest(player: Player, opts: TestLaunchOptions?):
 	})
 end
 
+-- Current launcher swivel phase (0..1). The client renders its own smooth swivel and
+-- periodically resyncs to this so the visual matches the server's actual fire timing.
+function BallLaunchService.GetPhase(): number
+	return (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
+end
+
 -- Client configures its bet (intent only); the server clamps and stores it on
 -- the profile. The launch itself is driven by the batch clock, not this event.
 local function onRequest(player: Player, bet: number)
@@ -133,6 +136,14 @@ end
 
 function BallLaunchService.Init()
 	requestLaunch.OnServerEvent:Connect(onRequest)
+
+	-- Lets the client sync its visual launcher rotation to the server's phase.
+	local getPhaseRF = Instance.new("RemoteFunction")
+	getPhaseRF.Name = "GetLauncherPhase"
+	getPhaseRF.Parent = RS.Remote
+	getPhaseRF.OnServerInvoke = function()
+		return BallLaunchService.GetPhase()
+	end
 
 	-- Server-authoritative batch clock: every BATCH_SECONDS, kick off each
 	-- player's batch in its own thread so their staggered launches run in

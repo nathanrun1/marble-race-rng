@@ -9,6 +9,8 @@ local TweenService = game:GetService("TweenService")
 local ProfileStats = require(RS.Shared.ProfileStats)
 local StringUtils = require(RS.Shared.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
+local ProductService = require(RS.Shared.ProductService)
+local UIButton = require(RS.Shared.UIButton)
 local Config = require(RS.Shared.Config)
 
 local player: Player = Players.LocalPlayer :: Player
@@ -30,6 +32,7 @@ local activeTween: Tween? = nil
 local BalanceChangedRE: RemoteEvent = RS.Remote.BalanceChanged
 local GetUpgradeInfoRF: RemoteFunction = RS.Remote.GetUpgradeInfo
 local PurchaseUpgradeRF: RemoteFunction = RS.Remote.PurchaseUpgrade
+local RequestUpgradeBoostRF: RemoteFunction = RS.Remote:WaitForChild("RequestUpgradeBoost")
 
 local UI = {
 	name = ShopGui.ShopFrame.Head.NameStack.ShopName, -- TextLabel
@@ -68,6 +71,12 @@ local PIP_BORDER   = Color3.fromRGB(234, 220, 240)  -- #eadcf0  empty pip border
 local CHIP         = Color3.fromRGB(244, 238, 248)  -- #f4eef8  chip / empty pip
 
 local loadedTrack: string? = nil
+
+-- The 3× boost grants 3 tiers, so it's only offered when at least 3 tiers remain.
+-- `boostButton` is bound at the bottom; loadShop captures it as a forward ref.
+local BOOST_TIERS = 3
+local boostButton: UIButton.Handle? = nil
+local boostAvailable = true
 
 local function f(class, props, parent)
 	local o = Instance.new(class)
@@ -244,8 +253,29 @@ function loadShop(track: string): Info
 	
 	createPips(UI.track, upgradeInfo.maxTier, upgradeInfo.tier)
 
+    -- Offer the 3× boost only when at least 3 tiers remain (unbounded tracks always
+    -- qualify). Otherwise grey the button out and suppress the can't-afford prompt.
+    boostAvailable = upgradeInfo.maxTier == nil
+        or (upgradeInfo.maxTier - upgradeInfo.tier) >= BOOST_TIERS
+    if boostButton then
+        boostButton.SetDisabled(not boostAvailable)
+    end
+
     loadedTrack = track
     return upgradeInfo
+end
+
+-- Ask the server to start the instant-tiers (3×) purchase for a track, then prompt
+-- the dev product. The server records which track to grant and hands back the id;
+-- fulfilment happens in UpgradeService's ProcessReceipt handler.
+local function promptBoost(track: string?)
+    if track == nil then
+        return
+    end
+    local productId: number? = RequestUpgradeBoostRF:InvokeServer(track)
+    if productId then
+        ProductService.Prompt(productId)
+    end
 end
 
 -- Invoked when purchase button pressed
@@ -260,6 +290,10 @@ function onBuyPressed()
         local upgradeInfo = loadShop(loadedTrack :: string)
         punch()
         playFlare("Tier " .. upgradeInfo.tier)
+    elseif purchaseResult.reason == "cannot_afford" and boostAvailable then
+        -- Can't afford with cash → offer the instant-tiers dev product instead
+        -- (only when the boost is actually available, i.e. ≥3 tiers remain).
+        promptBoost(loadedTrack)
     end
 end
 
@@ -310,7 +344,26 @@ BalanceChangedRE.OnClientEvent:Connect(function()
     end
 end)
 
+-- Tier changes (e.g. the 3× boost granting instant tiers) push ProfileChanged rather
+-- than BalanceChanged, so refresh the open shop on that too.
+local ProfileChangedRE: RemoteEvent = RS.Remote:WaitForChild("ProfileChanged")
+ProfileChangedRE.OnClientEvent:Connect(function()
+    if ShopGui.Enabled and loadedTrack then
+        loadShop(loadedTrack)
+    end
+end)
+
 UI.purchaseBtn.Activated:Connect(onBuyPressed)
 UI.closeBtn.Activated:Connect(ShopUI.CloseShop)
+
+-- 3× instant-tiers button: same host structure as the tool buttons (no MuteIcon).
+-- Momentary — hover lift + press squash, click prompts the boost for the loaded track.
+-- Disabled (greyed + pressed) whenever fewer than 3 tiers remain (see loadShop).
+boostButton = UIButton.bind(ShopFrame:WaitForChild("3xButtonHost"), {
+    onClick = function()
+        promptBoost(loadedTrack)
+    end,
+    disabled = not boostAvailable,
+})
 
 return ShopUI

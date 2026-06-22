@@ -692,6 +692,9 @@ local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 	end)
 
 	local function fireBuild(params: { [string]: number })
+		if not player.Parent then
+			return -- player left mid-test; their profile is gone, so stop launching
+		end
 		for key, value in params do
 			if key == "Bet" then
 				ProfileService.SetBet(player, value)
@@ -706,6 +709,9 @@ local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 		activeBuilds += 1
 		local i = 0
 		while i < n do
+			if not player.Parent then
+				return -- left mid-build (between intervals); stop
+			end
 			local batch = math.min(ballsPerInterval, n - i)
 			for j = 0, batch - 1 do
 				local ball = BallLaunchService.LaunchTest(player, { phase = (i + j) / n })
@@ -750,11 +756,14 @@ local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 		end
 	end
 
-	for _, axis in COMPR_AXES do
-		ProfileService.SetAxis(player, axis, saved[axis])
+	-- Restore the player's pre-test loadout (skip if they left mid-test; profile gone).
+	if player.Parent then
+		for _, axis in COMPR_AXES do
+			ProfileService.SetAxis(player, axis, saved[axis])
+		end
+		ProfileService.SetBet(player, savedBet)
+		ProfileService.SetUpgradeTier(player, "PegHeat", savedPegHeatTier)
 	end
-	ProfileService.SetBet(player, savedBet)
-	ProfileService.SetUpgradeTier(player, "PegHeat", savedPegHeatTier)
 
 	-- Single drain: wait for the balls still in flight across all batches.
 	print(string.format("[Dev] comprtest: all %d builds launched; draining in-flight balls...", #builds))

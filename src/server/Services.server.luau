@@ -11,11 +11,14 @@ local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PegService = require(SSS.Scripts.Modules.PegService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local StatsService = require(SSS.Scripts.Modules.StatsService)
 local DataService = require(SSS.Scripts.Modules.DataService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local SoundService = require(RS.Shared.SoundService)
+local ProductService = require(RS.Shared.ProductService)
+local MonetizationService = require(SSS.Scripts.Modules.MonetizationService)
 local DevService = require(SSS.Scripts.Modules.DevService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
@@ -25,9 +28,19 @@ ProfileService.Init()
 UpgradeService.Init()
 -- PrestigeService after Profile (it resets through it).
 PrestigeService.Init()
--- DataService after the three data services are set up: it owns the player-data
--- lifecycle (seeds defaults, loads/saves persistence) and drives their ApplyData.
+-- StatsService (cash multiplier / starter-pack ownership / upgrade count) before
+-- DataService: it's a passive data service DataService loads + saves, and its remotes
+-- must exist before the first ApplyData pushes initial stats.
+StatsService.Init()
+-- DataService after the data services are set up: it owns the player-data lifecycle
+-- (seeds defaults, loads/saves persistence) and drives their ApplyData.
 DataService.Init()
+-- ProductService after DataService: ProcessReceipt grants through it (it needs
+-- DataService.IsLoaded / SaveNow to fulfil purchases durably).
+ProductService.Init()
+-- MonetizationService after ProductService: registers the cash-multiplier and
+-- starter-pack grant handlers with it.
+MonetizationService.Init()
 -- LeaderboardService after data is loading: it seeds leaderstats from current state
 -- and mirrors Currency/Prestige Changed signals (so it corrects once data loads).
 LeaderboardService.Init()

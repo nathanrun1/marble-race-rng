@@ -23,6 +23,7 @@ local TweenService = game:GetService("TweenService")
 local Config = require(RS.Shared.Config)
 local StringUtils = require(RS.Shared.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
+local UIButton = require(RS.Shared.UIButton)
 
 local player: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
@@ -30,7 +31,7 @@ local PlayerGui: PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 local Remote = RS:WaitForChild("Remote")
 local GetPrestigeInfoRF: RemoteFunction = Remote:WaitForChild("GetPrestigeInfo") :: RemoteFunction
 local PrestigeRF: RemoteFunction = Remote:WaitForChild("Prestige") :: RemoteFunction
-local BalanceChangedRE: RemoteEvent = Remote:WaitForChild("BalanceChanged") :: RemoteEvent
+local PrestigeChangedRE: RemoteEvent = Remote:WaitForChild("PrestigeChanged") :: RemoteEvent
 
 -- Mirrors PrestigeService.PrestigeInfo (can't require a server module client-side).
 type PrestigeInfo = {
@@ -50,7 +51,6 @@ local VIOLET     = Color3.fromRGB(124, 58, 237)
 local VIOLET_LT  = Color3.fromRGB(179, 136, 255)
 local LOCK_FACE  = Color3.fromRGB(199, 191, 216)
 local LOCK_BASE  = Color3.fromRGB(156, 143, 179)
-local GOLD       = Color3.fromRGB(255, 211, 77)
 
 ----------------------------------------------------------------
 -- widget lookup
@@ -121,31 +121,12 @@ local function attachPress(btn: any, drop: number)
 	btn.MouseLeave:Connect(toUp)
 end
 
--- Gold pulse ring on the trigger badge while a prestige is affordable.
-local readyStroke: any = f("UIStroke", {
-	Color = GOLD,
-	Thickness = 0,
-	LineJoinMode = Enum.LineJoinMode.Round,
-}, trigger)
-local readyTween: Tween? = nil
-local function setReady(on: boolean)
-	if readyTween then
-		readyTween:Cancel()
-		readyTween = nil
-	end
-	if on then
-		readyStroke.Thickness = 4
-		readyStroke.Transparency = 0
-		readyTween = TweenService:Create(
-			readyStroke,
-			TweenInfo.new(0.85, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-			{ Transparency = 1 }
-		)
-		;(readyTween :: Tween):Play()
-	else
-		readyStroke.Thickness = 0
-	end
-end
+-- Trigger badge: colour + pulsing glow track prestige availability. The glow is
+-- UIButton's pulsing stroke (the trigger is bound via UIButton in Init); `render`
+-- drives both through this handle.
+local TRIGGER_AVAILABLE = Color3.fromRGB(148, 132, 255)
+local TRIGGER_LOCKED = Color3.fromRGB(133, 127, 126)
+local triggerButton: UIButton.Handle? = nil
 
 -- Celebratory pop on the panel after a successful prestige. Pops *relative* to the
 -- UIScale's resting value (whatever AutoScale set it to) rather than snapping to 1,
@@ -214,21 +195,26 @@ local function render(info: PrestigeInfo)
 	local cost = info.nextCost
 	local can = info.canPrestige
 
-	trigMult.Text = ("×%.2f"):format(now)
-	heroNow.Text  = ("×%.2f"):format(now)
-	heroNext.Text = ("×%.2f"):format(nxt)
-	ptsVal.Text   = StringUtils.Commas(pp) .. " / " .. StringUtils.Commas(cost)
+	-- Multipliers keep decimals (×1.25) but abbreviate once large (×1.2K); PP / costs
+	-- abbreviate like money but without the "$" (see StringUtils.FormatCompact).
+	trigMult.Text = "×" .. StringUtils.FormatShort(now)
+	heroNow.Text  = "×" .. StringUtils.FormatShort(now)
+	heroNext.Text = "×" .. StringUtils.FormatShort(nxt)
+	ptsVal.Text   = StringUtils.FormatCompact(pp) .. " / " .. StringUtils.FormatCompact(cost)
 	statLife.Text = StringUtils.FormatMoney(info.lifetimeBanked)
-	statCost.Text = StringUtils.Commas(cost) .. " PP"
+	statCost.Text = StringUtils.FormatCompact(cost) .. " PP"
 	statNum.Text  = info.count .. " → " .. (info.count + 1)
 
 	local frac = math.clamp(cost > 0 and pp / cost or 0, 0, 1)
 	TweenService:Create(pgFill, TweenInfo.new(0.4, Enum.EasingStyle.Quad), { Size = UDim2.new(frac, 0, 1, 0) }):Play()
 
-	-- Only (re)start the pulse when affordability flips, so frequent balance
-	-- updates don't restart the animation each tick.
+	-- Only (re)start the glow / recolour when affordability flips, so frequent balance
+	-- updates don't restart the pulse each tick.
 	if can ~= lastCan then
-		setReady(can)
+		trigger.BackgroundColor3 = if can then TRIGGER_AVAILABLE else TRIGGER_LOCKED
+		if triggerButton then
+			triggerButton.SetGlowing(can)
+		end
 		lastCan = can
 	end
 
@@ -239,7 +225,7 @@ local function render(info: PrestigeInfo)
 			g.Color = if can then ColorSequence.new(VIOLET_LT, VIOLET) else ColorSequence.new(LOCK_FACE, LOCK_BASE)
 		end
 	end
-	goLabel.Text = if can then "PRESTIGE" else ("NEED " .. StringUtils.Commas(cost - pp) .. " MORE PP")
+	goLabel.Text = if can then "PRESTIGE" else ("NEED " .. StringUtils.FormatCompact(cost - pp) .. " MORE PP")
 	goLabel.TextSize = if can then 32 else 23
 	goFace.Active = can
 end
@@ -294,18 +280,21 @@ end
 function PrestigeUI.Init()
 	overlay.Visible = false
 
-	trigger.Activated:Connect(open)
+	-- Trigger uses UIButton (press feel + the availability glow); the rest keep their
+	-- bespoke FX.
+	triggerButton = UIButton.bind(trigger, { onClick = open, pressOffset = 7, glowColor = Color3.fromRGB(237, 206, 135) })
 	overlay.Activated:Connect(close)
 	closeBtn.Activated:Connect(close)
 	goFace.Activated:Connect(onPrestigePressed)
 
 	attachPress(goFace, 7)
-	attachPress(trigger, 7)
 
-	-- Banking grows lifetime-banked (and fires BalanceChanged), so refresh the
-	-- badge always and the modal contents while it's open.
-	BalanceChangedRE.OnClientEvent:Connect(function()
-		refresh()
+	-- Server pushes prestige info on every change (load, banking, prestige), so the
+	-- badge (multiplier, progress, availability colour + glow) updates live whether or
+	-- not the modal is open.
+	PrestigeChangedRE.OnClientEvent:Connect(function(info: PrestigeInfo)
+		lastInfo = info
+		render(info)
 	end)
 
 	-- Seed the badge multiplier + ready state on load.

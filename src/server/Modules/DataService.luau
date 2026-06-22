@@ -27,11 +27,18 @@ local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local SSS = game:GetService("ServerScriptService")
 
+local RS = game:GetService("ReplicatedStorage")
+local Signal = require(RS.Shared.Signal)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local StatsService = require(SSS.Scripts.Modules.StatsService)
 
 local DataService = {}
+
+-- (player) — fired once a player's saved data has loaded and been applied. Lets other
+-- systems run post-load work (e.g. granting a game pass to an existing owner).
+DataService.Loaded = Signal.new()
 
 local STORE_NAME = "PlayerData_v1"
 local KEY_PREFIX = "player_"
@@ -64,6 +71,7 @@ if persistenceEnabled then
 	local ok, result = pcall(function()
 		return DataStoreService:GetDataStore(STORE_NAME)
 	end)
+	
 	if ok then
 		store = result
 	elseif RunService:IsStudio() then
@@ -75,10 +83,29 @@ if persistenceEnabled then
 	end
 end
 
+-- Separate store backing purchase-receipt dedup (see ProductService). Only created
+-- when persistence is on, so Studio never touches DataStore for it — that's the gate
+-- ProductService was missing (GetDataStore can succeed in Studio while GetAsync then
+-- throws, since API access is off).
+local RECEIPT_STORE_NAME = "PurchaseReceipts_v1"
+local receiptStore: GlobalDataStore? = nil
+if persistenceEnabled then
+	local ok, result = pcall(function()
+		return DataStoreService:GetDataStore(RECEIPT_STORE_NAME)
+	end)
+	if ok then
+		receiptStore = result
+	else
+		-- Don't crash the server over receipt dedup; we just lose cross-session dedup.
+		warn("DataService: purchase-receipt store unavailable: " .. tostring(result))
+	end
+end
+
 export type PlayerBlob = {
 	currency: number?,
 	profile: ProfileService.Profile?,
 	prestige: PrestigeService.PrestigeData?,
+	stats: StatsService.Stats?,
 }
 
 -- Players whose load succeeded (so we may safely save them). A player who never
@@ -124,6 +151,7 @@ local function applyBlob(player: Player, blob: PlayerBlob?)
 	CurrencyService.ApplyData(player, blob and blob.currency)
 	ProfileService.ApplyData(player, blob and blob.profile)
 	PrestigeService.ApplyData(player, blob and blob.prestige)
+	StatsService.ApplyData(player, blob and blob.stats)
 end
 
 local function serializeBlob(player: Player): PlayerBlob
@@ -131,6 +159,7 @@ local function serializeBlob(player: Player): PlayerBlob
 		currency = CurrencyService.SerializeData(player),
 		profile = ProfileService.SerializeData(player),
 		prestige = PrestigeService.SerializeData(player),
+		stats = StatsService.SerializeData(player),
 	}
 end
 
@@ -211,8 +240,8 @@ end
 -- Write the player's current data. Keeps the lock (refreshing its time) unless
 -- `release` is set (leave/shutdown). Aborts if another session has taken the lock,
 -- so we never clobber a server that legitimately stole an abandoned slot.
-local function writeData(userId: number, blob: PlayerBlob, release: boolean)
-	withRetry(function()
+local function writeData(userId: number, blob: PlayerBlob, release: boolean): boolean
+	local ok = withRetry(function()
 		return (store :: GlobalDataStore):UpdateAsync(keyFor(userId), function(record)
 			record = record or {}
 			if not lockIsAvailable(record.lock) then
@@ -223,6 +252,7 @@ local function writeData(userId: number, blob: PlayerBlob, release: boolean)
 			return record
 		end)
 	end)
+	return ok
 end
 
 local function releaseLock(userId: number)
@@ -236,18 +266,70 @@ local function releaseLock(userId: number)
 	end)
 end
 
-local function savePlayer(player: Player, release: boolean)
+local function savePlayer(player: Player, release: boolean): boolean
 	local userId = player.UserId
 	if not loaded[userId] then
-		return -- never loaded — don't risk clobbering a real save
+		return false -- never loaded — don't risk clobbering a real save
 	end
 	while saving[userId] do
 		task.wait()
 	end
 	saving[userId] = true
 	local blob = serializeBlob(player)
-	writeData(userId, blob, release)
+	local ok = writeData(userId, blob, release)
 	saving[userId] = nil
+	return ok
+end
+
+-- Whether a player's saved data has finished loading (so it's safe to mutate +
+-- persist). When persistence is off (Studio) defaults are applied synchronously on
+-- join, so data is always "ready". Used by ProductService before granting a purchase.
+function DataService.IsLoaded(player: Player): boolean
+	if not persistenceEnabled then
+		return true
+	end
+	return loaded[player.UserId] == true
+end
+
+-- Persist a player's current data immediately, keeping their lock. Returns whether
+-- the write succeeded. For flows that need a grant durable before confirming it
+-- (e.g. a Robux purchase). No-op success when persistence is off (Studio).
+function DataService.SaveNow(player: Player): boolean
+	if not persistenceEnabled then
+		return true
+	end
+	return savePlayer(player, false)
+end
+
+-- Purchase-receipt dedup (used by ProductService). Routed through DataService so all
+-- DataStore access — and the Studio/persistence gating — lives in one place. When
+-- persistence is off (Studio), these no-op: "not processed" + "record succeeded", so
+-- test purchases grant without cross-session dedup.
+
+-- Returns (ok, processed). ok=false means the store errored; the caller should retry
+-- rather than risk granting the same receipt twice.
+function DataService.IsReceiptProcessed(key: string): (boolean, boolean)
+	if not persistenceEnabled or not receiptStore then
+		return true, false
+	end
+	local ok, val = withRetry(function()
+		return (receiptStore :: GlobalDataStore):GetAsync(key)
+	end)
+	if not ok then
+		return false, false
+	end
+	return true, val == true
+end
+
+-- Record a receipt as granted. Returns whether it persisted.
+function DataService.MarkReceiptProcessed(key: string): boolean
+	if not persistenceEnabled or not receiptStore then
+		return true
+	end
+	local ok = withRetry(function()
+		return (receiptStore :: GlobalDataStore):SetAsync(key, true)
+	end)
+	return ok
 end
 
 -- Another server is taking over this player (they joined elsewhere, or are rejoining
@@ -274,6 +356,10 @@ local function onPlayerAdded(player: Player)
 	applyBlob(player, nil)
 
 	if not persistenceEnabled then
+		-- No persistence (Studio): defaults are the final state and are already applied,
+		-- so the player is "loaded" now — fire Loaded so post-load work (game-pass
+		-- ownership grants, etc.) still runs here.
+		DataService.Loaded:Fire(player)
 		return
 	end
 
@@ -294,6 +380,7 @@ local function onPlayerAdded(player: Player)
 		applyBlob(player, data)
 	end
 	loaded[player.UserId] = true
+	DataService.Loaded:Fire(player)
 end
 
 local function onPlayerRemoving(player: Player)
@@ -302,6 +389,7 @@ local function onPlayerRemoving(player: Player)
 	CurrencyService.Clear(player)
 	ProfileService.Clear(player)
 	PrestigeService.Clear(player)
+	StatsService.Clear(player)
 end
 
 function DataService.Init()

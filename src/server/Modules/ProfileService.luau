@@ -46,6 +46,10 @@ export type Loadout = {
 export type Profile = {
 	upgrades: Upgrades,
 	loadout: Loadout,
+	-- Track the player is mid-buying an "instant tiers" dev product on, if any.
+	-- Persisted so a crash/rejoin between paying and the receipt processing still
+	-- lets ProcessReceipt know which track to grant (see UpgradeService).
+	pendingBoostTrack: string?,
 }
 
 -- profiles[userId] = Profile
@@ -137,6 +141,17 @@ end
 
 function ProfileService.GetLoadout(player: Player): Loadout
 	return get(player).loadout
+end
+
+-- The track the player is mid-buying an instant-tiers product on (nil if none).
+function ProfileService.GetPendingBoostTrack(player: Player): string?
+	return get(player).pendingBoostTrack
+end
+
+-- Record (or clear, with nil) the pending instant-tiers track. Not a gameplay
+-- mutation, so it doesn't fire Changed — nothing renders off it.
+function ProfileService.SetPendingBoostTrack(player: Player, track: string?)
+	get(player).pendingBoostTrack = track
 end
 
 --------------------------------------------------------------------------------
@@ -257,6 +272,9 @@ function ProfileService.ApplyData(player: Player, saved: Profile?)
 					profile.upgrades[name] = tier
 				end
 			end
+		end
+		if type(saved.pendingBoostTrack) == "string" then
+			profile.pendingBoostTrack = saved.pendingBoostTrack
 		end
 		if saved.loadout then
 			local sl = saved.loadout

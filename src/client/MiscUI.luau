@@ -1,19 +1,18 @@
 --!strict
--- Controller for the small "tool" buttons (camera view, SFX mute, music mute) and
--- later the 2× cash card. The visual style + feel are lifted from the GenUI design
--- mockups (hover brightness lift, press squash toward the shadow, blue↔gold gradient
--- for the active state); the placeholder behaviour from those scripts is discarded
--- and replaced with calls into the real services.
+-- Controller for the small "tool" buttons: camera view, ball visibility, SFX mute,
+-- music mute. The button feel/animation lives in the shared UIButton module; this
+-- file just owns the app palette and wires each host to its service.
 --
--- Each tool host has the same shape:  Host > { Shadow, Button > { Hover, Icon } }.
--- The three tool buttons are simple toggles: engaged = gold, idle = blue.
+-- Each host has the shape:  Host > { Shadow, Button > { Hover, Icon, ... } }.
 
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 local RS = game:GetService("ReplicatedStorage")
 
 local SoundService = require(RS.Shared.SoundService)
 local BallEffects = require(RS.Shared.BallEffects)
+local UIButton = require(RS.Shared.UIButton)
+local ProductService = require(RS.Shared.ProductService)
+local Config = require(RS.Shared.Config)
 local CameraService = require(script.Parent:WaitForChild("CameraService"))
 
 local MiscUI = {}
@@ -21,142 +20,154 @@ local MiscUI = {}
 local player = Players.LocalPlayer
 local MainGui = player.PlayerGui:WaitForChild("MainGui")
 
-local defaultColor: { [GuiObject]: Color3 } = {}
-
-----------------------------------------------------------------------------------
--- Shared style + feel (DRY across all the buttons)
-----------------------------------------------------------------------------------
-
-local FAST = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local HOVER_TRANSPARENCY = 0.86
-local PRESS_OFFSET = 4
-
-type Gradient = { top: Color3, mid: Color3, bot: Color3 }
-local BLUE: Gradient = {
+-- App palette for the toggle states.
+local BLUE: UIButton.Gradient = {
 	top = Color3.fromRGB(127, 211, 255),
 	mid = Color3.fromRGB(58, 166, 245),
 	bot = Color3.fromRGB(36, 134, 224),
 }
-local GOLD: Gradient = {
+local GOLD: UIButton.Gradient = {
 	top = Color3.fromRGB(255, 224, 122),
 	mid = Color3.fromRGB(255, 211, 77),
 	bot = Color3.fromRGB(240, 176, 33),
 }
-local RED: Gradient = {
+local RED: UIButton.Gradient = {
 	top = Color3.fromRGB(255, 138, 138),
 	mid = Color3.fromRGB(240, 70, 70),
 	bot = Color3.fromRGB(200, 38, 38),
 }
 
-local function setGradient(button: GuiObject, g: Gradient)
-	local grad = button:FindFirstChildOfClass("UIGradient")
-	if grad then
-		grad.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0.00, g.top),
-			ColorSequenceKeypoint.new(0.52, g.mid),
-			ColorSequenceKeypoint.new(1.00, g.bot),
-		})
-	end
+-- Cash-multiplier button colour for the level it's offering. The gradient is left as
+-- authored; this tints the button's BackgroundColor3 (which the gradient multiplies).
+local CASH_LEVEL_COLOR: { [number]: Color3 } = {
+	[2] = Color3.fromRGB(97, 236, 86),
+	[4] = Color3.fromRGB(66, 232, 219),
+	[8] = Color3.fromRGB(110, 120, 231),
+	[16] = Color3.fromRGB(255, 255, 255),
+}
+
+-- A mute-style toggle: blue when idle, red while active, with the Button.MuteIcon
+-- shown only while active. Shared by the ball-visibility / SFX / music buttons.
+local function bindMuteToggle(host: Instance, initial: boolean, onChange: (boolean) -> ())
+	return UIButton.bind(host, {
+		toggle = { initial = initial, onChange = onChange },
+		idleGradient = BLUE,
+		activeGradient = RED,
+		onRender = function(button: GuiButton, active: boolean)
+			local icon = button:FindFirstChild("MuteIcon")
+			if icon and icon:IsA("GuiObject") then
+				icon.Visible = active
+			end
+		end,
+	})
 end
 
--- Hover brightness lift + press squash toward the shadow. Shared by every button.
-local function attachFeel(button: GuiButton)
-	local hover = button:WaitForChild("Hover") :: GuiObject
-	local restPos = button.Position
-	local pressPos = restPos + UDim2.fromOffset(0, PRESS_OFFSET)
+type Stats = {
+	upgradesPurchased: number,
+	cashMultiplier: number,
+	ownsStarterPack: boolean,
+}
 
-	button.MouseEnter:Connect(function()
-		TweenService:Create(hover, FAST, { BackgroundTransparency = HOVER_TRANSPARENCY }):Play()
-	end)
-	button.MouseLeave:Connect(function()
-		TweenService:Create(hover, FAST, { BackgroundTransparency = 1 }):Play()
-		TweenService:Create(button, FAST, { Position = restPos }):Play()
-	end)
-	button.MouseButton1Down:Connect(function()
-		TweenService:Create(button, FAST, { Position = pressPos }):Play()
-	end)
-	button.MouseButton1Up:Connect(function()
-		TweenService:Create(button, FAST, { Position = restPos }):Play()
-	end)
-end
+-- RightBar monetization buttons (cash multiplier + starter pack). Their state comes
+-- from the server's StatsChanged / GetStats remotes; products are prompted by id.
+local function initRightBar()
+	local rightBar = MainGui:WaitForChild("RightBar")
+	local Remote = RS:WaitForChild("Remote")
+	local getStats = Remote:WaitForChild("GetStats") :: RemoteFunction
+	local statsChanged = Remote:WaitForChild("StatsChanged") :: RemoteEvent
 
--- Wire a Host as a two-state toggle: blue when idle, `activeGradient` when active.
--- `onToggle` receives the new active state and drives the underlying feature;
--- `onRender` (optional) syncs any extra visuals to the state. `initial` sets the
--- starting state without firing onToggle.
-local function attachToggle(
-	host: Instance,
-	initial: boolean,
-	activeGradient: Gradient,
-	onToggle: (boolean) -> (),
-	onRender: ((GuiButton, boolean) -> ())?
-)
-	local button = host:WaitForChild("Button") :: GuiButton
-	attachFeel(button)
-	defaultColor[button] = button.BackgroundColor3
-
-	local active = initial
-	local function render()
-		setGradient(button, if active then activeGradient else BLUE)
-		if active then
-			button.BackgroundColor3 = Color3.new(1,1,1)
+	-- Cash multiplier: the button always shows the next purchasable level and vanishes
+	-- once the top level (last in Config.CashMultiplier.Levels) is owned.
+	local cashHost = rightBar:WaitForChild("CashMultHost") :: GuiObject
+	local cashButton = cashHost:WaitForChild("Button") :: GuiObject
+	local multLabel = cashButton:WaitForChild("MultLabel") :: TextLabel
+	local cashNextId: number? = nil
+	local cashHandle = UIButton.bind(cashHost, {
+		onClick = function()
+			if cashNextId then
+				ProductService.Prompt(cashNextId)
+			end
+		end,
+	})
+	local function refreshCash(current: number)
+		local nextLevel: number? = nil
+		for _, lvl in Config.CashMultiplier.Levels do
+			if lvl > current then
+				nextLevel = lvl
+				break
+			end
+		end
+		if nextLevel then
+			multLabel.Text = tostring(nextLevel) .. "× Cash"
+			cashNextId = tonumber((Config.Products :: any)["Multiplier" .. tostring(nextLevel) .. "x"])
+			local color = CASH_LEVEL_COLOR[nextLevel]
+			if color then
+				cashHandle.SetColor(color)
+			end
+			cashHost.Visible = true
 		else
-			button.BackgroundColor3 = defaultColor[button]
-		end
-		
-		if onRender then
-			onRender(button, active)
+			cashNextId = nil
+			cashHost.Visible = false -- top tier owned → remove the button
 		end
 	end
-	render()
 
-	button.MouseButton1Click:Connect(function()
-		active = not active
-		render()
-		onToggle(active)
+	-- Starter pack: a game pass, shown only while unowned and under the upgrade
+	-- threshold.
+	local starterHost = rightBar:WaitForChild("StarterPackHost") :: GuiObject
+	local starterId = tonumber(Config.GamePasses.StarterPack)
+	UIButton.bind(starterHost, {
+		onClick = function()
+			if starterId then
+				ProductService.PromptGamePass(starterId)
+			end
+		end,
+	})
+	local function refreshStarter(stats: Stats)
+		starterHost.Visible = (not stats.ownsStarterPack)
+			and stats.upgradesPurchased < Config.StarterPack.MaxUpgrades
+	end
+
+	local function apply(stats: Stats)
+		refreshCash(stats.cashMultiplier)
+		refreshStarter(stats)
+	end
+
+	statsChanged.OnClientEvent:Connect(apply)
+	local ok, stats = pcall(function()
+		return getStats:InvokeServer()
 	end)
+	if ok and stats then
+		apply(stats)
+	end
 end
-
--- A mute toggle: turns red while muted and shows the Button.MuteIcon label, which is
--- hidden while unmuted. `onToggle` applies the mute to the relevant SoundService side.
-local function attachMuteToggle(host: Instance, initialMuted: boolean, onToggle: (boolean) -> ())
-	attachToggle(host, initialMuted, RED, onToggle, function(button, muted)
-		local icon = button:FindFirstChild("MuteIcon")
-		if icon and icon:IsA("GuiObject") then
-			icon.Visible = muted
-		end
-	end)
-end
-
-----------------------------------------------------------------------------------
--- The three tool buttons
-----------------------------------------------------------------------------------
 
 function MiscUI.Init()
 	local leftBar = MainGui:WaitForChild("LeftBar")
 	local tools = leftBar:WaitForChild("Tools")
 
 	-- Camera: gold while the alternate board view is active.
-	attachToggle(tools:WaitForChild("CamButtonHost"), CameraService.IsBoardView(), GOLD, function(active)
-		CameraService.SetBoardView(active)
-	end)
+	UIButton.bind(tools:WaitForChild("CamButtonHost"), {
+		toggle = { initial = CameraService.IsBoardView(), onChange = CameraService.SetBoardView },
+		idleGradient = BLUE,
+		activeGradient = GOLD,
+	})
 
-	-- Ball visibility: red + MuteIcon while balls are hidden (destroyed locally).
-	attachMuteToggle(tools:WaitForChild("BallVisibleButtonHost"), BallEffects.AreBallsHidden(), function(hidden)
+	-- Ball visibility: red + MuteIcon while other players' balls are hidden.
+	bindMuteToggle(tools:WaitForChild("BallVisibleButtonHost"), BallEffects.AreBallsHidden(), function(hidden)
 		BallEffects.SetBallsHidden(hidden)
 	end)
 
-	-- Sound (ball-effects / SFX) mute: red + MuteIcon while muted.
-	attachMuteToggle(tools:WaitForChild("SoundButtonHost"), SoundService.IsSFXMuted(), function(muted)
+	-- Sound (ball-effects / SFX) mute.
+	bindMuteToggle(tools:WaitForChild("SoundButtonHost"), SoundService.IsSFXMuted(), function(muted)
 		SoundService.SetSFXMuted(muted)
 	end)
 
-	-- Music mute: red + MuteIcon while muted.
-	attachMuteToggle(tools:WaitForChild("MusicButtonHost"), SoundService.IsMusicMuted(), function(muted)
+	-- Music mute.
+	bindMuteToggle(tools:WaitForChild("MusicButtonHost"), SoundService.IsMusicMuted(), function(muted)
 		SoundService.SetMusicMuted(muted)
 	end)
 
-	-- TODO: 2× cash card (MainGui.CashMultiHost) — buy flow / gamepass, next pass.
+	initRightBar()
 end
 
 return MiscUI
