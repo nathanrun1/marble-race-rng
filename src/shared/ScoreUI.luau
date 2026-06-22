@@ -36,7 +36,7 @@ if RunService:IsClient() then
 
 	local FADE_IN    = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	local FADE_OUT   = TweenInfo.new(0.4,  Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	local MSG_DELAY  = 0.05   -- seconds between queued messages appearing
+	local MSG_DELAY  = 0.2   -- seconds between queued messages appearing
 	local DISPLAY_TIME = 2.5 -- seconds each message stays visible before fading
 
 	local msgFrame: Frame? = nil

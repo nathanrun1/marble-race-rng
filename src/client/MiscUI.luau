@@ -13,6 +13,7 @@ local TweenService = game:GetService("TweenService")
 local RS = game:GetService("ReplicatedStorage")
 
 local SoundService = require(RS.Shared.SoundService)
+local BallEffects = require(RS.Shared.BallEffects)
 local CameraService = require(script.Parent:WaitForChild("CameraService"))
 
 local MiscUI = {}
@@ -132,11 +133,17 @@ end
 ----------------------------------------------------------------------------------
 
 function MiscUI.Init()
-	local tools = MainGui:WaitForChild("LeftBar"):WaitForChild("Tools")
+	local leftBar = MainGui:WaitForChild("LeftBar")
+	local tools = leftBar:WaitForChild("Tools")
 
 	-- Camera: gold while the alternate board view is active.
 	attachToggle(tools:WaitForChild("CamButtonHost"), CameraService.IsBoardView(), GOLD, function(active)
 		CameraService.SetBoardView(active)
+	end)
+
+	-- Ball visibility: red + MuteIcon while balls are hidden (destroyed locally).
+	attachMuteToggle(tools:WaitForChild("BallVisibleButtonHost"), BallEffects.AreBallsHidden(), function(hidden)
+		BallEffects.SetBallsHidden(hidden)
 	end)
 
 	-- Sound (ball-effects / SFX) mute: red + MuteIcon while muted.

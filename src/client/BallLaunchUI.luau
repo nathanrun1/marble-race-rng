@@ -24,7 +24,6 @@ local MainGui = player.PlayerGui:WaitForChild("MainGui")
 local RequestLaunchRE = Remote:WaitForChild("RequestLaunch")
 
 local Controller = {}
-print("requried")
 
 local BALL_LAUNCH_POS = Vector3.new(21.45, 170.032, 296.331)
 

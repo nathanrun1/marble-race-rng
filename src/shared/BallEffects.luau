@@ -364,6 +364,24 @@ function BallEffects.ShowPointFX(ball: BasePart?, cframe: CFrame, multiplier: nu
 	Debris:AddItem(anchor, HIGH_POINT_EMIT_TIME + HIGH_POINT_MAX_LIFETIME + 0.2)
 end
 
+-- Make a ball (and everything under it) render nothing: BasePart/Decal/Texture go
+-- fully transparent and every emitter/trail/beam/light/fire is disabled. One-way
+-- ("vanish") — it doesn't remember prior values, so it isn't a reversible toggle on
+-- its own. The client ball-hide toggle (see SetBallsHidden) uses local-destroy
+-- instead, which also drops the replication/interpolation cost; this is the lighter,
+-- reversible-by-recolour alternative kept available for cosmetic use.
+function BallEffects.SetBallInvisible(ball: BasePart)
+	ball.Transparency = 1
+	for _, d in ball:GetDescendants() do
+		if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture") then
+			d.Transparency = 1
+		elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+			or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") or d:IsA("Light") then
+			d.Enabled = false
+		end
+	end
+end
+
 ----------------------------------------------------------------------------------
 -- Server-only: lifecycle + client dispatch
 ----------------------------------------------------------------------------------
@@ -417,8 +435,32 @@ if RunService:IsClient() then
 local TouchInputService = game:GetService("TouchInputService")
 	local localUserId = Players.LocalPlayer.UserId
 
+	local function isOwnBall(ball: BasePart): boolean
+		return ball:GetAttribute(Config.Attributes.OwnerUserId) == localUserId
+	end
+
+	-- Ball-hide toggle (the "ball visible" button). When on, every OTHER player's ball
+	-- is destroyed locally (our own balls are always kept) — this is client-only, so
+	-- the server keeps its authoritative copy and gameplay/scoring is untouched; we
+	-- just stop rendering and interpolating it on this machine (the real lag win — the
+	-- server still streams its CFrame, but with no local instance those updates are
+	-- simply dropped). It's one-way for balls already in flight: the server won't
+	-- re-replicate an existing instance, so toggling back on only restores balls
+	-- spawned from then on (fine — balls are short-lived, so the board repopulates
+	-- within seconds).
+	local ballsHidden = false
+
+	local function hideBall(ball: BasePart)
+		ball:Destroy()
+	end
+
 	local function onBallTagged(ball: BasePart)
-		if ball:GetAttribute(Config.Attributes.OwnerUserId) == localUserId then
+		local own = isOwnBall(ball)
+		if ballsHidden and not own then
+			hideBall(ball)   -- only other players' balls are hidden
+			return
+		end
+		if own then
 			-- Our own ball: make it fully opaque for us (local-only; others keep 0.5).
 			ball.Transparency = OWNED_TRANSPARENCY
 			BallEffects.AttachValueUI(ball)
@@ -429,6 +471,24 @@ local TouchInputService = game:GetService("TouchInputService")
 		end
 	end
 
+	-- Toggle whether OTHER players' balls are shown. Turning it on destroys every
+	-- non-owned ball currently on the board; new ones are destroyed as they replicate
+	-- in (see onBallTagged). Our own balls are never touched.
+	function BallEffects.SetBallsHidden(hidden: boolean)
+		ballsHidden = hidden
+		if hidden then
+			for _, ball in CollectionService:GetTagged(Config.Tags.Ball) do
+				if ball:IsA("BasePart") and not isOwnBall(ball) then
+					hideBall(ball)
+				end
+			end
+		end
+	end
+
+	function BallEffects.AreBallsHidden(): boolean
+		return ballsHidden
+	end
+
 	function BallEffects.Init()
 		local remote = RS.Remote:WaitForChild("BallEffect") :: RemoteEvent
 		remote.OnClientEvent:Connect(function(effect: string, ball: BasePart?, ...: any)
@@ -436,7 +496,8 @@ local TouchInputService = game:GetService("TouchInputService")
 			if fn then fn(ball, ...) end
 		end)
 
-		-- Attach to our own balls already present, and any that appear later.
+		-- Attach to our own balls already present, and any that appear later (and
+		-- destroy them instead while the hide toggle is on).
 		for _, ball in CollectionService:GetTagged(Config.Tags.Ball) do
 			if ball:IsA("BasePart") then
 				onBallTagged(ball)

@@ -352,10 +352,77 @@ function Controller._connectRemotes()
 end
 
 ----------------------------------------------------------------
+-- Menu open/close. The panel (Controller.root) is closed by default; the
+-- TuneTriggerHost button on the left bar opens it (and hides itself), and
+-- root.UIListIgnore.CloseButton closes it again, restoring the trigger.
+----------------------------------------------------------------
+
+-- Pop-open: grow the panel from collapsed to its resting size. With the left bar's
+-- list layout, the growing panel shoves the elements above it upward as it opens.
+local TUNE_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local tuningOpen = false
+local tuningTween: Tween? = nil
+local tuningRestScale = 1   -- resting Scale captured at open (AutoScale-driven, or 1)
+
+-- The panel's UIScale — reuse AutoScale's if present, else make one. We animate this
+-- on open rather than the panel's Size so the list layout reflows with the growth.
+local function tuningScale(): UIScale
+	local panel = Controller.root
+	local s = panel:FindFirstChildOfClass("UIScale")
+	if not s then
+		s = Instance.new("UIScale")
+		s.Parent = panel
+	end
+	return s
+end
+
+local function openTuning(triggerHost: GuiObject)
+	if tuningOpen then return end
+	tuningOpen = true
+	if tuningTween then tuningTween:Cancel() end
+
+	triggerHost.Visible = false
+	Controller.root.Visible = true
+
+	local scale = tuningScale()
+	tuningRestScale = scale.Scale   -- whatever it normally rests at (AutoScale or 1)
+	scale.Scale = 0                 -- collapse, then grow into place
+	tuningTween = TweenService:Create(scale, TUNE_OPEN_TWEEN, { Scale = tuningRestScale })
+	tuningTween:Play()
+end
+
+local function closeTuning(triggerHost: GuiObject)
+	if not tuningOpen then return end
+	tuningOpen = false
+	if tuningTween then
+		tuningTween:Cancel()
+		tuningTween = nil
+	end
+
+	tuningScale().Scale = tuningRestScale   -- restore resting size for the next open
+	Controller.root.Visible = false
+	triggerHost.Visible = true
+end
+
+local function initTuningMenu()
+	local leftBar = Controller.root.Parent
+	local triggerHost = leftBar:WaitForChild("TuneTriggerHost") :: GuiObject
+	local trigger = triggerHost:WaitForChild("Button") :: GuiButton
+	local closeBtn = Controller.root:WaitForChild("UIListIgnore"):WaitForChild("CloseButton") :: GuiButton
+
+	Controller.root.Visible = false   -- closed by default
+	triggerHost.Visible = true
+	trigger.Activated:Connect(function() openTuning(triggerHost) end)
+	closeBtn.Activated:Connect(function() closeTuning(triggerHost) end)
+end
+
+----------------------------------------------------------------
 -- init — resolve chrome refs under root, seed from Config, build, then sync
 ----------------------------------------------------------------
 function Controller.init()
 	assert(Controller.root, "BallTuningController.root must be set to the panel before init()")
+
+	initTuningMenu()
 
 	for _, a in ipairs(Controller.AXES) do
 		-- Seed bounds from Config at tier 0 so the row renders before the fetch.

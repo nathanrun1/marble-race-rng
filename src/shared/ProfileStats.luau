@@ -115,7 +115,7 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 	elseif track == "Frequency" then
 		return string.format("%.2fs", ProfileStats.GetLaunchDelay(u))
 	elseif track == "PegHeat" then
-		return string.format("%.1f×", ProfileStats.GetPegHeatFactor(u))
+		return string.format("%.2f×", ProfileStats.GetPegHeatFactor(u))
 	else
 		-- Axis tracks (Weight, Size, ...)
 		if Config.Axes[track] then
