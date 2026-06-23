@@ -308,7 +308,6 @@ local HIGH_POINT_MAX_LIFETIME   = 1.5
 -- window then switch it off — every client renders the same burst.
 function BallEffects.ShowPointFX(ball: BasePart?, cframe: CFrame, multiplier: number)
 	if not (cframe and multiplier) then return end
-	print(multiplier)
 	-- Check if below special FX threshold
 	if multiplier < Config.Scoring.SpecialFXMinMultiplier then
 		SoundService.Play({ soundId = Config.Sounds.Collect1, position = cframe.Position, volume = 1.5 })  -- Default collect sound
@@ -318,7 +317,6 @@ function BallEffects.ShowPointFX(ball: BasePart?, cframe: CFrame, multiplier: nu
 	local isJackpot = multiplier == Config.Scoring.JackpotMultiplier
 
 	if isJackpot then
-		print("jackpot sound!")
 		SoundService.Play({ soundId = Config.Sounds.Jackpot, position = cframe.Position, volume = 2.5})
 	else
 		SoundService.Play({ soundId = Config.Sounds.Collect2, position = cframe.Position, volume = 1.5 })

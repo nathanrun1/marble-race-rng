@@ -23,7 +23,8 @@ Config.Tags = {
 	BounceTarget = "BounceTarget",      -- Counts towards bounce combo
 	JackpotTarget = "JackpotTarget",   -- Multiplies the ball's banked value by Config.Scoring.JackpotMultiplier
 	Ball = "Ball",
-	AutoScale = "AutoScale"             -- GuiObject auto-scaled to viewport (see client AutoScale)
+	AutoScale = "AutoScale",             -- GuiObject auto-scaled to viewport (see client AutoScale)
+	Obstacle = "Obstacle",             -- An obstacle that has an active behaviour
 }
 
 Config.Attributes = {
@@ -38,6 +39,9 @@ Config.Attributes = {
 	Weight = "Weight",                 -- Weight slider 0 (light) .. 1 (heavy)
 	Size = "Size",                     -- Size slider
 	BatchId = "BatchId",               -- Batch this ball belongs to (per-player combo settlement)
+
+	-- Obstacle Behaviour
+	ObstacleRotate = "ORotate"         -- Obstacle rotates by given angles (Vector3)
 }
 
 Config.Scoring = {

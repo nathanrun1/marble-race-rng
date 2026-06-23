@@ -100,7 +100,6 @@ local function onLaunchBtnActivated()
     end
 
 	local betAmount = tonumber(Controller.UI.betAmount.Text)
-    print(Controller.UI.betAmount.Text)
 	if (betAmount) then
 		RequestLaunchRE:FireServer(betAmount)
 	end
@@ -109,7 +108,6 @@ local function onLaunchBtnActivated()
 	
 	local upgrades = GetProfileRF:InvokeServer().upgrades
 	local delay = ProfileStats.GetLaunchDelay(upgrades)
-	print(delay)
 	local start = os.clock()
 	while os.clock() - start < delay do
 		Controller.UI.launchBtnText.Text = string.format("%.1f", delay - (os.clock() - start))

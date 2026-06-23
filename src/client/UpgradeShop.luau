@@ -15,7 +15,6 @@ local function setupShopAt(part: BasePart)
 	local track: string? = part:GetAttribute(TRACK_ATTR) :: string?
 	if not track then return end
 	(part :: BasePart).Touched:Connect(function(obj: Instance)
-		print("Loading shop: "..track)
 		if not obj:IsDescendantOf(player.Character) then return end
 		if ShopUI.IsOpen() then
 			ShopUI.LoadTrack(track)
