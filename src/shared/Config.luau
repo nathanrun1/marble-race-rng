@@ -25,6 +25,9 @@ Config.Tags = {
 	Ball = "Ball",
 	AutoScale = "AutoScale",             -- GuiObject auto-scaled to viewport (see client AutoScale)
 	Obstacle = "Obstacle",             -- An obstacle that has an active behaviour
+	Obby = "Obby",                       -- An obby model auto-wired by ObbyService (see ObbyZone)
+	GroupReward = "GroupReward",         -- A floor part that grants the group reward on touch (see GroupRewardService)
+	UpgradeShop = "UpgradeShop",         -- A part that opens the upgrade shop on touch (Track attribute picks the track; see client UpgradeShop)
 }
 
 Config.Attributes = {
@@ -48,7 +51,7 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 10,
+	MinCombo = 15,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 1.25,
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
@@ -349,13 +352,23 @@ Config.CashMultiplier = {
 Config.StarterPack = {
 	Balance = 50000,           -- cash granted on purchase
 	UpgradeTiers = 2,          -- tier every upgrade track is raised to
-	MaxUpgrades = 4,           -- hide the pack once the player has this many total upgrades
+	MaxUpgrades = 8,           -- hide the pack once the player has this many total upgrades
 	PostPrestigeFreeTier = 1,  -- free tier on all tracks after each prestige (owners only)
 }
 
 Config.Obby = {
 	DefaultWalkSpeed = 32,  -- restored when a player leaves the obby area
 	ObbyWalkSpeed = 16,     -- forced while inside the Checkpoints.In volume
+}
+
+-- Group reward (a part tagged Config.Tags.GroupReward, walked on to claim). Group
+-- members get Fraction of their current balance, then can't reclaim for Cooldown
+-- seconds. The server owns the cooldown + grant; the client only renders the sign.
+Config.GroupReward = {
+	Fraction = 0.15,             -- fraction of current balance granted per claim
+	Cooldown = 5 * 60 * 60,      -- seconds between claims (5 hours)
+	LabelColor = Color3.fromRGB(93, 214, 84), -- "Claim Group Reward" sign colour
+	MsgColor = Color3.fromRGB(230,230,230),
 }
 
 table.freeze(Config.Tags)
@@ -377,5 +390,19 @@ table.freeze(Config.Products)
 table.freeze(Config.GamePasses)
 table.freeze(Config.CashMultiplier)
 table.freeze(Config.StarterPack)
+-- Rebirths podium (the top-3 statues by Workspace.Leaderboards.Rebirths.Podium). Each is a
+-- single-pose animation the built avatar plays (looped, frozen on the pose). Fill in the
+-- published animation asset ids; leave "" to leave that statue un-posed (default stand).
+Config.Podium = {
+	Animations = {
+		First = "rbxassetid://82922850819473",   -- pose for 1st place
+		Second = "rbxassetid://117571739958888",  -- pose for 2nd place
+		Third = "rbxassetid://109567698247034",   -- pose for 3rd place
+	},
+}
+
 table.freeze(Config.Obby)
+table.freeze(Config.GroupReward)
+table.freeze(Config.Podium)
+table.freeze(Config.Podium.Animations)
 return Config

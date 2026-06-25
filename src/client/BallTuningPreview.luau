@@ -129,7 +129,7 @@ local function applyProfile(profile: any)
 	end
 	local axes = profile.loadout.axes
 	arc = axes.Arc or arc
-	aim = axes.Angle or aim
+	aim = -(axes.Angle or aim)
 	size = axes.Size or size
 	elasticity = axes.Elasticity or elasticity
 	refresh()

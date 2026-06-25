@@ -66,7 +66,7 @@ end
 -- loadout axes the player sets within their unlocked range — this is pure geometry
 -- over them and the clock-derived phase, no upgrade/loadout fetch.
 function ProfileStats.GetSwivelAngle(arcWidth: number, aimAngle: number, phase: number): number
-	return aimAngle + arcWidth * math.sin(2 * math.pi * phase)
+	return (-aimAngle) + arcWidth * math.sin(2 * math.pi * phase)
 end
 
 -- Sensitivity to accumulated peg heat (§1.5, simplified). 0 at tier 0 (heat does

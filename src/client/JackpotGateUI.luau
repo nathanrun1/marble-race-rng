@@ -50,7 +50,6 @@ local function applyProfile(profile: any)
 end
 
 function JackpotGateUI.Init()
-	print("init")
 	leftLabel = resolveLabel("LeftGate")
 	rightLabel = resolveLabel("RightGate")
 	if not (leftLabel and rightLabel) then

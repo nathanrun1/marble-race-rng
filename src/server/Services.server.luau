@@ -16,9 +16,12 @@ local DataService = require(SSS.Scripts.Modules.DataService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
+local AnnounceUI = require(RS.Shared.AnnounceUI)
 local SoundService = require(RS.Shared.SoundService)
 local ProductService = require(RS.Shared.ProductService)
 local MonetizationService = require(SSS.Scripts.Modules.MonetizationService)
+local ObbyService = require(SSS.Scripts.Modules.ObbyService)
+local GroupRewardService = require(SSS.Scripts.Modules.GroupRewardService)
 local DevService = require(SSS.Scripts.Modules.DevService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
@@ -58,9 +61,16 @@ BallEffects.Init()
 -- ball with its owner's equipped skin, overriding BallEffects' default base colour.
 CosmeticService.Init()
 ScoreUI.Init()
+-- AnnounceUI: creates the AnnounceMessage remote for large centered banner messages.
+AnnounceUI.Init()
 -- SoundService: creates the PlaySound remote so clients can receive server-driven SFX.
 SoundService.Init()
 -- CollisionService before launches start: it self-connects to BallSpawned to put
 -- each ball in the right gate-collision group from its first frame.
 CollisionService.Init()
 BallLaunchService.Init()
+-- ObbyService: auto-wires an ObbyZone for every workspace model tagged Obby.
+ObbyService.Init()
+-- GroupRewardService after Currency/Stats: auto-wires the group-reward pads and owns
+-- the claim + cooldown (reads balance/stats, grants through Currency).
+GroupRewardService.Init()

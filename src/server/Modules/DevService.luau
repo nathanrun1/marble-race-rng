@@ -14,6 +14,7 @@
 --   /test <n> [interval]   fire n test balls (your loadout), print payout stats
 --   /comprtest <n>         sweep all builds (Arc/Angle/Size/Elasticity), n balls each
 --   /show                  print current tiers + loadout to the server console
+--   /podium                load your character onto all 3 rebirths-podium spots (test)
 --   /help                  list commands
 --
 -- To reset everything, restart the playtest (no persistence yet, so a rejoin
@@ -24,6 +25,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 local SSS = game:GetService("ServerScriptService")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(RS.Shared.Config)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
@@ -796,7 +798,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, show, reset_upgrades, prestige, pmoney, attempt_prestige"
+		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, show, reset_upgrades, prestige, pmoney, attempt_prestige, podium"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -873,6 +875,15 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?): st
 		local info = PrestigeService.GetInfo(player)
 		return string.format("lifetimeBanked -> %.0f  PP -> %d  nextCost -> %d  canPrestige -> %s",
 			info.lifetimeBanked, info.prestigePoints, info.nextCost, tostring(info.canPrestige))
+	elseif cmd == "podium" then
+		-- Load the caller's character onto all three rebirths-podium spots, to eyeball the
+		-- build/pose/scale. Routed to PhysicalRebirthsLeaderboard via its server-only hook.
+		local ev = ServerStorage:FindFirstChild("PodiumDevTest") :: BindableEvent?
+		if not ev then
+			return "podium test hook not found (PhysicalRebirthsLeaderboard not loaded?)"
+		end
+		ev:Fire(player.UserId)
+		return "loaded your character onto all 3 podium spots"
 	elseif cmd == "attempt_prestige" then
 		local ok, reason = PrestigeService.Prestige(player)
 		if ok then

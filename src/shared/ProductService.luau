@@ -159,6 +159,29 @@ if RunService:IsClient() then
 		MarketplaceService:PromptGamePassPurchase(localPlayer, gamePassId)
 	end
 
+	-- Parts carrying a numeric PromptPass attribute open that game pass's purchase dialog
+	-- when the local player touches them. Per-part debounce so standing on one doesn't
+	-- reopen the prompt every contact.
+	local PROMPT_PASS_ATTR = "PromptPass"
+	local PROMPT_DEBOUNCE = 1.5
+	local promptBusy: { [BasePart]: boolean } = {}
+
+	local function wirePromptPart(inst: Instance)
+		if not inst:IsA("BasePart") then return end
+		if inst:GetAttribute(PROMPT_PASS_ATTR) == nil then return end
+		inst.Touched:Connect(function(obj: Instance)
+			if not obj:IsDescendantOf(localPlayer.Character) then return end
+			local passId = inst:GetAttribute(PROMPT_PASS_ATTR)
+			if type(passId) ~= "number" then return end
+			if promptBusy[inst] then return end
+			promptBusy[inst] = true
+			task.delay(PROMPT_DEBOUNCE, function()
+				promptBusy[inst] = nil
+			end)
+			ProductService.PromptGamePass(passId)
+		end)
+	end
+
 	function ProductService.Init()
 		MarketplaceService.PromptProductPurchaseFinished:Connect(
 			function(userId: number, productId: number, wasPurchased: boolean)
@@ -167,6 +190,12 @@ if RunService:IsClient() then
 				end
 			end
 		)
+
+		-- Wire existing PromptPass parts and any added later.
+		for _, inst in workspace:GetDescendants() do
+			wirePromptPart(inst)
+		end
+		workspace.DescendantAdded:Connect(wirePromptPart)
 	end
 end
 

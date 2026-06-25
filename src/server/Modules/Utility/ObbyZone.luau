@@ -37,18 +37,17 @@ end
 function ObbyZone.New(obby: Model)
 	local self = setmetatable({}, ObbyZone)
 
-	self.startPart = obby.Start :: Part
-	assert(self.startPart)
-	self.endPart = obby.End :: Part
-	assert(self.endPart)
-	self.deathPart = obby.Death :: Part
-	assert(self.deathPart)
-	self.prize = (obby.Settings.Prize :: NumberValue).Value
-	assert(self.prize)
-	-- Optional: a nocollide volume enveloping the whole obby; while a player overlaps it
-	-- their walkspeed is forced to OBBY_WALK_SPEED, restored to default on exit.
 	local checkpoints = obby:FindFirstChild("Checkpoints")
+	self.startPart = checkpoints and checkpoints:FindFirstChild("Start") :: BasePart
+	self.endPart = checkpoints and checkpoints:FindFirstChild("End") :: BasePart
+	self.deathPart = checkpoints and checkpoints:FindFirstChild("Death") :: BasePart
 	self.inPart = checkpoints and checkpoints:FindFirstChild("In") :: BasePart?
+
+	assert(self.startPart)
+	assert(self.endPart)
+	assert(self.deathPart)
+
+	self.prize = (checkpoints:WaitForChild("Settings"):WaitForChild("Prize") :: NumberValue).Value
 	self.debounce = {} :: { [number]: true }
 	-- Players currently inside the In volume (a part can touch via several limbs, so we
 	-- ref-count touches to know when the body has actually fully left).
@@ -83,6 +82,7 @@ function ObbyZone.New(obby: Model)
 
 	if self.inPart then
 		table.insert(self.connections, self.inPart.Touched:Connect(function(part: BasePart)
+			print("in")
 			local player, humanoid = getHumanoid(part)
 			if not (player and humanoid) then
 				return

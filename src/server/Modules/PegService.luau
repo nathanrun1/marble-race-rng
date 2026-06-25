@@ -26,7 +26,7 @@ local COLOR_TWEEN = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirecti
 -- How many we add is a run of coin flips with a halving chance: 50% for the first,
 -- 25% for a second, 12.5% for a third, and so on — and the first failure stops the run.
 local DOUBLE_HOT_FIRST_CHANCE = 0.5
-local DOUBLE_HOT_HEAT = Config.Pegs.HotHeat * 2
+local DOUBLE_HOT_HEAT = Config.Pegs.HotHeat * 3
 local DOUBLE_HOT_FIRE_NAME = "DoubleHotFire"
 
 -- Heat values are fixed per category and live in Config.Pegs (we don't vary within

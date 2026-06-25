@@ -16,6 +16,7 @@ local Config = require(RS.Shared.Config)
 local StringUtils = require(RS.Shared.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
 local ScoreUI = require(RS.Shared.ScoreUI)
+local AnnounceUI = require(RS.Shared.AnnounceUI)
 local ProductService = require(RS.Shared.ProductService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
@@ -59,6 +60,7 @@ local function grantStarterPack(player: Player)
 	DataService.SaveNow(player) -- persist the grant promptly (real money)
 
 	SoundService.PlayForClient(player, { soundId = Config.Sounds.Upgrade })
+	AnnounceUI.Announce(player, "Starter Pack Claimed!", Color3.fromRGB(255, 215, 0))
 	ScoreUI.PostMessage(
 		player,
 		"Starter Pack Bonus! " .. StringUtils.FormatMoney(Config.StarterPack.Balance),

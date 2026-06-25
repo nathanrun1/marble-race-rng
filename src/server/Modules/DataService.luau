@@ -40,7 +40,7 @@ local DataService = {}
 -- systems run post-load work (e.g. granting a game pass to an existing owner).
 DataService.Loaded = Signal.new()
 
-local STORE_NAME = "PlayerData_v1"
+local STORE_NAME = "PlayerData_v2"
 local KEY_PREFIX = "player_"
 local MAX_TRIES = 4               -- retries for a save/release op
 local LOCK_STALE = 600            -- seconds before a lock is taken with no handshake (clearly abandoned)

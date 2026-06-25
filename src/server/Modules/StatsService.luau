@@ -22,6 +22,7 @@ export type Stats = {
 	upgradesPurchased: number,
 	cashMultiplier: number,
 	ownsStarterPack: boolean,
+	lastGroupRewardClaim: number, -- os.time() of the last group-reward claim (0 = never)
 }
 
 -- stats[userId] = Stats
@@ -31,7 +32,7 @@ local stats: { [number]: Stats } = {}
 StatsService.Changed = Signal.new()
 
 local function defaults(): Stats
-	return { upgradesPurchased = 0, cashMultiplier = 1, ownsStarterPack = false }
+	return { upgradesPurchased = 0, cashMultiplier = 1, ownsStarterPack = false, lastGroupRewardClaim = 0 }
 end
 
 -- Non-asserting: returns live state, or fresh defaults if the player isn't loaded yet
@@ -70,6 +71,11 @@ function StatsService.OwnsStarterPack(player: Player): boolean
 	return get(player.UserId).ownsStarterPack
 end
 
+-- os.time() of the player's last group-reward claim (0 if they've never claimed).
+function StatsService.GetLastGroupRewardClaim(player: Player): number
+	return get(player.UserId).lastGroupRewardClaim
+end
+
 --------------------------------------------------------------------------------
 -- Writes (each announces)
 --------------------------------------------------------------------------------
@@ -98,6 +104,16 @@ function StatsService.SetCashMultiplier(player: Player, value: number)
 	announce(player)
 end
 
+-- Stamp the group-reward claim time to now (server-authoritative cooldown anchor).
+function StatsService.SetGroupRewardClaimedNow(player: Player)
+	local s = stats[player.UserId]
+	if not s then
+		return
+	end
+	s.lastGroupRewardClaim = os.time()
+	announce(player)
+end
+
 function StatsService.SetOwnsStarterPack(player: Player, owns: boolean)
 	local s = stats[player.UserId]
 	if not s or s.ownsStarterPack == owns then
@@ -122,6 +138,9 @@ function StatsService.ApplyData(player: Player, saved: Stats?)
 		end
 		if type(saved.ownsStarterPack) == "boolean" then
 			s.ownsStarterPack = saved.ownsStarterPack
+		end
+		if type(saved.lastGroupRewardClaim) == "number" then
+			s.lastGroupRewardClaim = saved.lastGroupRewardClaim
 		end
 	end
 	stats[player.UserId] = s
