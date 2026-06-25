@@ -40,5 +40,5 @@ BallTuningPreview.Init()
 JackpotGateUI.Init()
 GroupRewardUI.Init()
 
--- Start looping background music on join (no-op until Config.Sounds.Music is set).
-SoundService.SetBackgroundMusic(Config.Sounds.Music)
+-- Start shuffle-play background music on join (each track once per cycle, then reshuffle).
+SoundService.SetBackgroundPlaylist(Config.BackgroundPlaylist)

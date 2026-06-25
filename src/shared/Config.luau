@@ -17,6 +17,18 @@ Config.Sounds = {
 	Music = "rbxassetid://9043887120"  
 }
 
+Config.BackgroundPlaylist = {
+	"rbxassetid://80978440935539", --  De Chill, Mami
+	"rbxassetid://1837347090", -- Push me Slow
+	"rbxassetid://71174590381361", -- Electronics Heart
+	"rbxassetid://102039057339088", -- Zero Gravity
+	"rbxassetid://98191313530605", -- Orbital Drift
+	"rbxassetid://106258110802472", -- Docking Sequence
+	"rbxassetid://71057809016365", -- Re-Entry
+	"rbxassetid://135680753939150", -- Digital Detox
+	"rbxassetid://121501933641667" -- Flow State
+}
+
 Config.Tags = {
 	ScoreTarget = "ScoreTarget",       -- Scores on ball collision
 	DestroyTarget = "DestroyTarget",   -- Destroys ball on collision

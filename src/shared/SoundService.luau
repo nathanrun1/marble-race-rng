@@ -175,31 +175,103 @@ end
 ----------------------------------------------------------------------------------
 
 local MUSIC_VOLUME = 0.2
--- The single looping background track, managed independently of the SFX pool so it
--- can be replaced/stopped and muted separately from one-shot sounds.
+-- The currently-playing background track, managed independently of the SFX pool so it
+-- can be replaced/stopped and muted separately from one-shot sounds. With a playlist this
+-- always points at whichever track is playing right now (so mute/stop apply seamlessly).
 local backgroundMusic: Sound? = nil
 local musicMuted = false
 
--- Play `soundId` on loop as the background track, replacing whatever SetBackgroundMusic
--- was already playing. Self-contained (not routed through Play), so the SFX mute never
--- touches it. An empty id just clears the current track (e.g. unset Config.Sounds.Music).
+-- Playlist (shuffle-play) state. `playlistGen` is a cancellation token: StopBackgroundMusic
+-- bumps it, so a pending track-advance (queued on the previous track's Ended) is ignored.
+local playlistTracks: { string } = {}
+local playlistQueue: { string } = {} -- remaining tracks in the current shuffled cycle
+local playlistGen = 0
+local lastPlayed: string? = nil
+
+local function makeMusicSound(soundId: string, looped: boolean): Sound
+	local sound = Instance.new("Sound")
+	sound.Name = "BackgroundMusic"
+	sound.SoundId = soundId
+	sound.Looped = looped
+	sound.Volume = if musicMuted then 0 else MUSIC_VOLUME
+	sound.Parent = POOL_HOLDER
+	return sound
+end
+
+-- Fisher–Yates in place.
+local function shuffle(t: { string })
+	for i = #t, 2, -1 do
+		local j = math.random(i)
+		t[i], t[j] = t[j], t[i]
+	end
+end
+
+-- Play `soundId` on loop as the background track, replacing whatever was already playing.
+-- Self-contained (not routed through Play), so the SFX mute never touches it. An empty id
+-- just clears the current track.
 function SoundService.SetBackgroundMusic(soundId: string)
 	SoundService.StopBackgroundMusic()
 	if soundId == "" then
 		return
 	end
-	local sound = Instance.new("Sound")
-	sound.Name = "BackgroundMusic"
-	sound.SoundId = soundId
-	sound.Looped = true
-	sound.Volume = if musicMuted then 0 else MUSIC_VOLUME
-	sound.Parent = POOL_HOLDER
+	local sound = makeMusicSound(soundId, true)
 	backgroundMusic = sound
 	sound:Play()
 end
 
--- Stop and clear the current background track (no-op if none is playing).
+-- Advance the shuffle-play playlist. Each cycle plays every track exactly once (in a fresh
+-- shuffle); when the cycle empties we reshuffle, avoiding an immediate repeat across the
+-- boundary. `gen` guards against a stale advance after Stop/replace.
+local function playNextInPlaylist(gen: number)
+	if gen ~= playlistGen or #playlistTracks == 0 then
+		return
+	end
+	if #playlistQueue == 0 then
+		for _, id in playlistTracks do
+			table.insert(playlistQueue, id)
+		end
+		shuffle(playlistQueue)
+		-- Don't let the next cycle open with the track that just closed the last one.
+		if #playlistQueue > 1 and playlistQueue[1] == lastPlayed then
+			playlistQueue[1], playlistQueue[2] = playlistQueue[2], playlistQueue[1]
+		end
+	end
+
+	local soundId = table.remove(playlistQueue, 1) :: string
+	lastPlayed = soundId
+	local sound = makeMusicSound(soundId, false)
+	backgroundMusic = sound
+	sound.Ended:Once(function()
+		if gen ~= playlistGen then
+			return -- stopped/replaced while this track was playing
+		end
+		sound:Destroy()
+		if backgroundMusic == sound then
+			backgroundMusic = nil
+		end
+		playNextInPlaylist(gen)
+	end)
+	sound:Play()
+end
+
+-- Start shuffle-playing `soundIds` as the background music, replacing any current track:
+-- every track plays once per cycle (random order, no repeats within a cycle), then the
+-- cycle reshuffles and repeats forever. Empty list just clears the current track.
+function SoundService.SetBackgroundPlaylist(soundIds: { string })
+	SoundService.StopBackgroundMusic()
+	playlistTracks = table.clone(soundIds)
+	if #playlistTracks == 0 then
+		return
+	end
+	playNextInPlaylist(playlistGen)
+end
+
+-- Stop and clear the current background track and any running playlist (no-op if silent).
 function SoundService.StopBackgroundMusic()
+	playlistGen += 1 -- cancel any pending playlist advance
+	table.clear(playlistTracks)
+	table.clear(playlistQueue)
+	lastPlayed = nil
 	if backgroundMusic then
 		backgroundMusic:Stop()
 		backgroundMusic:Destroy()
