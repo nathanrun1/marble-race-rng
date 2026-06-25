@@ -41,12 +41,14 @@ Config.Attributes = {
 	BatchId = "BatchId",               -- Batch this ball belongs to (per-player combo settlement)
 
 	-- Obstacle Behaviour
-	ObstacleRotate = "ORotate"         -- Obstacle rotates by given angles (Vector3)
+	ObstacleRotate = "ORotate",                     -- Obstacle rotates by given angles (Vector3)
+	ObstacleAlternation = "OAlternate",          	-- Obstacle "alternates", i.e. rotates this angle in one direction, then the other (from the original orientation), repeat
+	OObstacleAlternationSpeed = "OAlternateSpeed",  -- Speed of alternation
 }
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 24,
+	MinCombo = 10,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 1.25,
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
@@ -351,6 +353,11 @@ Config.StarterPack = {
 	PostPrestigeFreeTier = 1,  -- free tier on all tracks after each prestige (owners only)
 }
 
+Config.Obby = {
+	DefaultWalkSpeed = 32,  -- restored when a player leaves the obby area
+	ObbyWalkSpeed = 16,     -- forced while inside the Checkpoints.In volume
+}
+
 table.freeze(Config.Tags)
 table.freeze(Config.Attributes)
 table.freeze(Config.Scoring)
@@ -370,4 +377,5 @@ table.freeze(Config.Products)
 table.freeze(Config.GamePasses)
 table.freeze(Config.CashMultiplier)
 table.freeze(Config.StarterPack)
+table.freeze(Config.Obby)
 return Config

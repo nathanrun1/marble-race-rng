@@ -17,8 +17,10 @@ local CameraService = require(PlayerScripts:WaitForChild("CameraService"))
 local MiscUI = require(PlayerScripts:WaitForChild("MiscUI"))
 local LauncherView = require(PlayerScripts:WaitForChild("LauncherView"))
 local BallTuningPreview = require(PlayerScripts:WaitForChild("BallTuningPreview"))
+local JackpotGateUI = require(PlayerScripts:WaitForChild("JackpotGateUI"))
 local Config = require(RS.Shared:WaitForChild("Config"))
 
+print("Bootstrapping services...")
 UpgradeShop.Init()
 BallEffects.Init()
 ScoreUI.Init()
@@ -32,6 +34,7 @@ CameraService.Init()
 MiscUI.Init()
 LauncherView.Init()
 BallTuningPreview.Init()
+JackpotGateUI.Init()
 
 -- Start looping background music on join (no-op until Config.Sounds.Music is set).
 SoundService.SetBackgroundMusic(Config.Sounds.Music)
