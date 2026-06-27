@@ -14,6 +14,7 @@ local SSS = game:GetService("ServerScriptService")
 
 local StringUtils = require(ReplicatedStorage.Shared.StringUtils)
 local Config = require(ReplicatedStorage.Shared.Config)
+local AnimationService = require(ReplicatedStorage.Shared.AnimationService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local DataService = require(SSS.Scripts.Modules.DataService)
 
@@ -39,11 +40,46 @@ local rebirthsBoard = {
     item = rebirthsScroll:WaitForChild("Item"),
 }
 
--- The top-3 podium statues are built + animated CLIENT-SIDE (see client PodiumStatues): a
--- KeyframeSequence dance can only be driven by manipulating Motor6Ds, which a client can only
--- do on a rig it owns — a server-built NPC's pose just gets overwritten by replication. So the
--- server only broadcasts who the top 3 are; each client builds its own statues from the marker
--- rigs (FirstRig/SecondRig/ThirdRig) under the Podium and dances them locally.
+-- Podium slots: each top-3 player is shown as a freshly built avatar that loops a (published)
+-- emote. The authored rigs (FirstRig/SecondRig/ThirdRig) are only markers — we read their pivot
+-- CFrame, scale, and Username billboard, then delete them and spawn built avatars in their place.
+local podium = leaderboardsRoot:WaitForChild("Rebirths"):WaitForChild("Podium")
+
+type PodiumSlot = {
+    cframe: CFrame,
+    footY: number,               -- world Y of the marker's feet (bbox bottom), to stand the statue on
+    scale: number,
+    animationId: string,         -- emote asset id this slot loops (Config.Podium.Animations)
+    nameTemplate: BillboardGui?, -- styled Username billboard lifted off the marker rig
+    userId: number?,             -- who's currently shown (skip rebuild if unchanged)
+    model: Model?,               -- the live built-avatar statue
+    anim: AnimationService.Handle?,
+}
+
+local SLOT_DEFS = {
+    { rig = "FirstRig", anim = Config.Podium.Animations.First },
+    { rig = "SecondRig", anim = Config.Podium.Animations.Second },
+    { rig = "ThirdRig", anim = Config.Podium.Animations.Third },
+}
+
+local podiumSlots: { PodiumSlot } = {}
+for slot, def in SLOT_DEFS do
+    local rig = podium:WaitForChild(def.rig)
+    local nameTemplate: BillboardGui? = nil
+    local existingName = rig:FindFirstChild("Username", true)
+    if existingName and existingName:IsA("BillboardGui") then
+        nameTemplate = existingName:Clone()
+    end
+    local bbCF, bbSize = rig:GetBoundingBox()
+    podiumSlots[slot] = {
+        cframe = rig:GetPivot(),
+        footY = bbCF.Position.Y - bbSize.Y / 2,
+        scale = if rig:IsA("Model") then rig:GetScale() else 1,
+        animationId = def.anim,
+        nameTemplate = nameTemplate,
+    }
+    rig:Destroy() -- marker consumed; built avatars take its place
+end
 
 -- Persistent leaderboard via DataService (false in Studio → per-server fallback below).
 local enabled = DataService.LeaderboardsEnabled()
@@ -85,24 +121,109 @@ local function gradientFor(rank: number): ColorSequence
     return NORM_SEQ
 end
 
--- Latest top-3, broadcast to clients (who build the statues). Each entry: { userId, name }.
-type PodiumEntry = { userId: number, name: string }
-local latestPodium: { PodiumEntry } = {}
-local podiumRemote: RemoteEvent? = nil
-
--- Send the current top 3 (resolving names server-side so clients don't re-hit the API) to all
--- clients; they build/animate the statues. podiumIds[rank] = userId (sparse if <3 players).
-local function broadcastPodium(podiumIds: { number })
-    local top: { PodiumEntry } = {}
-    for rank = 1, 3 do
-        local uid = podiumIds[rank]
-        if uid then
-            top[rank] = { userId = uid, name = resolveName(uid) }
-        end
+-- Style the slot's Username billboard like the leaderboard row for that rank (same per-rank
+-- gradient + the template's text colour) and set the player's name.
+local function styleNameGui(gui: BillboardGui, slot: number, userId: number)
+    local label = gui:FindFirstChild("TextLabel")
+    if not (label and label:IsA("TextLabel")) then
+        return
     end
-    latestPodium = top
-    if podiumRemote then
-        podiumRemote:FireAllClients(top)
+    label.TextColor3 = rebirthsBoard.item.Username.TextColor3
+    local grad = label:FindFirstChildOfClass("UIGradient")
+    if grad then
+        grad.Color = gradientFor(slot)
+    end
+    task.spawn(function()
+        label.Text = resolveName(userId)
+    end)
+end
+
+-- Stop showing a slot's statue (unoccupied rank).
+local function clearSlot(slot: number)
+    local s = podiumSlots[slot]
+    if s.anim then
+        s.anim.Stop()
+        s.anim = nil
+    end
+    if s.model then
+        s.model:Destroy()
+        s.model = nil
+    end
+    s.userId = nil
+end
+
+-- Build the player's avatar, pose it on the slot, and loop its emote. Yields (network), so it's
+-- called inside task.spawn; the slot's userId is claimed before the yield to avoid double-builds.
+local function buildStatue(slot: number, userId: number)
+    local s = podiumSlots[slot]
+
+    local ok, model = pcall(function()
+        return Players:CreateHumanoidModelFromUserId(userId)
+    end)
+    if not ok or not model then
+        warn(("PhysicalRebirthsLeaderboard: CreateHumanoidModelFromUserId failed for %d: %s"):format(userId, tostring(model)))
+        if s.userId == userId then
+            s.userId = nil
+        end
+        return
+    end
+    if s.userId ~= userId then
+        model:Destroy() -- slot moved on while we were fetching
+        return
+    end
+
+    model.Name = "PodiumStatue" .. slot
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    end
+
+    local hrp = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if hrp then
+        hrp.Anchored = true
+    end
+    model:PivotTo(s.cframe)
+    model:ScaleTo(s.scale)
+    -- Align by feet (marker pivot is bbox-centre; a built avatar pivots at the HRP).
+    local abbCF, abbSize = model:GetBoundingBox()
+    model:PivotTo(model:GetPivot() + Vector3.new(0, s.footY - (abbCF.Position.Y - abbSize.Y / 2), 0))
+
+    if s.nameTemplate then
+        local nameGui = s.nameTemplate:Clone()
+        styleNameGui(nameGui, slot, userId)
+        nameGui.Parent = hrp or model
+    end
+
+    model.Parent = podium
+
+    local handle: AnimationService.Handle? = nil
+    if s.animationId ~= "" then
+        handle = AnimationService.Play(model, s.animationId, { looped = true })
+    end
+
+    -- Swap in the finished statue (avoids a visible gap), retiring the previous one.
+    if s.anim then
+        s.anim.Stop()
+    end
+    if s.model then
+        s.model:Destroy()
+    end
+    s.model = model
+    s.anim = handle
+end
+
+-- Place the top 1/2/3 players on the podium. podiumIds[rank] = userId (sparse if <3 players);
+-- an unoccupied slot is cleared.
+local function applyPodium(podiumIds: { number })
+    for slot in podiumSlots do
+        local userId = podiumIds[slot]
+        local s = podiumSlots[slot]
+        if not userId then
+            clearSlot(slot)
+        elseif s.userId ~= userId then
+            s.userId = userId -- claim before the async build
+            task.spawn(buildStatue, slot, userId)
+        end
     end
 end
 
@@ -133,7 +254,7 @@ local function renderEntries(entries: { Entry })
         end
     end
 
-    broadcastPodium(podiumIds)
+    applyPodium(podiumIds)
 end
 
 -- Studio (no OrderedDataStore): rank the players currently in this server by their live
@@ -220,21 +341,6 @@ local function init()
         Players.PlayerRemoving:Connect(scheduleStudioRefresh)
     end
 
-    -- Podium remotes: clients build the statues, so push them the top 3. The RemoteEvent carries
-    -- live updates; the RemoteFunction lets a just-joined client fetch the current standing
-    -- without waiting for the next refresh.
-    local re = Instance.new("RemoteEvent")
-    re.Name = "PodiumTop"
-    re.Parent = ReplicatedStorage.Remote
-    podiumRemote = re
-
-    local rf = Instance.new("RemoteFunction")
-    rf.Name = "GetPodiumTop"
-    rf.Parent = ReplicatedStorage.Remote
-    rf.OnServerInvoke = function()
-        return latestPodium
-    end
-
     -- Dev hook (DevService /podium): force a userId onto all three podium spots so the statue
     -- build/pose/scale can be eyeballed without three rebirthed players. Server-only Bindable,
     -- so it's unreachable from clients. The next real refresh overwrites it.
@@ -242,7 +348,7 @@ local function init()
     devEvent.Name = "PodiumDevTest"
     devEvent.Parent = ServerStorage
     devEvent.Event:Connect(function(userId: number)
-        broadcastPodium({ userId, userId, userId })
+        applyPodium({ userId, userId, userId })
     end)
 
     refreshRebirths()

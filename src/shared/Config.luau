@@ -444,14 +444,21 @@ table.freeze(Config.Products)
 table.freeze(Config.GamePasses)
 table.freeze(Config.CashMultiplier)
 table.freeze(Config.StarterPack)
+
+Config.Animations = {
+	ElectroSwing = "81301976341047",
+	FancyFeet = "88664003295065",
+	Pumpernickel = "81151223555196"
+}
+
 -- Rebirths podium (the top-3 statues by Workspace.Leaderboards.Rebirths.Podium). Each statue
 -- loops an animation — a KeyframeSequence by NAME under ReplicatedStorage.Assets.Animations
 -- (no upload needed; played client-side via AnimationService). Leave "" for no animation.
 Config.Podium = {
 	Animations = {
-		First = "Electro Shuffle",  -- 1st place
-		Second = "Fancy Feet",      -- 2nd place
-		Third = "Fresh",            -- 3rd place
+		First = Config.Animations.ElectroSwing,  -- 1st place
+		Second = Config.Animations.FancyFeet,      -- 2nd place
+		Third = Config.Animations.Pumpernickel,            -- 3rd place
 	},
 }
 
@@ -509,6 +516,7 @@ Config.Tutorial = {
 	},
 }
 
+table.freeze(Config.Animations)
 table.freeze(Config.Obby)
 table.freeze(Config.GroupReward)
 table.freeze(Config.Podium)
