@@ -6,7 +6,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SSS = game:GetService("ServerScriptService")
 
 local StringUtils = require(ReplicatedStorage.Shared.StringUtils)
+local Config = require(ReplicatedStorage.Shared.Config)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+
+-- Admins are hidden from leaderboards: no item is created for them.
+local function isExcluded(userId: number): boolean
+    return table.find(Config.Admins, userId) ~= nil
+end
 
 local GOLD_SEQ = ColorSequence.new(Color3.fromRGB(254,256,107), Color3.fromRGB(187,170,56))
 local SILV_SEQ = ColorSequence.new(Color3.fromRGB(255,255,255), Color3.fromRGB(162,183,190))
@@ -53,6 +59,7 @@ end
 
 local function initServerCoins()
     Players.PlayerAdded:Connect(function(player: Player)
+        if isExcluded(player.UserId) then return end
         local playerItem = serverCoinsBoard.item:Clone()
         playerItem.Visible = true
         playerItem.Parent = serverCoinsBoard.itemsParent

@@ -9,6 +9,7 @@ Config.Sounds = {
 	Jackpot = "rbxassetid://84581872132549",
 	Launch = "rbxassetid://87587182495338",
 	Combo = "rbxassetid://112485190367588",
+	Combo2 = "rbxassetid://123849658867902",
 	Bounce = "rbxassetid://107174499116544",
 	Hot = "rbxassetid://115023474688736",
 	Fire = "rbxassetid://105137237689649",
@@ -47,6 +48,7 @@ Config.Attributes = {
 	Cooldown = "Cooldown",             -- Ball same-target repeat score cooldown
 
 	PointMul = "PointMul",             -- If defined, a destroy target's point multiplier
+	DestroyTargetID = "DestroyTargetID", -- Integer id identifying which destroy target (slot) a ball banked at
 	PegHeat = "PegHeat",               -- Peg heat (signed): hot >0, cold <0. Accumulated per ball, applied value-proportionally at banking, scaled by the player's PegHeat tier.
 
 	-- Per-ball config, set at spawn from the owner's loadout (see ProfileService)
@@ -63,15 +65,16 @@ Config.Attributes = {
 
 Config.Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 15,
+	MinCombo = 17,  -- lowered 8→5: the ball-speed cap cut bounce counts (~18→11), so combo needs an easier gate
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 1.25,
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
 	-- (a ball wedged on geometry must not live forever). Tune above a normal fall.
-	MaxBallLifetime = 25,
+	MaxBallLifetime = 35,
 	-- Jackpot payout: hitting a JackpotTarget adds JackpotMultiplier × the ball's
 	-- otherwise-final banked value (so total = banked × (1 + this)). Tune.
-	JackpotMultiplier = 20	,
+	-- Lowered 20→12: the jackpot edge was >half the no-build slot EV (the bet-spam exploit).
+	JackpotMultiplier = 12,
 }
 
 -- Peg-field heat values PegService writes to each peg's PegHeat attribute. Fixed
@@ -83,8 +86,29 @@ Config.Pegs = {
 	NeutralHeat = 0.0,
 }
 
+-- Destroy-target (slot) payouts, keyed by the part's DestroyTargetID attribute.
+-- DestroyTargetService applies these on load: a number -> set the PointMul attribute;
+-- the Jackpot sentinel -> tag the slot JackpotTarget (pays via Scoring.JackpotMultiplier)
+-- instead of a PointMul. It also writes the multiplier onto the slot's
+-- Parent.Display.SurfaceGui.TextLabel. Palindrome: id i and 17-i match.
+Config.DestroyTargets = {
+	Jackpot = "JACKPOT", -- sentinel: this slot is a JackpotTarget, not a PointMul slot
+	Multipliers = {
+		[0] = "JACKPOT", [1] = 2.2, [2] = 1.1, [3] = 0.55, [4] = 0.35, [5] = 0.25,
+		[6] = 0.17, [7] = 0.12, [8] = 0.08, [9] = 0.08, [10] = 0.12, [11] = 0.17,
+		[12] = 0.25, [13] = 0.35, [14] = 0.55, [15] = 1.1, [16] = 2.2, [17] = "JACKPOT",
+	} :: { [number]: number | string },
+}
+
 Config.Currency = {
 	StartingBalance = 100,
+}
+
+-- Ball physics caps. MaxSpeed bounds a ball's velocity magnitude (studs/sec) while it
+-- falls — BallService clamps each frame so a ball can't accelerate past it (keeps fast
+-- drops/bounces from blowing through the board or feeling uncontrolled). Tune.
+Config.Ball = {
+	MaxSpeed = 100,
 }
 
 Config.Groups = {
@@ -92,10 +116,13 @@ Config.Groups = {
 	ScoreBoost = 0.10, -- multiplier bonus for group members (0.10 = +10%)
 }
 
+-- Admin UserIds: granted dev commands (DevService) and hidden from every leaderboard.
+Config.Admins = { 89831196, 338455474, 110797589 }
+
 Config.Prestige = {
 	Scale      = 10000, -- denominator in PP formula
 	Exponent   = 0.35,  -- sublinear compression
-	CostBase   = 30,    -- PP cost of first prestige (3× the prior 10; triples every tier)
+	CostBase   = 50,    -- PP cost of first prestige (tuned so an optimal build prestiges ~30 min in)
 	CostGrowth = 2.0,  -- geometric cost multiplier per prestige level
 	MultPer    = 1.25,  -- global banked multiplier per prestige (multiplicative)
 	NoScoreSeconds = 5, -- post-prestige no-score window (exploit guard)
@@ -129,31 +156,42 @@ Config.Economy = {
 -- Caps/Widths lists also cap the tier; unlisted tracks are unbounded.
 Config.Upgrades = {
 	-- maxBet = Economy.StartMaxBet * (PerTier ^ tier)   [cap for loadout.Bet]
+	-- maxBet grows 1.5×/tier (was 4.05): ×4 per tier made income explode far past cost,
+	-- so bet-spam snowballed instantly. Cost grows 1.9× so tiers gate on time, not trivially.
 	MaxBet = {
-		PerTier = Config.Economy.BasePriceGrowth * 0.9,
-		Cost = { Base = 250, Growth = Config.Economy.BasePriceGrowth },  -- Growth > 2 to outpace maxBet
+		PerTier = 1.5,
+		Cost = { Base = 250, Growth = 1.9 },
 		Name = "Max Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰"
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
+	-- Combo bonus is an ABSOLUTE point add (combo × this), free of the bet — the low-bet/high-
+	-- combo "chaos" lever (big bouncy balls bounce a lot). Base is deliberately TINY so the
+	-- tier-0/untiered bonus is negligible (a few points) and can't carry no-build/early play
+	-- past the intended bleed — you must INVEST. The steep PerTier (1.85, uncapped) does the
+	-- work: by endgame the flat combo income keeps pace with the bet-exponential economy. Cost
+	-- grows 1.9× so it's gated, not a runaway.
 	FlatRate = {
-		Base = 0.1, PerTier = Config.Economy.BasePriceGrowth * 0.5,
-		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Combo", Desc = "More points per bounce during a combo.",
+		Base = 0.2, PerTier = 1.85,
+		Cost = { Base = 260, Growth = 1.9 },
+		Name = "Combo", Desc = "More cash per bounce during a combo ("..Config.Scoring.MinCombo.." or more)",
 		Icon = "⚡"
 	},
 	-- baseAdditive = Base + C1 * tier + C2 * tier^2 + C3 * tier^3
+	-- Flattened to linear +5%/tier (was cubic → ×26 at tier 12, which dwarfed every other
+	-- lever and exploded income). Now +60% at max: a real lever, not a runaway.
 	BaseAdditive = {
-		Base = 0.05, C1 = 0.05, C2 = 0.05, C3 = 0.01,
-		Cost = { Base = 215, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Base Bonus", Desc = "Boost your final slot payout.",
+		Base = 0.0, C1 = 0.05, C2 = 0.0, C3 = 0.0,
+		Cost = { Base = 300, Growth = 1.7 },
+		Name = "Base Bonus", Desc = "Boost your marble cash payout.",
 		Icon = "➕"
 	},
-	-- Minimum delay between launches
+	-- Minimum delay between launches. PerTier 0.67→0.82: gentler throughput ramp. Cost growth
+	-- 4.5→1.9: at 4.5 it was never ROI-positive (throughput investment was dead); now buyable.
 	Frequency = {
-		Base = 2, PerTier = 0.67,
+		Base = 2, PerTier = 0.82,
 		MaxTier = 12,
-		Cost = { Base = 230, Growth = Config.Economy.BasePriceGrowth },
+		Cost = { Base = 230, Growth = 1.9 },
 		Name = "Launch Delay", Desc = "Decrease time between launches",
 		Icon = "🔄"
 	},
@@ -162,8 +200,8 @@ Config.Upgrades = {
 	-- (and random cold paths cost more). Targeting channel; only pays with aim.
 	PegHeat = {
 		PerTier = 0.05,  -- INFERRED magnitude; tune against the heat map
-		Cost = { Base = 180, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Peg Sense", Desc = "Hot and cold pegs affect you more strongly.",
+		Cost = { Base = 220, Growth = 1.7 },
+		Name = "Heat Sense", Desc = "Hot and cold obstacles affect you more strongly.",
 		Icon = "🔥"
 	},
 }
@@ -207,7 +245,7 @@ Config.Axes = {
 			{ Min = 0.0, Max = 1.0 },
 		},
 		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Bounciness", Desc = "How bouncy the ball is. More bounciness increases variance.",
+		Name = "Bounciness", Desc = "How bouncy the marble is.",
 		Icon = "💨"
 	},
 	Size = {
@@ -221,14 +259,14 @@ Config.Axes = {
 			{ Min = 0.63, Max = 0.85 },
 			{ Min = 0.61, Max = 0.87 },
 			{ Min = 0.59, Max = 0.89 },
-			{ Min = 0.57, Max = 0.91 },
+			{ Min = 0.57, Max = 0.91 },  -- (Size ranges unchanged)
 			{ Min = 0.55, Max = 0.94 },
 			{ Min = 0.53, Max = 0.96 },
 			{ Min = 0.51, Max = 0.98 },
 			{ Min = 0.5, Max = 1 },
 		},
-		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Ball Size", Desc = "Unlock different ball sizes.",
+		Cost = { Base = 200, Growth = 1.8 },
+		Name = "Marble Size", Desc = "Unlock different marble sizes.",
 		Icon = "◯"
 	},
 	Angle = {
@@ -249,7 +287,7 @@ Config.Axes = {
 			{ Min = -math.rad(65.0), Max = math.rad(65.0) },
 		},
 		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Angle", Desc = "Launch angle.",
+		Name = "Angle", Desc = "Tune the launch direction.",
 		Icon = "🏹"
 	},
 	Arc = {
@@ -387,8 +425,12 @@ table.freeze(Config.Tags)
 table.freeze(Config.Attributes)
 table.freeze(Config.Scoring)
 table.freeze(Config.Pegs)
+table.freeze(Config.DestroyTargets)
+table.freeze(Config.DestroyTargets.Multipliers)
 table.freeze(Config.Currency)
+table.freeze(Config.Ball)
 table.freeze(Config.Groups)
+table.freeze(Config.Admins)
 table.freeze(Config.Prestige)
 table.freeze(Config.Economy)
 table.freeze(Config.Upgrades)
@@ -402,14 +444,68 @@ table.freeze(Config.Products)
 table.freeze(Config.GamePasses)
 table.freeze(Config.CashMultiplier)
 table.freeze(Config.StarterPack)
--- Rebirths podium (the top-3 statues by Workspace.Leaderboards.Rebirths.Podium). Each is a
--- single-pose animation the built avatar plays (looped, frozen on the pose). Fill in the
--- published animation asset ids; leave "" to leave that statue un-posed (default stand).
+-- Rebirths podium (the top-3 statues by Workspace.Leaderboards.Rebirths.Podium). Each statue
+-- loops an animation — a KeyframeSequence by NAME under ReplicatedStorage.Assets.Animations
+-- (no upload needed; played client-side via AnimationService). Leave "" for no animation.
 Config.Podium = {
 	Animations = {
-		First = "rbxassetid://82922850819473",   -- pose for 1st place
-		Second = "rbxassetid://117571739958888",  -- pose for 2nd place
-		Third = "rbxassetid://109567698247034",   -- pose for 3rd place
+		First = "Electro Shuffle",  -- 1st place
+		Second = "Fancy Feet",      -- 2nd place
+		Third = "Fresh",            -- 3rd place
+	},
+}
+
+-- Tutorial sequence, played once on join (client TutorialService) until the player completes
+-- or skips it. Each step shows a medium-large message in a box with Skip / Next buttons, and
+-- can darken the screen except for a highlighted spot. Steps transition smoothly into one
+-- another.
+--   text        : the message (string).
+--   boxPosition : UDim2 centre of the message box (Scale). Defaults to lower-centre.
+--   highlight   : optional { Position = UDim2 (centre of the spot), Size = UDim2 (spot size) }.
+--                 Present = dim everything except this rect; absent = no dimming. The UDim2s
+--                 resolve like any screen UDim2 (Scale × viewport) but the Offset is multiplied
+--                 by the AutoScale factor — so you can author the spot in 1080p offset pos/size
+--                 to line up with AutoScaled UI elements (use the element's own UDim2 + size).
+--   camera      : optional { Position = Vector3, Orientation = Vector3 (deg), FieldOfView = number? }
+--                 scripted camera shot for the step (smoothly tweened); absent = default camera.
+-- UI Positions/sizes are Scale-based (0..1 of the screen) so they're resolution-independent.
+Config.Tutorial = {
+	Steps = {
+		{
+			text = "Welcome to Marble Race! Let's run through the basics.",
+			boxPosition = UDim2.fromScale(0.5, 0.5),
+		},
+		{
+			text = "Click this button to launch marbles. You can automatically launch by enabling Auto Mode.",
+			boxPosition = UDim2.fromScale(0.5, 0.6),
+			highlight = { Position = UDim2.fromScale(0.5, 0.895), Size = UDim2.fromScale(0.294, 0.199) },
+		},
+		{
+			text = "Land in the slots to bank cash. The bigger the slot multiplier, the better!",
+			camera = {
+				Position = Vector3.new(15.014, 47.023, -45.051),
+				Orientation = Vector3.new(-22.981, -179.694, -0),
+				FieldOfView = 70,
+			},
+		},
+		{
+			text = "Adjust your bet size here. Bet big to make more money!",
+			boxPosition = UDim2.fromScale(0.3, 0.6),
+			highlight = { Position = UDim2.fromOffset(198, 971), Size = UDim2.fromOffset(376, 214)},
+		},
+		{
+			text = "Tune your marble here: its size, bounciness, and aim.",
+			boxPosition = UDim2.fromScale(0.3, 0.5),
+			highlight = { Position = UDim2.fromOffset(135, 825), Size = UDim2.fromOffset(250, 90) },
+		},
+		{
+			text = "Spend your cash on upgrades, then rebirth for permanent boosts. Good luck!",
+			camera = {
+				Position = Vector3.new(-38.124, 55.946, -121.592),
+				Orientation = Vector3.new(-26.526, 45.613, 0),
+				FieldOfView = 70,
+			},
+		},
 	},
 }
 
@@ -417,4 +513,5 @@ table.freeze(Config.Obby)
 table.freeze(Config.GroupReward)
 table.freeze(Config.Podium)
 table.freeze(Config.Podium.Animations)
+table.freeze(Config.Tutorial)
 return Config

@@ -15,6 +15,7 @@
 local RS = game:GetService("ReplicatedStorage")
 
 local Signal = require(RS.Shared.Signal)
+local Config = require(RS.Shared.Config)
 
 local StatsService = {}
 
@@ -23,6 +24,7 @@ export type Stats = {
 	cashMultiplier: number,
 	ownsStarterPack: boolean,
 	lastGroupRewardClaim: number, -- os.time() of the last group-reward claim (0 = never)
+	completedTutorial: boolean,   -- whether the join tutorial has been finished/skipped
 }
 
 -- stats[userId] = Stats
@@ -32,7 +34,7 @@ local stats: { [number]: Stats } = {}
 StatsService.Changed = Signal.new()
 
 local function defaults(): Stats
-	return { upgradesPurchased = 0, cashMultiplier = 1, ownsStarterPack = false, lastGroupRewardClaim = 0 }
+	return { upgradesPurchased = 0, cashMultiplier = 1, ownsStarterPack = false, lastGroupRewardClaim = 0, completedTutorial = false }
 end
 
 -- Non-asserting: returns live state, or fresh defaults if the player isn't loaded yet
@@ -68,12 +70,21 @@ function StatsService.GetCashMultiplier(player: Player): number
 end
 
 function StatsService.OwnsStarterPack(player: Player): boolean
+	-- Admins never count as owning the starter pack, so none of its perks (post-prestige
+	-- free tiers, etc.) apply to them, even if they own the game pass.
+	if table.find(Config.Admins, player.UserId) then
+		return false
+	end
 	return get(player.UserId).ownsStarterPack
 end
 
 -- os.time() of the player's last group-reward claim (0 if they've never claimed).
 function StatsService.GetLastGroupRewardClaim(player: Player): number
 	return get(player.UserId).lastGroupRewardClaim
+end
+
+function StatsService.HasCompletedTutorial(player: Player): boolean
+	return get(player.UserId).completedTutorial
 end
 
 --------------------------------------------------------------------------------
@@ -114,6 +125,16 @@ function StatsService.SetGroupRewardClaimedNow(player: Player)
 	announce(player)
 end
 
+-- Mark the join tutorial as done (finished or skipped). Idempotent.
+function StatsService.SetCompletedTutorial(player: Player)
+	local s = stats[player.UserId]
+	if not s or s.completedTutorial then
+		return
+	end
+	s.completedTutorial = true
+	announce(player)
+end
+
 function StatsService.SetOwnsStarterPack(player: Player, owns: boolean)
 	local s = stats[player.UserId]
 	if not s or s.ownsStarterPack == owns then
@@ -142,6 +163,9 @@ function StatsService.ApplyData(player: Player, saved: Stats?)
 		if type(saved.lastGroupRewardClaim) == "number" then
 			s.lastGroupRewardClaim = saved.lastGroupRewardClaim
 		end
+		if type(saved.completedTutorial) == "boolean" then
+			s.completedTutorial = saved.completedTutorial
+		end
 	end
 	stats[player.UserId] = s
 	announce(player)
@@ -167,6 +191,14 @@ function StatsService.Init()
 	rf.OnServerInvoke = function(player: Player)
 		return StatsService.GetStats(player)
 	end
+
+	-- Client tells us once the join tutorial is finished or skipped, so it never replays.
+	local tutorialRE = Instance.new("RemoteEvent")
+	tutorialRE.Name = "CompleteTutorial"
+	tutorialRE.Parent = RS.Remote
+	tutorialRE.OnServerEvent:Connect(function(player: Player)
+		StatsService.SetCompletedTutorial(player)
+	end)
 end
 
 return StatsService

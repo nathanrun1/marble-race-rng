@@ -75,6 +75,8 @@ local loadedTrack: string? = nil
 -- The 3× boost grants 3 tiers, so it's only offered when at least 3 tiers remain.
 -- `boostButton` is bound at the bottom; loadShop captures it as a forward ref.
 local BOOST_TIERS = 3
+local BOOST_GLOW_GOLD = Color3.fromRGB(255, 200, 40)
+local BOOST_GLOW_WHITE = Color3.fromRGB(255, 255, 255)
 local boostButton: UIButton.Handle? = nil
 local boostAvailable = true
 
@@ -259,6 +261,8 @@ function loadShop(track: string): Info
         or (upgradeInfo.maxTier - upgradeInfo.tier) >= BOOST_TIERS
     if boostButton then
         boostButton.SetDisabled(not boostAvailable)
+        -- Pulse gold↔white to draw the eye while the 3× boost is purchasable.
+        boostButton.SetGlowing(boostAvailable, BOOST_GLOW_GOLD, BOOST_GLOW_WHITE)
     end
 
     loadedTrack = track

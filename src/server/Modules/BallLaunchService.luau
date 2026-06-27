@@ -14,6 +14,7 @@ local BallService = require(SSS.Scripts.Modules.BallService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local ProfileStats = require(RS.Shared.ProfileStats)
+local WarnUI = require(RS.Shared.WarnUI)
 local Config = require(RS.Shared.Config)
 
 local requestLaunch = RS.Remote.RequestLaunch
@@ -32,7 +33,7 @@ local LAUNCHER_ROT_PERIOD = Config.Launcher.RotationPeriod  -- full swivel perio
 -- the aim: Arc (swivel half-width) and Angle (the center the launcher swivels
 -- around, default 0 = straight down). Both are passed into deriveLaunchVelocity.
 local BASE_LAUNCH_DIR = Config.Launcher.BaseDirection   -- down-ramp; shared w/ client preview
-local LAUNCH_SPEED = 20                          -- studs/s initial speed
+local LAUNCH_SPEED = 60                          -- studs/s initial speed
 local LAUNCH_SPEED_VARIATION = 0.2              -- Launch speed can vary by up to this portion
 local LAUNCH_DIR_VARIATION = math.rad(10)                -- Launch angle can vary by up to this angle
 
@@ -88,7 +89,13 @@ local function launchFor(player: Player)
 	local loadout = ProfileService.GetLoadout(player)
 
 	if lastLaunch[userId] and os.clock() - lastLaunch[userId] < ProfileStats.GetLaunchDelay(upgrades) then return end  -- Launch too early
-	if CurrencyService.GetPoints(player) < loadout.Bet then return end  -- Can't afford launch
+	if CurrencyService.GetPoints(player) < loadout.Bet then
+		-- Can't afford: stamp the cooldown anyway so an auto-launcher only warns once per
+		-- launch-delay instead of spamming the notice every request.
+		lastLaunch[userId] = os.clock()
+		WarnUI.Warn(player, "Can't afford bet size!")
+		return
+	end
 	if BallService.GetLiveCount(userId) >= MAX_BALLS_PER_PLAYER then return end  -- Too many balls live
 
 	lastLaunch[userId] = os.clock()

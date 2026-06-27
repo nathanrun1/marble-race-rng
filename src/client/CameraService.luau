@@ -23,6 +23,9 @@ local activeTween: Tween? = nil
 
 type Shot = { Position: Vector3, Orientation: Vector3, FieldOfView: number? }
 
+-- An explicit one-off shot (e.g. a tutorial step) that overrides board/tuning while set.
+local tutorialShot: Shot? = nil
+
 -- A configured shot as a CFrame. Orientation is in degrees, applied in the same
 -- Y,X,Z order as a Part's Orientation property (CFrame.fromOrientation).
 local function cframeFor(shot: Shot): CFrame
@@ -31,10 +34,12 @@ local function cframeFor(shot: Shot): CFrame
 		* CFrame.fromOrientation(math.rad(o.X), math.rad(o.Y), math.rad(o.Z))
 end
 
--- The shot that should currently be showing (tuning wins over board), or nil for the
--- default Custom camera.
+-- The shot that should currently be showing (tutorial wins over tuning over board), or nil
+-- for the default Custom camera.
 local function activeShot(): Shot?
-	if tuningView then
+	if tutorialShot then
+		return tutorialShot
+	elseif tuningView then
 		return Config.BallTuningCamera
 	elseif boardView then
 		return Config.Camera
@@ -81,6 +86,14 @@ function CameraService.SetTuningView(enabled: boolean)
 	refresh()
 end
 
+-- Set (or clear, with nil) a one-off scripted shot that overrides the other views while
+-- active. Smoothly tweens like the rest; nil falls back to tuning/board/Custom. Used by the
+-- tutorial to move the camera per step.
+function CameraService.SetTutorialView(shot: Shot?)
+	tutorialShot = shot
+	refresh()
+end
+
 -- Flip the board view. Returns the new state.
 function CameraService.Toggle(): boolean
 	boardView = not boardView
@@ -97,6 +110,7 @@ function CameraService.Init()
 	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 		boardView = false
 		tuningView = false
+		tutorialShot = nil
 	end)
 end
 

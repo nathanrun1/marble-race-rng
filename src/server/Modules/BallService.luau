@@ -8,6 +8,7 @@
 -- is why Spawn is written to be poolable later without changing its callers.
 
 local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 
 local Signal = require(RS.Shared.Signal)
@@ -136,7 +137,26 @@ function BallService.IsBallActive(ball: BasePart): boolean
 	return liveBalls[ball] ~= nil
 end
 
+-- Clamp every live ball's speed to Config.Ball.MaxSpeed. Balls are server-owned
+-- (SetNetworkOwner(nil)), so the server can cap their velocity each frame: after a
+-- physics step we rescale any assembly moving faster than the cap back down to it,
+-- bounding the next step's starting speed.
+local function clampSpeeds()
+	local maxSpeed = Config.Ball.MaxSpeed
+	if maxSpeed <= 0 then
+		return
+	end
+	local maxSq = maxSpeed * maxSpeed
+	for ball in liveBalls do
+		local v = ball.AssemblyLinearVelocity
+		if v.X * v.X + v.Y * v.Y + v.Z * v.Z > maxSq then
+			ball.AssemblyLinearVelocity = v.Unit * maxSpeed
+		end
+	end
+end
+
 function BallService.Init()
+	RunService.Heartbeat:Connect(clampSpeeds)
 end
 
 return BallService

@@ -8,6 +8,7 @@
 -- the persisted last-claim time (via StatsChanged/GetStats) and the local group status.
 
 local CollectionService = game:GetService("CollectionService")
+local GroupService = game:GetService("GroupService")
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 
@@ -100,12 +101,25 @@ function GroupRewardUI.Init()
 		render()
 	end)
 
-	-- Best-effort join prompt. Roblox exposes no in-experience "join group" dialog, so
-	-- there's nothing to pop here yet — left as the hook point once we settle on an
-	-- approach (e.g. directing players to the group page). The server also posts a
-	-- ScoreUI hint, so the player still gets feedback on touch.
+	-- Server tells us a non-member touched a pad: open the Roblox join-group dialog. Debounced
+	-- so the repeated touch fires (every ~1.5s) don't stack prompts. PromptJoinAsync yields and
+	-- returns the post-prompt membership status; re-render so the sign reflects a new join.
+	local promptOpen = false
 	PromptJoinRE.OnClientEvent:Connect(function()
-		-- TODO: prompt group join once an approach is decided.
+		if promptOpen then
+			return
+		end
+		promptOpen = true
+		task.spawn(function()
+			local ok, err = pcall(function()
+				GroupService:PromptJoinAsync(GROUP_ID)
+			end)
+			if not ok then
+				warn("GroupRewardUI: PromptJoinAsync failed: " .. tostring(err))
+			end
+			promptOpen = false
+			render()
+		end)
 	end)
 
 	-- Tick the countdown so the sign stays roughly current without a server round-trip.

@@ -51,6 +51,11 @@ end
 -- Apply the starter pack's rewards once. Idempotent via the ownsStarterPack flag, so
 -- it's safe to call from both the purchase event and the on-load ownership check.
 local function grantStarterPack(player: Player)
+	-- Admins never receive the starter pack, even if they own the game pass (the on-load
+	-- ownership check would otherwise grant it).
+	if table.find(Config.Admins, player.UserId) then
+		return
+	end
 	if StatsService.OwnsStarterPack(player) then
 		return
 	end

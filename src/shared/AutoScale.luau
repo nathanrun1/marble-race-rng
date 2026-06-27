@@ -41,6 +41,13 @@ local function currentScale(): number
 	return math.min(vp.X / REF_RESOLUTION.X, vp.Y / REF_RESOLUTION.Y)
 end
 
+-- The current viewport scale factor vs the 1080p reference (same value driven into every
+-- tracked UIScale). Lets callers scale their own 1080p-authored offsets to match AutoScaled
+-- UI (e.g. the tutorial highlight rect).
+function AutoScale.GetScale(): number
+	return currentScale()
+end
+
 local function untrack(inst: Instance)
 	if inst:IsA("GuiObject") then
 		tracked[inst] = nil

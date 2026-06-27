@@ -1,5 +1,15 @@
 --!strict
--- Owns the jackpot-gate collision rule.
+-- Owns collision groups: the jackpot-gate rule, plus making players non-collidable with
+-- marbles and pegs.
+--
+-- Player/Peg groups:
+--   PLAYER — every player character part. Non-collidable with both ball groups and PEG, so
+--            players phase through marbles and pegs; still collides with the world (Default:
+--            floor/walls/obby) and the gate.
+--   PEG    — every BasePart under Workspace.Pegs. Still collides with balls (default), so the
+--            simulation is unchanged; only PLAYER↔PEG is turned off.
+--
+-- Jackpot gate rule.
 --
 -- The gate is a physical barrier in front of the jackpot. A ball is blocked by it
 -- until the ball's *effective* value clears the player's jackpot threshold (V_JACK,
@@ -40,6 +50,10 @@ local CollisionService = {}
 local GATE_GROUP    = "JackpotGate"
 local BLOCKED_GROUP = "JackpotGateBlocked"
 local PASS_GROUP    = "JackpotGatePass" -- over-threshold balls; phases through the gate
+
+-- Players phase through marbles and pegs (but still collide with the world/floor).
+local PLAYER_GROUP  = "Player" -- player character parts
+local PEG_GROUP     = "Peg"    -- pegs/obstacles: every BasePart under Workspace.Pegs
 
 -- Placeholder: the container whose BasePart descendants make up the gate. Set this
 -- to the gate model/folder in the workspace; its parts are iterated at Init to put
@@ -104,11 +118,17 @@ end
 -- Register the collision groups and their collidability once. Guarded so repeated
 -- Studio play sessions don't error on an already-registered group.
 local function setupGroups()
-	for _, group in { GATE_GROUP, BLOCKED_GROUP, PASS_GROUP } do
+	for _, group in { GATE_GROUP, BLOCKED_GROUP, PASS_GROUP, PLAYER_GROUP, PEG_GROUP } do
 		if not PhysicsService:IsCollisionGroupRegistered(group) then
 			PhysicsService:RegisterCollisionGroup(group)
 		end
 	end
+	-- Players phase through marbles (both ball groups) and pegs, but keep colliding with the
+	-- rest of the world (floor/walls/obby stay in Default). Balls↔pegs are untouched (default
+	-- collidable), so the simulation is unaffected.
+	PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PASS_GROUP, false)
+	PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, BLOCKED_GROUP, false)
+	PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PEG_GROUP, false)
 	-- Gate physics: over-threshold balls (PASS_GROUP) phase through; under-threshold
 	-- balls (BLOCKED_GROUP) are stopped. Both groups still collide with the world
 	-- (Default) — pegs and walls — since cross-group collidability defaults to true.
@@ -134,9 +154,55 @@ local function setupGateParts()
 	end
 end
 
+-- Set `inst` and all its BasePart descendants to `group`.
+local function setGroupDeep(inst: Instance, group: string)
+	if inst:IsA("BasePart") then
+		inst.CollisionGroup = group
+	end
+	for _, d in inst:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.CollisionGroup = group
+		end
+	end
+end
+
+-- Put every BasePart under Workspace.Pegs into PEG_GROUP (pegs are static).
+local function setupPegParts()
+	local pegsFolder = workspace:FindFirstChild("Pegs")
+	if not pegsFolder then
+		warn("CollisionService: no Workspace.Pegs; no pegs grouped")
+		return
+	end
+	setGroupDeep(pegsFolder, PEG_GROUP)
+end
+
+-- Keep each player's character (and accessories/limbs added later) in PLAYER_GROUP.
+local function setupPlayers()
+	local function dress(character: Model)
+		setGroupDeep(character, PLAYER_GROUP)
+		character.DescendantAdded:Connect(function(d)
+			if d:IsA("BasePart") then
+				d.CollisionGroup = PLAYER_GROUP
+			end
+		end)
+	end
+	local function onPlayer(player: Player)
+		if player.Character then
+			dress(player.Character)
+		end
+		player.CharacterAdded:Connect(dress)
+	end
+	for _, player in Players:GetPlayers() do
+		onPlayer(player)
+	end
+	Players.PlayerAdded:Connect(onPlayer)
+end
+
 function CollisionService.Init()
 	setupGroups()
 	setupGateParts()
+	setupPegParts()
+	setupPlayers()
 
 	BallService.BallSpawned:Connect(onBallSpawn)
 	BallService.BallDespawned:Connect(onBallDespawn)

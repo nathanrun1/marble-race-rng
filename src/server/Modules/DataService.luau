@@ -40,7 +40,7 @@ local DataService = {}
 -- systems run post-load work (e.g. granting a game pass to an existing owner).
 DataService.Loaded = Signal.new()
 
-local STORE_NAME = "PlayerData_v2"
+local STORE_NAME = "PlayerData_v3"
 local KEY_PREFIX = "player_"
 local MAX_TRIES = 4               -- retries for a save/release op
 local LOCK_STALE = 600            -- seconds before a lock is taken with no handshake (clearly abandoned)
@@ -99,6 +99,32 @@ if persistenceEnabled then
 		-- Don't crash the server over receipt dedup; we just lose cross-session dedup.
 		warn("DataService: purchase-receipt store unavailable: " .. tostring(result))
 	end
+end
+
+-- General leaderboard facility: one OrderedDataStore per named "board", created lazily and
+-- prefixed. Routed through DataService so all DataStore usage + Studio gating lives here.
+-- A caller wipes a board by versioning its name (e.g. "Rebirths_v3"). Unavailable in Studio
+-- (no persistence) — callers fall back to a per-server view via LeaderboardsEnabled().
+local LEADERBOARD_PREFIX = "Leaderboard_"
+local leaderboardStores: { [string]: OrderedDataStore } = {}
+
+local function leaderboardStore(board: string): OrderedDataStore?
+	if not persistenceEnabled then
+		return nil
+	end
+	local existing = leaderboardStores[board]
+	if existing then
+		return existing
+	end
+	local ok, result = pcall(function()
+		return DataStoreService:GetOrderedDataStore(LEADERBOARD_PREFIX .. board)
+	end)
+	if ok then
+		leaderboardStores[board] = result
+		return result
+	end
+	warn(("DataService: leaderboard store '%s' unavailable: %s"):format(board, tostring(result)))
+	return nil
 end
 
 export type PlayerBlob = {
@@ -332,6 +358,51 @@ function DataService.MarkReceiptProcessed(key: string): boolean
 	return ok
 end
 
+-- Persistent leaderboards (OrderedDataStores). A "board" is a name (version it to wipe, e.g.
+-- "Rebirths_v3"). Routed through DataService for one-place DataStore access + Studio gating.
+
+export type LeaderboardEntry = { userId: number, value: number }
+
+-- Whether persistent leaderboards are available (false in Studio without persistence, so
+-- callers can fall back to a per-server view).
+function DataService.LeaderboardsEnabled(): boolean
+	return persistenceEnabled
+end
+
+-- Write a player's score onto a named leaderboard. Returns whether it persisted.
+function DataService.LeaderboardSet(board: string, userId: number, value: number): boolean
+	local s = leaderboardStore(board)
+	if not s then
+		return false
+	end
+	return (withRetry(function()
+		return (s :: OrderedDataStore):SetAsync(tostring(userId), value)
+	end))
+end
+
+-- Top `count` entries (descending) of a named leaderboard, or nil on error/unavailable.
+function DataService.LeaderboardTop(board: string, count: number): { LeaderboardEntry }?
+	local s = leaderboardStore(board)
+	if not s then
+		return nil
+	end
+	local ok, pages = withRetry(function()
+		return (s :: OrderedDataStore):GetSortedAsync(false, count)
+	end)
+	if not ok or not pages then
+		return nil
+	end
+	local out: { LeaderboardEntry } = {}
+	for _, entry in (pages :: any):GetCurrentPage() do
+		local userId = tonumber(entry.key)
+		local value = tonumber(entry.value)
+		if userId and value then
+			table.insert(out, { userId = userId, value = value })
+		end
+	end
+	return out
+end
+
 -- Another server is taking over this player (they joined elsewhere, or are rejoining
 -- after we were slow). If we still hold them, hand off cleanly: save + release our
 -- lock and kick the stale session so two servers never run the same player.
@@ -393,6 +464,19 @@ local function onPlayerRemoving(player: Player)
 end
 
 function DataService.Init()
+	-- Lets a client block until its saved data has loaded (so it reads real persisted
+	-- state, not the pre-load defaults). Used by one-shot UIs like the join tutorial whose
+	-- gate would otherwise race the DataStore load. Returns true once ready.
+	local readyRF = Instance.new("RemoteFunction")
+	readyRF.Name = "WaitForDataLoaded"
+	readyRF.Parent = RS.Remote
+	readyRF.OnServerInvoke = function(player: Player): boolean
+		while player.Parent and not DataService.IsLoaded(player) do
+			task.wait()
+		end
+		return true
+	end
+
 	-- Listen for other servers asking us to release a player's lock (crash handshake).
 	if persistenceEnabled then
 		pcall(function()

@@ -53,8 +53,9 @@ export type Handle = {
 	IsActive: () -> boolean,
 	SetDisabled: (disabled: boolean) -> (),
 	IsDisabled: () -> boolean,
-	-- Toggle a pulsing glow (a pulsing UIStroke). `color` overrides the configured one.
-	SetGlowing: (on: boolean, color: Color3?) -> (),
+	-- Toggle a pulsing glow (a pulsing UIStroke). `color` overrides the configured one;
+	-- pass `color2` to also breathe the stroke colour between `color` and `color2`.
+	SetGlowing: (on: boolean, color: Color3?, color2: Color3?) -> (),
 	-- Set the button's BackgroundColor3 (and darken the host's Shadow to match).
 	SetColor: (color: Color3) -> (),
 	Destroy: () -> (),
@@ -258,11 +259,16 @@ function UIButton.bind(host: Instance, config: Config): Handle
 	-- first use so buttons that never glow pay nothing.
 	local glowStroke: UIStroke? = nil
 	local glowTween: Tween? = nil
-	local function setGlowing(on: boolean, color: Color3?)
+	local glowColorTween: Tween? = nil
+	local function setGlowing(on: boolean, color: Color3?, color2: Color3?)
 		if not on then
 			if glowTween then
 				glowTween:Cancel()
 				glowTween = nil
+			end
+			if glowColorTween then
+				glowColorTween:Cancel()
+				glowColorTween = nil
 			end
 			if glowStroke then
 				glowStroke.Enabled = false
@@ -286,6 +292,15 @@ function UIButton.bind(host: Instance, config: Config): Handle
 		end
 		glowTween = TweenService:Create(stroke, GLOW_TWEEN, { Transparency = 0.85 })
 		glowTween:Play()
+		-- Optional two-colour pulse: breathe Color between `color` and `color2`.
+		if glowColorTween then
+			glowColorTween:Cancel()
+			glowColorTween = nil
+		end
+		if color2 then
+			glowColorTween = TweenService:Create(stroke, GLOW_TWEEN, { Color = color2 })
+			glowColorTween:Play()
+		end
 	end
 
 	-- Initial paint.
@@ -308,6 +323,9 @@ function UIButton.bind(host: Instance, config: Config): Handle
 		Destroy = function()
 			if glowTween then
 				glowTween:Cancel()
+			end
+			if glowColorTween then
+				glowColorTween:Cancel()
 			end
 			for _, c in conns do
 				c:Disconnect()

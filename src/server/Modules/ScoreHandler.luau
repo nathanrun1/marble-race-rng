@@ -25,6 +25,7 @@ local ScoreHandler = {}
 -- additive: banked == base + heatBonus + comboBonus + additiveBonus + trickle.
 export type ScoreInfo = {
 	targetName: string,
+	destroyTargetId: number?, -- the DestroyTargetID attribute of the slot banked at (nil if none / stuck)
 	finalMultiplier: number?, -- slot's × multiplier (nil if additive / no PointValue)
 	initialValue: number,     -- value at spawn (the stake)
 	base: number,             -- value at destruction, before bonuses
@@ -85,7 +86,7 @@ function ScoreHandler.GetEffectiveValue(info: ScoreInfo): number
 	return info.base + info.heatBonus
 end
 
-local function buildScoreInfo(player: Player, state: BallState, base: number, multiplier: number?, targetName: string): ScoreInfo
+local function buildScoreInfo(player: Player, state: BallState, base: number, multiplier: number?, targetName: string, destroyTargetId: number?): ScoreInfo
 	local upgrades = ProfileService.GetUpgrades(player)
 
 	local jackpot = if state.jackpotHit then base * Config.Scoring.JackpotMultiplier else 0
@@ -106,6 +107,7 @@ local function buildScoreInfo(player: Player, state: BallState, base: number, mu
 
 	return {
 		targetName = targetName,
+		destroyTargetId = destroyTargetId,
 		finalMultiplier = multiplier,
 		initialValue = state.spawnValue,
 		base = base,
@@ -134,8 +136,8 @@ local function updateEffectiveValue(player: Player, ball: BasePart, state: BallS
 	ScoreHandler.EffectiveValueChanged:Fire(ball, effective)
 end
 
-function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState, base: number, multiplier: number?, targetName: string, stuck: boolean)
-	local info = buildScoreInfo(player, state, base, multiplier, targetName)
+function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState, base: number, multiplier: number?, targetName: string, stuck: boolean, destroyTargetId: number?)
+	local info = buildScoreInfo(player, state, base, multiplier, targetName, destroyTargetId)
 	ScoreHandler.BallScored:Fire(ball, info)
 
 	ScoreUI.PostMessage(player, (if stuck then "Ball stuck: " else "Ball scored! ") .. StringUtils.FormatMoney(base), Color3.new(1, 1, 1))
@@ -239,7 +241,8 @@ local function handleDestroy(ball: BasePart, player: Player, state: BallState, t
 		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "×" .. tostring(effMultiplier))
 		BallEffects.DoClientEffect(player, "ShowPointFX", ball, ball.CFrame, effMultiplier)
 	end
-	ScoreHandler.BankBall(player, ball, state, base, multiplier, target.Name, false)
+	local destroyTargetId = target:GetAttribute(Config.Attributes.DestroyTargetID) :: number?
+	ScoreHandler.BankBall(player, ball, state, base, multiplier, target.Name, false, destroyTargetId)
 	return true
 end
 

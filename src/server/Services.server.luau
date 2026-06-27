@@ -17,11 +17,13 @@ local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local AnnounceUI = require(RS.Shared.AnnounceUI)
+local WarnUI = require(RS.Shared.WarnUI)
 local SoundService = require(RS.Shared.SoundService)
 local ProductService = require(RS.Shared.ProductService)
 local MonetizationService = require(SSS.Scripts.Modules.MonetizationService)
 local ObbyService = require(SSS.Scripts.Modules.ObbyService)
 local GroupRewardService = require(SSS.Scripts.Modules.GroupRewardService)
+local DestroyTargetService = require(SSS.Scripts.Modules.DestroyTargetService)
 local DevService = require(SSS.Scripts.Modules.DevService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
@@ -50,6 +52,10 @@ LeaderboardService.Init()
 -- DevService: Studio-only chat commands for testing tiers/loadout (inert in live).
 DevService.Init()
 ScoringService.Init()
+-- DestroyTargetService after ScoringService, before launches: stamps each slot's PointMul /
+-- JackpotTarget tag + display label from Config.DestroyTargets, so scoring reads the right
+-- multipliers from the first ball.
+DestroyTargetService.Init()
 -- PegService after ScoringService: tagging pegs ScoreTarget fires the
 -- now-connected added-signal, so the overlap filter picks them up.
 PegService.Init()
@@ -63,6 +69,8 @@ CosmeticService.Init()
 ScoreUI.Init()
 -- AnnounceUI: creates the AnnounceMessage remote for large centered banner messages.
 AnnounceUI.Init()
+-- WarnUI: creates the WarnMessage remote for small lower-screen warning banners.
+WarnUI.Init()
 -- SoundService: creates the PlaySound remote so clients can receive server-driven SFX.
 SoundService.Init()
 -- CollisionService before launches start: it self-connects to BallSpawned to put

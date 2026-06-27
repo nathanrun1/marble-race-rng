@@ -47,7 +47,8 @@ local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
 local HEAT_COLOR_POS     = Color3.fromRGB(255, 140, 0)
 local HEAT_COLOR_NEG     = Color3.fromRGB(80, 160, 255)
-local MIN_COMBO_TO_SHOW  = 13
+local MIN_COMBO_TO_SHOW  = Config.Scoring.MinCombo
+local HIGH_COMBO         = Config.Scoring.MinCombo + 5
 -- Exponential follow rate for the value-UI anchor (higher = snappier / less lag,
 -- lower = smoother). Frame-rate independent via 1 - exp(-rate * dt).
 local VALUE_FOLLOW_RATE  = 30
@@ -224,7 +225,7 @@ function BallEffects.SetValueUI(ball: BasePart, value: number)
 	end
 end
 
-function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: string, color: Color3?)
+function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: string, color: Color3?, strokeColor: Color3?)
 	local anchor = Instance.new("Part")
 	anchor.Size = Vector3.new(0.05, 0.05, 0.05)
 	anchor.Anchored = true
@@ -251,6 +252,12 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 	text.TextScaled = true
 	text.Font = Enum.Font.GothamBold
 	text.Parent = billboard
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 1
+	stroke.Color = strokeColor or Color3.new(0, 0, 0)
+	stroke.Parent = text
+
 	-- Shrink the popup on smaller viewports (sizes authored at 1080p).
 	AutoScale.Apply(text)
 
@@ -259,35 +266,48 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 		TextTransparency = 1,
 		TextStrokeTransparency = 1,
 	})
+	local t3 = TweenService:Create(stroke, POPUP_TWEEN, {
+		Transparency = 1,
+	})
 	t1:Play()
 	t2:Play()
+	t3:Play()
 	t2.Completed:Connect(function()
 		anchor:Destroy()
 	end)
 end
 
-local COMBO_COLOR_NORMAL = Color3.new(1, 1, 1)
-local COMBO_COLOR_HOT    = Color3.fromRGB(255, 60, 60)
+local COMBO_COLOR_NORMAL = Color3.fromRGB(222, 9, 9)
+local COMBO_COLOR_HOT    = Color3.fromRGB(223, 13, 226)
+local COMBO_STROKE_COLOR_HOT = Color3.fromRGB(252, 205, 35)
 
 function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: number, flatRate: number)
 	if RunService:IsClient() then
 		SoundService.Play({ soundId = Config.Sounds.Bounce, position = cframe.Position, jitter = 0.06, volume = 1.5 })
 	end
+
 	if combo < MIN_COMBO_TO_SHOW then return end
-	if combo < Config.Scoring.MinCombo then
-		BallEffects.ShowValuePopup(ball, cframe, tostring(combo), COMBO_COLOR_NORMAL)
+
+	local color: Color3
+	local strokeColor: Color3
+	local comboSoundId: string
+	if combo < HIGH_COMBO then
+		color = COMBO_COLOR_NORMAL
+		comboSoundId = Config.Sounds.Combo
 	else
-		BallEffects.ShowValuePopup(ball, cframe, tostring(combo), COMBO_COLOR_HOT)
-		if RunService:IsClient() then
-			SoundService.Play({ soundId = Config.Sounds.Combo, position = cframe.Position, jitter = 0.06, volume = 1.5 })
-		end
+		color = COMBO_COLOR_HOT
+		strokeColor = COMBO_STROKE_COLOR_HOT
+		comboSoundId = Config.Sounds.Combo2
 	end
-	
+	BallEffects.ShowValuePopup(ball, cframe, "COMBO x"..combo.."! (+"..StringUtils.FormatMoney(combo * flatRate)..")", color, strokeColor)
+	if RunService:IsClient() then
+		SoundService.Play({ soundId = comboSoundId, position = cframe.Position, jitter = 0.06, volume = 1.5 })
+	end
 end
 
 function BallEffects.ShowHeatPopup(ball: BasePart?, heatDelta: number)
 	if heatDelta == 0 or not ball or not ball.Parent then return end
-	local label = string.format("x%.1f", 1 + heatDelta)
+	local label = string.format("+%.0f%%", heatDelta * 100)
 	local color = if heatDelta > 0 then HEAT_COLOR_POS else HEAT_COLOR_NEG
 	BallEffects.ShowValuePopup(ball, ball.CFrame, label, color)
 end

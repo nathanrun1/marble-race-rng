@@ -13,7 +13,12 @@
 --   /preset <name>         targeting | chaos | hybrid
 --   /test <n> [interval]   fire n test balls (your loadout), print payout stats
 --   /comprtest <n>         sweep all builds (Arc/Angle/Size/Elasticity), n balls each
+--   /geotest <n> [bpi]     same sweep as comprtest, but reports only board-geometry stats
+--                          (pegs, bounces, destroy-target histogram)
+--   /axistest <axis> <n> [bpi]  vary one axis (Arc/Angle/Size/Elasticity) over 10 values across
+--                          its full range, others held at your CURRENT tuning settings, × bet sweep (20 builds)
 --   /show                  print current tiers + loadout to the server console
+--   /reset                 full fresh-join reset (tiers 0, loadout default, prestige 0, money reset)
 --   /podium                load your character onto all 3 rebirths-podium spots (test)
 --   /help                  list commands
 --
@@ -37,8 +42,7 @@ local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 
 local DevService = {}
 
--- Add your UserId here to enable the commands in a live (non-Studio) server.
-local ALLOWED_USERIDS: { number } = {}
+-- Live (non-Studio) command access is granted to Config.Admins.
 
 local MAX_TIER = 12    -- /maxall and presets set every track to this (caps self-clamp)
 local BIG_BET = 1e9   -- SetBet clamps this down to the player's current max bet
@@ -63,7 +67,7 @@ local COMPR_BATCH_GAP = 0.001
 -- Hard cap on how many build batches have balls in play at once: once this many
 -- are airborne, firing blocks until one fully lands before the next batch starts.
 -- Bounds peak concurrent balls to ~this × N. Raise for speed, lower for less load.
-local COMPR_MAX_ACTIVE_BUILDS = 20
+local COMPR_MAX_ACTIVE_BUILDS = 40
 
 -- /comprtest analysis. Intended (base - jackpot) / value for a non-jackpot slot;
 -- the analysis pass reports the observed ratio against this so a hot multiplier
@@ -88,7 +92,7 @@ for axis in AXES do
 end
 
 local function isDev(player: Player): boolean
-	return RunService:IsStudio() or table.find(ALLOWED_USERIDS, player.UserId) ~= nil
+	return RunService:IsStudio() or table.find(Config.Admins, player.UserId) ~= nil
 end
 
 local function setAllTiers(player: Player, value: number)
@@ -632,31 +636,35 @@ local function printComprAnalysis(rows: { BuildRow })
 	print(bar)
 end
 
--- /comprtest: sweep every combination of the four landing axes (Arc, Angle, Size,
--- Elasticity) × COMPR_BET_LEVELS bet sizes, firing N balls per combination, then
--- print a per-build summary of all of them followed by the cross-build analysis.
--- Unlocks those four axes' tiers so the full range is sampleable; other upgrades
--- are left as-is (constant across builds, so comparisons hold).
-local function runComprTest(player: Player, n: number, ballsPerInterval: number)
+-- One sweep build: its scalar params and the ScoreInfo of each ball it fired.
+-- `fired` = all of this build's launches are out; `done` = all have also landed (resolved).
+type Build = { params: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number, fired: boolean, done: boolean }
+
+-- Unlock every landing axis + PegHeat to MAX so SetAxis isn't clamped to a low range and
+-- the full ranges are sampleable. (Tests restore the loadout, but leave tiers maxed — dev only.)
+local function unlockBuildAxes(player: Player)
 	for _, axis in COMPR_AXES do
 		ProfileService.SetUpgradeTier(player, axis, MAX_TIER)
 	end
 	ProfileService.SetUpgradeTier(player, "PegHeat", MAX_TIER)
+end
 
-	local levels: { [string]: { number } } = {}
-	local total = 1
-	for _, axis in COMPR_AXES do
-		levels[axis] = axisLevels(player, axis, COMPR_LEVELS)
-		total *= #levels[axis]
-	end
-
+-- The bet sizes every sweep exercises (so the jackpot gate is tested): i/COMPR_BET_LEVELS × maxBet.
+local function betLevels(player: Player): { number }
 	local maxBet = ProfileStats.GetMaxBet(ProfileService.GetUpgrades(player))
-	local betLevels: { number } = {}
+	local out: { number } = {}
 	for i = 1, COMPR_BET_LEVELS do
-		table.insert(betLevels, ((COMPR_BET_LEVELS - i + 1) / COMPR_BET_LEVELS) * maxBet)
+		table.insert(out, ((COMPR_BET_LEVELS - i + 1) / COMPR_BET_LEVELS) * maxBet)
 	end
-	total *= #betLevels
-	total *= #COMPR_PEGHEAT_TIERS
+	return out
+end
+
+-- Fire each given build combo (a params map: Bet, PegHeatTier, and every landing axis),
+-- collecting each ball's ScoreInfo per build. `label` tags the progress prints. Restores the
+-- player's loadout after. Combos must be built with axes already unlocked (see unlockBuildAxes).
+local function runSweep(player: Player, n: number, ballsPerInterval: number, label: string, combos: { { [string]: number } }): { Build }
+	unlockBuildAxes(player)
+	local total = #combos
 
 	local saved: { [string]: number } = {}
 	for _, axis in COMPR_AXES do
@@ -665,16 +673,13 @@ local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 	local savedBet = ProfileService.GetLoadout(player).Bet
 	local savedPegHeatTier = ProfileService.GetUpgrades(player).PegHeat or 0
 
-	print(string.format("[Dev] comprtest: %d builds × %d balls = %d launches; running...", total, n, total * n))
+	print(string.format("[Dev] %s: %d builds × %d balls = %d launches; running...", label, total, n, total * n))
 
 	-- One connection for the whole run. A ball is spawned with its build's axes
 	-- baked in (size/weight/velocity are set at spawn), so once fired it can land
 	-- whenever — we attribute its ScoreInfo by the build it was tagged with, which
 	-- lets batches overlap in flight. Firing itself must stay sequential because
 	-- the axes are shared player state set right before each batch's launches.
-	-- `fired` = all of this build's launches are out; `done` = all of them have also
-	-- landed (resolved). A build counts as "in play" between firing and done.
-	type Build = { params: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number, fired: boolean, done: boolean }
 	local builds: { Build } = {}
 	local ballBuild: { [BasePart]: Build } = {}
 	local launchedTotal, resolved, activeBuilds = 0, 0, 0
@@ -732,30 +737,20 @@ local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 		end
 	end
 
-	-- Fire combinations back-to-back, throttled two ways: a COMPR_BATCH_GAP pause
-	-- between batches, and a hard cap on how many batches are in play at once —
-	-- once COMPR_MAX_ACTIVE_BUILDS are airborne, wait for one to fully land first.
+	-- Fire combos back-to-back, throttled two ways: a COMPR_BATCH_GAP pause between batches,
+	-- and a hard cap on how many batches are in play at once — once COMPR_MAX_ACTIVE_BUILDS
+	-- are airborne, wait for one to fully land first.
 	local first = true
-	for _, bet in betLevels do
-		for _, pegHeatTier in COMPR_PEGHEAT_TIERS do
-			for _, arc in levels.Arc do
-				for _, angle in levels.Angle do
-					for _, size in levels.Size do
-						for _, elasticity in levels.Elasticity do
-							if not first then
-								task.wait(COMPR_BATCH_GAP)
-							end
-							first = false
-							while activeBuilds >= COMPR_MAX_ACTIVE_BUILDS do
-								task.wait(0.1)
-							end
-							fireBuild({ Bet = bet, PegHeatTier = pegHeatTier, Arc = arc, Angle = angle, Size = size, Elasticity = elasticity })
-							print(string.format("[Dev] comprtest progress: %d/%d builds launched (%d in play)", #builds, total, activeBuilds))
-						end
-					end
-				end
-			end
+	for _, params in combos do
+		if not first then
+			task.wait(COMPR_BATCH_GAP)
 		end
+		first = false
+		while activeBuilds >= COMPR_MAX_ACTIVE_BUILDS do
+			task.wait(0.1)
+		end
+		fireBuild(params)
+		print(string.format("[Dev] %s progress: %d/%d builds launched (%d in play)", label, #builds, total, activeBuilds))
 	end
 
 	-- Restore the player's pre-test loadout (skip if they left mid-test; profile gone).
@@ -768,16 +763,74 @@ local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 	end
 
 	-- Single drain: wait for the balls still in flight across all batches.
-	print(string.format("[Dev] comprtest: all %d builds launched; draining in-flight balls...", #builds))
+	print(string.format("[Dev] %s: all %d builds launched; draining in-flight balls...", label, #builds))
 	local deadline = os.clock() + TEST_TIMEOUT
 	while resolved < launchedTotal and os.clock() < deadline do
 		task.wait(0.1)
 	end
 	conn:Disconnect()
 
+	return builds
+end
+
+-- Full cartesian sweep combos: every landing axis (COMPR_LEVELS each) × bet sizes × PegHeat
+-- tiers. Used by /comprtest and /geotest.
+local function comprCombos(player: Player): { { [string]: number } }
+	unlockBuildAxes(player)
+	local levels: { [string]: { number } } = {}
+	for _, axis in COMPR_AXES do
+		levels[axis] = axisLevels(player, axis, COMPR_LEVELS)
+	end
+	local combos: { { [string]: number } } = {}
+	for _, bet in betLevels(player) do
+		for _, pegHeatTier in COMPR_PEGHEAT_TIERS do
+			for _, arc in levels.Arc do
+				for _, angle in levels.Angle do
+					for _, size in levels.Size do
+						for _, elasticity in levels.Elasticity do
+							table.insert(combos, { Bet = bet, PegHeatTier = pegHeatTier, Arc = arc, Angle = angle, Size = size, Elasticity = elasticity })
+						end
+					end
+				end
+			end
+		end
+	end
+	return combos
+end
+
+-- /axistest combos: vary ONE axis over AXIS_TEST_LEVELS values across its full range, holding
+-- every other axis (and PegHeat) at the player's CURRENT ball-tuning settings, still × the bet
+-- sweep. "Tuned" = whatever the player has the tuning sliders set to right now.
+local AXIS_TEST_LEVELS = 10
+local function axisCombos(player: Player, axis: string): { { [string]: number } }
+	-- Capture the current loadout (the "tuned" values) before unlocking widens the ranges.
+	local tuned: { [string]: number } = {}
+	for _, a in COMPR_AXES do
+		tuned[a] = ProfileService.GetAxis(player, a)
+	end
+	local curPegHeat = ProfileService.GetUpgrades(player).PegHeat or 0
+
+	unlockBuildAxes(player)
+	local varied = axisLevels(player, axis, AXIS_TEST_LEVELS)
+	local combos: { { [string]: number } } = {}
+	for _, bet in betLevels(player) do
+		for _, v in varied do
+			local p: { [string]: number } = { Bet = bet, PegHeatTier = curPegHeat }
+			for _, a in COMPR_AXES do
+				p[a] = tuned[a]
+			end
+			p[axis] = v
+			table.insert(combos, p)
+		end
+	end
+	return combos
+end
+
+-- Per-build stats + cross-build analysis report (shared by /comprtest and /axistest).
+local function reportCompr(title: string, builds: { Build }, n: number)
 	local bar = string.rep("=", 78)
 	print(bar)
-	print(string.format("Comprehensive Build Test — %s — %d builds × %d balls", player.Name, #builds, n))
+	print(string.format("%s — %d builds × %d balls", title, #builds, n))
 	print(bar)
 	for i, b in builds do
 		printComprBuild(i, #builds, b.params, b.results, b.launched)
@@ -795,10 +848,117 @@ local function runComprTest(player: Player, n: number, ballsPerInterval: number)
 	printComprAnalysis(rows)
 end
 
+-- /comprtest: full cartesian sweep, then per-build summary + cross-build analysis.
+local function runComprTest(player: Player, n: number, ballsPerInterval: number)
+	local builds = runSweep(player, n, ballsPerInterval, "comprtest", comprCombos(player))
+	reportCompr("Comprehensive Build Test — " .. player.Name, builds, n)
+end
+
+-- /axistest: vary one axis across its range (others tuned), same comprtest-style report.
+local function runAxisTest(player: Player, axis: string, n: number, ballsPerInterval: number)
+	local builds = runSweep(player, n, ballsPerInterval, "axistest", axisCombos(player, axis))
+	reportCompr(("Axis Test [%s] — %s"):format(axis, player.Name), builds, n)
+end
+
+-- Board-geometry stats geotest reports (subset of STAT_ORDER, so statArrays buckets them).
+local GEO_STATS = { "hotPegs", "coldPegs", "neutralPegs", "combo", "jackpotHit" }
+
+-- Tally which destroy target (by DestroyTargetID) each resolved ball banked at. A ball with
+-- no id (none set, or a stuck-timeout force-bank) buckets under "?".
+local function destroyHist(results: { ScoringService.ScoreInfo }): ({ [string]: number }, number)
+	local hist: { [string]: number } = {}
+	for _, info in results do
+		local key = if info.destroyTargetId then tostring(info.destroyTargetId) else "?"
+		hist[key] = (hist[key] or 0) + 1
+	end
+	return hist, #results
+end
+
+-- Ids ascending, "?" last.
+local function sortedDestroyKeys(hist: { [string]: number }): { string }
+	local keys: { string } = {}
+	for k in hist do
+		table.insert(keys, k)
+	end
+	table.sort(keys, function(a, b)
+		local na, nb = tonumber(a), tonumber(b)
+		if na and nb then
+			return na < nb
+		end
+		return na ~= nil -- numeric ids before "?"
+	end)
+	return keys
+end
+
+local function printDestroyHist(results: { ScoringService.ScoreInfo }, indent: string)
+	local hist, n = destroyHist(results)
+	if n == 0 then
+		print(indent .. "(none resolved)")
+		return
+	end
+	for _, k in sortedDestroyKeys(hist) do
+		local c = hist[k]
+		print(string.format("%starget %-4s : %5d  (%5.1f%%)", indent, k, c, 100 * c / n))
+	end
+end
+
+-- One build's geometry summary: params, geometry means, and a one-line destroy-target spread.
+local function printGeoBuild(idx: number, total: number, p: { [string]: number }, results: { ScoringService.ScoreInfo }, launched: number)
+	local n = #results
+	print(string.format("[%2d/%d] %s | resolved %d/%d", idx, total, fmtBuildParams(p), n, launched))
+	if n == 0 then
+		print("        (none resolved)")
+		return
+	end
+	local arrays = statArrays(results)
+	for _, name in GEO_STATS do
+		local mean, var = meanVar(arrays[name])
+		print(string.format("        %-12s mean=%9.3f  std=%9.3f", name, mean, math.sqrt(var)))
+	end
+	local hist = destroyHist(results)
+	local parts: { string } = {}
+	for _, k in sortedDestroyKeys(hist) do
+		table.insert(parts, string.format("%s:%d", k, hist[k]))
+	end
+	print("        targets: " .. table.concat(parts, "  "))
+end
+
+-- /geotest: same sweep as comprtest, but reports only board-geometry outcomes — hot/cold/
+-- neutral pegs, bounces (combo), jackpot-hit rate, and which destroy target was hit
+-- (per-build spread + an overall histogram).
+local function runGeoTest(player: Player, n: number, ballsPerInterval: number)
+	local builds = runSweep(player, n, ballsPerInterval, "geotest", comprCombos(player))
+
+	local bar = string.rep("=", 78)
+	print(bar)
+	print(string.format("Geometry Test — %s — %d builds × %d balls", player.Name, #builds, n))
+	print(bar)
+
+	local all: { ScoringService.ScoreInfo } = {}
+	for i, b in builds do
+		printGeoBuild(i, #builds, b.params, b.results, b.launched)
+		for _, info in b.results do
+			table.insert(all, info)
+		end
+	end
+
+	print(bar)
+	print(string.format("OVERALL — %d balls", #all))
+	print("-- destroy-target histogram --")
+	printDestroyHist(all, "  ")
+	print("-- geometry (mean per ball) --")
+	local arrays = statArrays(all)
+	for _, name in GEO_STATS do
+		local mean = meanVar(arrays[name])
+		print(string.format("  %-12s %9.3f", name, mean))
+	end
+	print(bar)
+end
+
 -- Returns a short result string for the console.
-local function handle(player: Player, cmd: string, a2: string?, a3: string?): string?
+local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, show, reset_upgrades, prestige, pmoney, attempt_prestige, podium"
+		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, attempt_prestige, podium"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -858,9 +1018,41 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?): st
 		local bpi = math.max(1, math.floor(tonumber(a3) or 1))
 		task.spawn(runComprTest, player, n, bpi)
 		return string.format("running comprehensive build test: %d balls/build × %d per interval (results in server console)", n, bpi)
+	elseif cmd == "geotest" then
+		local n = tonumber(a2)
+		if not n then
+			return "usage: /geotest <n> [ballsPerInterval]"
+		end
+		n = math.clamp(math.floor(n), 1, TEST_MAX_BALLS)
+		local bpi = math.max(1, math.floor(tonumber(a3) or 1))
+		task.spawn(runGeoTest, player, n, bpi)
+		return string.format("running geometry test: %d balls/build × %d per interval (results in server console)", n, bpi)
+	elseif cmd == "axistest" then
+		local axis = a2 and axisByLower[a2:lower()]
+		if not axis or not table.find(COMPR_AXES, axis) then
+			return "usage: /axistest <Arc|Angle|Size|Elasticity> <n> [ballsPerInterval]"
+		end
+		local n = tonumber(a3)
+		if not n then
+			return "usage: /axistest <Arc|Angle|Size|Elasticity> <n> [ballsPerInterval]"
+		end
+		n = math.clamp(math.floor(n), 1, TEST_MAX_BALLS)
+		local bpi = math.max(1, math.floor(tonumber(a4) or 1))
+		task.spawn(runAxisTest, player, axis, n, bpi)
+		return string.format("running axis test on %s: %d builds × %d balls (results in server console)", axis, AXIS_TEST_LEVELS * COMPR_BET_LEVELS, n)
 	elseif cmd == "reset_upgrades" then
 		ProfileService.ResetProfile(player)
 		return "profile reset: all tiers 0, loadout defaults"
+	elseif cmd == "reset" then
+		-- Full fresh-join reset: upgrades t0 + loadout defaults, prestige 0 / PP 0, and
+		-- balance back to the starting amount. (Leaves purchased Stats — cash multiplier,
+		-- starter pack, tutorial flag — alone, since those mirror real-money ownership.)
+		ProfileService.ResetProfile(player)
+		PrestigeService.SetCount(player, 0)
+		PrestigeService.SetLifetimeBanked(player, 0)
+		CurrencyService.SetPoints(player, Config.Currency.StartingBalance, "Dev reset")
+		return string.format("reset to fresh join: tiers 0, loadout default, prestige 0, money %d",
+			Config.Currency.StartingBalance)
 	elseif cmd == "prestige" then
 		local n = tonumber(a2)
 		if not n then return "usage: /prestige <count>" end
@@ -905,7 +1097,7 @@ local function onChatted(player: Player, message: string)
 		return
 	end
 	local args = message:sub(2):split(" ")
-	local result = handle(player, args[1]:lower(), args[2], args[3])
+	local result = handle(player, args[1]:lower(), args[2], args[3], args[4])
 	if result then
 		print("[Dev] " .. player.Name .. ": " .. result)
 	end

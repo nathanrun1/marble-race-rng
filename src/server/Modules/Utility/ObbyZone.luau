@@ -8,6 +8,7 @@ local Config = require(RS.Shared.Config)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local StringUtils = require(RS.Shared.StringUtils)
+local SoundService = require(RS.Shared.SoundService)
 
 local ObbyZone = {}
 ObbyZone.__index = ObbyZone
@@ -64,8 +65,10 @@ function ObbyZone.New(obby: Model)
 		end
 		self.debounce[player.UserId] = true
 
+		print("obby complete")
 		CurrencyService.AddPoints(player, self.prize, "Completed Obby, prize: " .. self.prize)
 		ScoreUI.PostMessage(player, "Obby Complete! +"..StringUtils.FormatMoney(self.prize))
+		SoundService.Play({ soundId = Config.Sounds.Upgrade })
 		tpPlayerToPart(player, self.startPart)
 
 		task.wait(COOLDOWN)

@@ -50,8 +50,8 @@ local function attemptClaim(player: Player)
 	end)
 
 	if not player:IsInGroup(GROUP_ID) then
-		-- Roblox has no native "join group" prompt; the client hook is best-effort (see
-		-- GroupRewardUI). Post a hint so the player still gets feedback on touch.
+		-- Not a member: have the client open the Roblox join-group dialog (GroupRewardUI uses
+		-- GroupService:PromptJoinAsync), plus an announce hint for context.
 		if promptJoinRE then
 			promptJoinRE:FireClient(player)
 		end
