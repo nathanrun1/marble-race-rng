@@ -15,8 +15,9 @@ local AnnounceUI = {}
 if RunService:IsServer() then
 	local annRemote: RemoteEvent? = nil
 
-	function AnnounceUI.Announce(player: Player, text: string, color: Color3?)
-		(annRemote :: RemoteEvent):FireClient(player, text, color)
+	-- lifetime: seconds the banner stays fully visible before fading (defaults to DISPLAY_TIME).
+	function AnnounceUI.Announce(player: Player, text: string, color: Color3?, lifetime: number?)
+		(annRemote :: RemoteEvent):FireClient(player, text, color, lifetime)
 	end
 
 	function AnnounceUI.Init()
@@ -42,12 +43,12 @@ if RunService:IsClient() then
 	local MSG_GAP      = 0.15 -- seconds between consecutive announcements
 
 	local bannerHost: Frame? = nil
-	local messageQueue: { { text: string, color: Color3? } } = {}
+	local messageQueue: { { text: string, color: Color3?, lifetime: number? } } = {}
 	local isProcessing = false
 
 	-- Show one banner and yield until it has fully left the screen, so queued
 	-- announcements play one at a time.
-	local function showBanner(text: string, color: Color3?)
+	local function showBanner(text: string, color: Color3?, lifetime: number?)
 		local host = bannerHost
 		if not host then return end
 
@@ -79,7 +80,7 @@ if RunService:IsClient() then
 		label.TextStrokeTransparency = 0.2
 		TweenService:Create(scale, POP_IN, { Scale = 1 }):Play()
 
-		task.wait(DISPLAY_TIME)
+		task.wait(lifetime or DISPLAY_TIME)
 		if not label.Parent then return end
 
 		local tOut = TweenService:Create(label, FADE_OUT, {
@@ -100,7 +101,7 @@ if RunService:IsClient() then
 			while #messageQueue > 0 do
 				local msg = table.remove(messageQueue, 1)
 				if msg then
-					showBanner(msg.text, msg.color)
+					showBanner(msg.text, msg.color, msg.lifetime)
 				end
 				task.wait(MSG_GAP)
 			end
@@ -136,8 +137,8 @@ if RunService:IsClient() then
 		createUI(playerGui)
 
 		local remote = RS.Remote:WaitForChild("AnnounceMessage") :: RemoteEvent
-		remote.OnClientEvent:Connect(function(text: string, color: Color3?)
-			table.insert(messageQueue, { text = text, color = color })
+		remote.OnClientEvent:Connect(function(text: string, color: Color3?, lifetime: number?)
+			table.insert(messageQueue, { text = text, color = color, lifetime = lifetime })
 			processQueue()
 		end)
 	end

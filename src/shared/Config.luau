@@ -101,7 +101,7 @@ Config.DestroyTargets = {
 }
 
 Config.Currency = {
-	StartingBalance = 100,
+	StartingBalance = 500,
 }
 
 -- Ball physics caps. MaxSpeed bounds a ball's velocity magnitude (studs/sec) while it
@@ -123,8 +123,23 @@ Config.Prestige = {
 	Scale      = 10000, -- denominator in PP formula
 	Exponent   = 0.35,  -- sublinear compression
 	CostBase   = 50,    -- PP cost of first prestige (tuned so an optimal build prestiges ~30 min in)
-	CostGrowth = 2.0,  -- geometric cost multiplier per prestige level
+	-- Per-level cost growth. Constant time-to-prestige requires CostGrowth = MultPer^Exponent
+	-- (because the LB needed for prestige N grows as CostGrowth^(N/Exponent) while the global
+	-- multiplier only offsets it as MultPer^N). Break-even here is 1.25^0.35 ≈ 1.08. The old 2.0
+	-- was WAY above it: requirement grew 7.25^N vs a 1.25^N multiplier, so late prestiges took
+	-- exponentially longer AND the targeting build (which banks super-linearly in time) pulled
+	-- ahead of combo. Sitting just above break-even keeps every run a near self-similar copy of
+	-- run 0 — so whatever build balance holds at prestige 0 holds forever — with a gentle (~6%/level)
+	-- lengthening so later prestiges still feel like a step up.
+	CostGrowth = 1.15,
 	MultPer    = 1.25,  -- global banked multiplier per prestige (multiplicative)
+	-- Anti-hoard: available PP is an earn/spend currency. Banking stops crediting PP once you hold
+	-- this many × the next prestige's cost, so you can buffer at most ~one extra prestige and can't
+	-- farm lifetime banked into a stockpile of prestiges. Prestige SPENDS the cost (see PrestigeService).
+	HoldCapMult = 1.5,
+	-- Once banking is capped (no more PP credited), nag the player to rebirth at most this
+	-- often (seconds) via WarnUI, since further play is wasted PP until they prestige.
+	LimitWarnInterval = 20,
 	NoScoreSeconds = 5, -- post-prestige no-score window (exploit guard)
 }
 
@@ -402,7 +417,7 @@ Config.CashMultiplier = {
 Config.StarterPack = {
 	Balance = 50000,           -- cash granted on purchase
 	UpgradeTiers = 2,          -- tier every upgrade track is raised to
-	MaxUpgrades = 8,           -- hide the pack once the player has this many total upgrades
+	MaxUpgrades = 20,           -- hide the pack once the player has this many total upgrades
 	PostPrestigeFreeTier = 1,  -- free tier on all tracks after each prestige (owners only)
 }
 
@@ -506,13 +521,23 @@ Config.Tutorial = {
 			highlight = { Position = UDim2.fromOffset(135, 825), Size = UDim2.fromOffset(250, 90) },
 		},
 		{
-			text = "Spend your cash on upgrades, then rebirth for permanent boosts. Good luck!",
+			text = "Spend your cash on upgrades, then rebirth for permanent boosts.",
 			camera = {
 				Position = Vector3.new(-38.124, 55.946, -121.592),
 				Orientation = Vector3.new(-26.526, 45.613, 0),
 				FieldOfView = 70,
 			},
 		},
+		{
+			text = "If you run out of cash, complete these obbies to earn more. Good luck!",
+			boxPosition = UDim2.fromScale(0.5, 0.8),
+			camera = {
+				Position = Vector3.new(13.617, 69.141, -135.484),
+				Orientation = Vector3.new(-14.94, -20.121, 0),
+				FieldOfView = 70,
+			},
+
+		}
 	},
 }
 

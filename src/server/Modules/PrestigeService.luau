@@ -11,6 +11,8 @@ local Players = game:GetService("Players")
 
 local Config = require(RS.Shared.Config)
 local Signal = require(RS.Shared.Signal)
+local AnnounceUI = require(RS.Shared.AnnounceUI)
+local WarnUI = require(RS.Shared.WarnUI)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local BallService = require(SSS.Scripts.Modules.BallService)
@@ -18,15 +20,31 @@ local StatsService = require(SSS.Scripts.Modules.StatsService)
 
 local PrestigeService = {}
 
+-- Banner colour for the "Rebirth available!" announce — matches PrestigeUI's violet.
+local REBIRTH_PURPLE = Color3.fromRGB(179, 136, 255)
+
 -- (player, info) — fired after prestige state changes.
 PrestigeService.Changed = Signal.new()
 
 export type PrestigeData = {
 	count: number,
+	-- True cumulative banked, never frozen — the cosmetic "Lifetime Banked" stat.
 	lifetimeBanked: number,
+	-- The portion of banking that has been credited toward earning PP. Stops growing
+	-- while available PP is at the hold cap (the anti-hoard freeze), so excess banking
+	-- past the cap yields no PP. Equals lifetimeBanked until the first time you cap out.
+	creditedBanked: number,
+	-- Total PP consumed by prestiges so far. availablePP = earnedPP(creditedBanked) - ppSpent.
+	ppSpent: number,
 }
 
 local data: { [number]: PrestigeData } = {}
+
+-- Runtime-only alert state (not persisted): whether prestige was affordable as of the last
+-- banking (so "Prestige available!" announces once on the false→true edge), and the os.clock()
+-- of the last "PP limit" nag (so it throttles to Config.Prestige.LimitWarnInterval).
+local alertCanPrestige: { [number]: boolean } = {}
+local lastLimitWarn: { [number]: number } = {}
 
 local function get(player: Player): PrestigeData
 	local d = data[player.UserId]
@@ -34,14 +52,45 @@ local function get(player: Player): PrestigeData
 	return d
 end
 
--- PP = floor((lifetimeBanked / Scale) ^ Exponent)
-local function computePP(lifetimeBanked: number): number
-	return math.floor((lifetimeBanked / Config.Prestige.Scale) ^ Config.Prestige.Exponent)
+-- Total PP ever earned from a given amount of credited banking:
+-- earnedPP = floor((creditedBanked / Scale) ^ Exponent). Concave (Exponent < 1).
+local function computePP(creditedBanked: number): number
+	return math.floor((creditedBanked / Config.Prestige.Scale) ^ Config.Prestige.Exponent)
 end
 
 -- Cost for the Nth prestige (1-indexed): ceil(CostBase × CostGrowth^(N-1))
 local function computeCost(n: number): number
 	return math.ceil(Config.Prestige.CostBase * Config.Prestige.CostGrowth ^ (n - 1))
+end
+
+-- Sum of costs for prestiges 1..n — the PP a player at `count = n` has already spent.
+-- Looped (not closed-form) so it matches the per-level ceil() exactly.
+local function totalCostThrough(n: number): number
+	local total = 0
+	for k = 1, n do
+		total += computeCost(k)
+	end
+	return total
+end
+
+-- Available (spendable) PP and the current hold cap, from a player's data.
+local function availablePP(d: PrestigeData): number
+	return math.max(0, computePP(d.creditedBanked) - d.ppSpent)
+end
+
+local function holdCapFor(count: number): number
+	return math.ceil(Config.Prestige.HoldCapMult * computeCost(count + 1))
+end
+
+-- The creditedBanked value at which available PP reaches the hold cap. Banking is clamped to
+-- this (inverting earnedPP = (creditedBanked/Scale)^Exp), so available PP can't overshoot
+-- HoldCapMult × nextCost no matter how large a single bank is — and creditedBanked never holds
+-- a hidden reservoir above the cap that could chain a second rebirth after spending.
+local function creditedCapFor(d: PrestigeData): number
+	-- +0.5 so the floor in computePP lands cleanly on the cap (not cap-1 from float error),
+	-- while still keeping floored available PP at exactly the cap and never above it.
+	local earnedCap = d.ppSpent + holdCapFor(d.count) + 0.5
+	return Config.Prestige.Scale * earnedCap ^ (1 / Config.Prestige.Exponent)
 end
 
 export type PrestigeInfo = {
@@ -54,12 +103,12 @@ export type PrestigeInfo = {
 }
 
 local function buildInfo(d: PrestigeData): PrestigeInfo
-	local pp = computePP(d.lifetimeBanked)
+	local pp = availablePP(d)
 	local nextCost = computeCost(d.count + 1)
 	return {
 		count = d.count,
 		lifetimeBanked = d.lifetimeBanked,
-		prestigePoints = pp,
+		prestigePoints = pp, -- spendable PP, not lifetime total (earn/spend currency)
 		nextCost = nextCost,
 		canPrestige = pp >= nextCost,
 		multiplier = Config.Prestige.MultPer ^ d.count,
@@ -83,28 +132,56 @@ function PrestigeService.GetMultiplier(player: Player): number
 	return Config.Prestige.MultPer ^ get(player).count
 end
 
--- Dev only: directly set prestige count (bypasses cost check).
+-- Dev only: directly set prestige count (bypasses cost check). Re-anchors ppSpent to the
+-- cost of those prestiges so available PP stays consistent (e.g. /reset to count 0 zeroes it).
 function PrestigeService.SetCount(player: Player, count: number)
 	local d = get(player)
 	d.count = count
+	d.ppSpent = totalCostThrough(count)
 	PrestigeService.Changed:Fire(player, buildInfo(d))
 end
 
--- Dev only: directly set lifetime banked (adjusts PP without a real run).
+-- Dev only: directly set lifetime banked (adjusts PP without a real run). Sets both the
+-- cosmetic total and the PP-crediting accumulator so available PP reflects it immediately.
 function PrestigeService.SetLifetimeBanked(player: Player, amount: number)
 	local d = get(player)
 	d.lifetimeBanked = amount
+	d.creditedBanked = amount
 	PrestigeService.Changed:Fire(player, buildInfo(d))
 end
 
--- Called by ScoreHandler every time a ball banks, to accumulate lifetime banked.
+-- Called by ScoreHandler every time a ball banks. Always grows the cosmetic lifetime total;
+-- only credits PP while available PP is below the hold cap. Once you're holding ~HoldCapMult ×
+-- the next cost, further banking earns no PP — so you can't farm lifetime banked into a
+-- stockpile of prestiges; you have to actually prestige to make banking matter again.
 function PrestigeService.AddLifetimeBanked(player: Player, amount: number)
 	local d = data[player.UserId]
 	if not d then
 		return
 	end
 	d.lifetimeBanked += amount
-	PrestigeService.Changed:Fire(player, buildInfo(d))
+	-- Credit PP, but hard-clamp at the cap so a single big bank can't overshoot it.
+	local cap = creditedCapFor(d)
+	d.creditedBanked = math.min(d.creditedBanked + amount, cap)
+	local capped = d.creditedBanked >= cap
+
+	-- Announce the moment prestige becomes affordable (once, on the rising edge).
+	local info = buildInfo(d)
+	if info.canPrestige and not alertCanPrestige[player.UserId] then
+		AnnounceUI.Announce(player, "Rebirth available!", REBIRTH_PURPLE, 3)
+	end
+	alertCanPrestige[player.UserId] = info.canPrestige
+
+	-- While banking is capped (PP wasted until they rebirth), nag at most once per interval.
+	if capped then
+		local now = os.clock()
+		if now - (lastLimitWarn[player.UserId] or 0) >= Config.Prestige.LimitWarnInterval then
+			WarnUI.Warn(player, "RP limit exceeded, rebirth recommended", nil, 5)
+			lastLimitWarn[player.UserId] = now
+		end
+	end
+
+	PrestigeService.Changed:Fire(player, info)
 end
 
 -- Attempt a prestige. Returns (ok, reason?). On success: wipes upgrades/loadout,
@@ -126,7 +203,13 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	BallService.RemoveOwnership(player.UserId)
 	ScoringService.ClearOwner(player.UserId)
 
+	-- Spend the PP: deduct this prestige's cost so it can't be re-spent. creditedBanked is
+	-- left intact (it's a high-water mark), so available PP simply drops by nextCost — leaving
+	-- at most the ~1× buffer the hold cap allows, never enough to chain a second prestige.
+	d.ppSpent += info.nextCost
 	d.count += 1
+	-- Re-arm the "Prestige available!" edge so it announces again next time they climb back.
+	alertCanPrestige[player.UserId] = false
 	ProfileService.ResetProfile(player)
 	-- Wipe the run's balance too: prestige resets upgrades AND money back to the
 	-- configured starting balance.
@@ -158,9 +241,17 @@ end
 
 -- Set prestige state from saved data (or fresh zero). Called by DataService on join.
 function PrestigeService.ApplyData(player: Player, saved: PrestigeData?)
+	local count = (saved and saved.count) or 0
+	local lifetimeBanked = (saved and saved.lifetimeBanked) or 0
 	local d: PrestigeData = {
-		count = (saved and saved.count) or 0,
-		lifetimeBanked = (saved and saved.lifetimeBanked) or 0,
+		count = count,
+		lifetimeBanked = lifetimeBanked,
+		-- Back-compat: data saved before the earn/spend split has no creditedBanked/ppSpent.
+		-- Credit equals the lifetime total, and treat the player's existing prestiges as already
+		-- paid for (sum of their costs), so available PP starts consistent rather than refunding
+		-- every past prestige at once.
+		creditedBanked = (saved and saved.creditedBanked) or lifetimeBanked,
+		ppSpent = (saved and saved.ppSpent) or totalCostThrough(count),
 	}
 	data[player.UserId] = d
 	PrestigeService.Changed:Fire(player, buildInfo(d))
@@ -173,6 +264,8 @@ end
 
 function PrestigeService.Clear(player: Player)
 	data[player.UserId] = nil
+	alertCanPrestige[player.UserId] = nil
+	lastLimitWarn[player.UserId] = nil
 end
 
 function PrestigeService.Init()
