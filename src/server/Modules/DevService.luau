@@ -1084,7 +1084,8 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		if not ev then
 			return "podium test hook not found (PhysicalRebirthsLeaderboard not loaded?)"
 		end
-		ev:Fire(player.UserId)
+		local userId = tonumber(a2)
+		ev:Fire(if userId then userId else player.UserId)
 		return "loaded your character onto all 3 podium spots"
 	elseif cmd == "attempt_prestige" then
 		local ok, reason = PrestigeService.Prestige(player)

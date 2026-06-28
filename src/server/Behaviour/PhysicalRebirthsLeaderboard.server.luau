@@ -18,6 +18,8 @@ local AnimationService = require(ReplicatedStorage.Shared.AnimationService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local DataService = require(SSS.Scripts.Modules.DataService)
 
+local R15_RIG: Model = ReplicatedStorage:WaitForChild("Assets"):WaitForChild("R15Rig")
+
 local GOLD_SEQ = ColorSequence.new(Color3.fromRGB(254,256,107), Color3.fromRGB(187,170,56))
 local SILV_SEQ = ColorSequence.new(Color3.fromRGB(255,255,255), Color3.fromRGB(162,183,190))
 local BRNZ_SEQ = ColorSequence.new(Color3.fromRGB(242,191,130), Color3.fromRGB(190,143,70))
@@ -65,6 +67,8 @@ local SLOT_DEFS = {
 local podiumSlots: { PodiumSlot } = {}
 for slot, def in SLOT_DEFS do
     local rig = podium:WaitForChild(def.rig)
+    local hum = rig:FindFirstChild("Humanoid")
+    assert(hum)
     local nameTemplate: BillboardGui? = nil
     local existingName = rig:FindFirstChild("Username", true)
     if existingName and existingName:IsA("BillboardGui") then
@@ -78,7 +82,7 @@ for slot, def in SLOT_DEFS do
         animationId = def.anim,
         nameTemplate = nameTemplate,
     }
-    rig:Destroy() -- marker consumed; built avatars take its place
+    rig:Destroy()
 end
 
 -- Persistent leaderboard via DataService (false in Studio → per-server fallback below).
@@ -157,26 +161,43 @@ end
 local function buildStatue(slot: number, userId: number)
     local s = podiumSlots[slot]
 
-    local ok, model = pcall(function()
-        return Players:CreateHumanoidModelFromUserId(userId)
+    -- local ok, model = pcall(function()
+    --     return Players:CreateHumanoidModelFromUserIdAsync(userId)
+    -- end)
+    -- if not ok or not model then
+    --     warn(("PhysicalRebirthsLeaderboard: CreateHumanoidModelFromUserId failed for %d: %s"):format(userId, tostring(model)))
+    --     if s.userId == userId then
+    --         s.userId = nil
+    --     end
+    --     return
+    -- end
+    -- if s.userId ~= userId then
+    --     model:Destroy() -- slot moved on while we were fetching
+    --     return
+    -- end
+
+    local ok, humDesc = pcall(function()
+        return Players:GetHumanoidDescriptionFromUserIdAsync(userId)
     end)
-    if not ok or not model then
-        warn(("PhysicalRebirthsLeaderboard: CreateHumanoidModelFromUserId failed for %d: %s"):format(userId, tostring(model)))
+    if not ok or not humDesc then
+        warn(("PhysicalRebirthsLeaderboard: GetHumanoidDescriptionFromUserIdAsync failed for %d: %s"):format(userId, tostring(s.rig)))
         if s.userId == userId then
             s.userId = nil
         end
         return
     end
-    if s.userId ~= userId then
-        model:Destroy() -- slot moved on while we were fetching
+
+    local model = R15_RIG:Clone()
+    model.Name = "PodiumStatue" .. slot
+    model.Parent = podium
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        warn(("PhysicalRebirthsLeaderboard: Loaded R15 Rig does not contain Humanoid: %s"):format(tostring(R15_RIG)))
         return
     end
 
-    model.Name = "PodiumStatue" .. slot
-    local humanoid = model:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-    end
+    humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    humanoid:ApplyDescriptionAsync(humDesc)
 
     local hrp = model:FindFirstChild("HumanoidRootPart") :: BasePart?
     if hrp then
@@ -193,8 +214,6 @@ local function buildStatue(slot: number, userId: number)
         styleNameGui(nameGui, slot, userId)
         nameGui.Parent = hrp or model
     end
-
-    model.Parent = podium
 
     local handle: AnimationService.Handle? = nil
     if s.animationId ~= "" then

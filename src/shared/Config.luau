@@ -155,7 +155,7 @@ Config.Groups = {
 }
 
 -- Admin UserIds: granted dev commands (DevService) and hidden from every leaderboard.
-Config.Admins = { 89831196, 338455474, 110797589 }
+Config.Admins = { 89831196, 338455474, 110797589, 245715627 }
 
 Config.Prestige = {
 	Scale      = 10000, -- denominator in PP formula
