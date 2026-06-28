@@ -18,7 +18,12 @@ local RunService = game:GetService("RunService")
 
 local Config = require(RS.Shared.Config)
 local Signal = require(RS.Shared.Signal)
+local StringUtils = require(RS.Shared.StringUtils)
+local WarnUI = require(RS.Shared.WarnUI)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+
+local CLAIM_WARN_COLOR = Color3.fromRGB(90, 220, 120) -- green
+local CLAIM_WARN_LIFETIME = 2.5
 
 local PlaytimeBonusService = {}
 
@@ -26,14 +31,14 @@ local PlaytimeBonusService = {}
 PlaytimeBonusService.Changed = Signal.new()
 
 export type PlaytimeData = {
-	total: number,   -- cumulative seconds played (persisted; the live value adds the session)
-	claimed: number, -- number of ladder rungs already claimed
+	total: number,      -- cumulative seconds played (persisted; the live value adds the session)
+	claimed: { number }, -- indices of ladder rungs already claimed (rungs claim independently)
 }
 
 type State = {
 	base: number,         -- persisted seconds at load
 	sessionStart: number, -- os.clock() captured at load; session elapsed = now - this
-	claimed: number,
+	claimed: { [number]: boolean }, -- set of claimed rung indices
 	lastReached: number,  -- last reachedCount we pushed a Changed for (rung-crossing throttle)
 }
 
@@ -79,13 +84,19 @@ local function buildInfo(state: State): Info
 	local reached = reachedCount(total)
 	local rungInfos: { RungInfo } = {}
 	local availableReward = 0
+	local availableCount = 0
+	local claimedCount = 0
 	local nextTime: number? = nil
 	for i, rung in rungs() do
 		local isReached = i <= reached
-		local isClaimed = i <= state.claimed
+		local isClaimed = state.claimed[i] == true
 		rungInfos[i] = { time = rung.Time, reward = rung.Reward, reached = isReached, claimed = isClaimed }
+		if isClaimed then
+			claimedCount += 1
+		end
 		if isReached and not isClaimed then
 			availableReward += rung.Reward
+			availableCount += 1
 		end
 		if not isReached and nextTime == nil then
 			nextTime = rung.Time
@@ -93,8 +104,8 @@ local function buildInfo(state: State): Info
 	end
 	return {
 		total = total,
-		claimedCount = state.claimed,
-		availableCount = math.max(0, reached - state.claimed),
+		claimedCount = claimedCount,
+		availableCount = availableCount,
 		availableReward = availableReward,
 		nextTime = nextTime,
 		rungs = rungInfos,
@@ -113,27 +124,40 @@ function PlaytimeBonusService.GetInfo(player: Player): Info?
 	return buildInfo(state)
 end
 
--- Claim every reached-but-unclaimed rung at once. Returns the cash granted (0 if none).
-function PlaytimeBonusService.Claim(player: Player): number
+-- Claim one specific rung (by index), if it's reached and not already claimed. Returns the
+-- cash granted (0 if it wasn't claimable).
+function PlaytimeBonusService.Claim(player: Player, index: number): number
 	local state = states[player]
 	if not state then
 		return 0
 	end
-	local reached = reachedCount(liveTotal(state))
-	if reached <= state.claimed then
+	local rung = rungs()[index]
+	if not rung then
 		return 0
 	end
-	local reward = 0
-	for i = state.claimed + 1, reached do
-		reward += rungs()[i].Reward
+	if state.claimed[index] then
+		return 0 -- already claimed
 	end
-	state.claimed = reached
-	state.lastReached = reached
-	if reward > 0 then
-		CurrencyService.AddPoints(player, reward, "Playtime bonus")
+	if liveTotal(state) < rung.Time then
+		return 0 -- not reached yet
 	end
+	state.claimed[index] = true
+	CurrencyService.AddPoints(player, rung.Reward, "Playtime bonus")
+	WarnUI.Warn(player, "Playtime Bonus Claimed: $" .. StringUtils.FormatShort(rung.Reward), CLAIM_WARN_COLOR, CLAIM_WARN_LIFETIME)
 	fireChanged(player, state)
-	return reward
+	return rung.Reward
+end
+
+-- Dev only: set cumulative playtime directly (re-anchors the session so liveTotal == seconds).
+function PlaytimeBonusService.SetPlaytime(player: Player, seconds: number)
+	local state = states[player]
+	if not state then
+		return
+	end
+	state.base = seconds
+	state.sessionStart = os.clock()
+	state.lastReached = reachedCount(seconds)
+	fireChanged(player, state)
 end
 
 ----------------------------------------------------------------
@@ -141,10 +165,24 @@ end
 ----------------------------------------------------------------
 function PlaytimeBonusService.ApplyData(player: Player, saved: PlaytimeData?)
 	local base = (saved and saved.total) or 0
+	local claimedSet: { [number]: boolean } = {}
+	local savedClaimed = saved and (saved :: any).claimed
+	if type(savedClaimed) == "number" then
+		-- Legacy in-order count: the first N rungs were claimed.
+		for i = 1, savedClaimed do
+			claimedSet[i] = true
+		end
+	elseif type(savedClaimed) == "table" then
+		for _, idx in savedClaimed do
+			if type(idx) == "number" then
+				claimedSet[idx] = true
+			end
+		end
+	end
 	local state: State = {
 		base = base,
 		sessionStart = os.clock(),
-		claimed = (saved and saved.claimed) or 0,
+		claimed = claimedSet,
 		lastReached = reachedCount(base),
 	}
 	states[player] = state
@@ -154,9 +192,16 @@ end
 function PlaytimeBonusService.SerializeData(player: Player): PlaytimeData
 	local state = states[player]
 	if not state then
-		return { total = 0, claimed = 0 }
+		return { total = 0, claimed = {} }
 	end
-	return { total = liveTotal(state), claimed = state.claimed }
+	local arr: { number } = {}
+	for idx, on in state.claimed do
+		if on then
+			table.insert(arr, idx)
+		end
+	end
+	table.sort(arr)
+	return { total = liveTotal(state), claimed = arr }
 end
 
 function PlaytimeBonusService.Clear(player: Player)
@@ -179,8 +224,8 @@ function PlaytimeBonusService.Init()
 	;(getRemote("GetPlaytimeInfo", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player)
 		return PlaytimeBonusService.GetInfo(player)
 	end
-	;(getRemote("ClaimPlaytimeBonus", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player)
-		local granted = PlaytimeBonusService.Claim(player)
+	;(getRemote("ClaimPlaytimeBonus", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player, index: any)
+		local granted = if type(index) == "number" then PlaytimeBonusService.Claim(player, index) else 0
 		return { granted = granted, info = PlaytimeBonusService.GetInfo(player) }
 	end
 

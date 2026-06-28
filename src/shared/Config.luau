@@ -568,7 +568,7 @@ Config.Tutorial = {
 			},
 		},
 		{
-			text = "If you run out of cash, complete these obbies to earn more. Good luck!",
+			text = "If you run out of cash, complete these obbies to earn more. There are also coins available around the map to collect. Good luck!",
 			boxPosition = UDim2.fromScale(0.5, 0.8),
 			camera = {
 				Position = Vector3.new(13.617, 69.141, -135.484),

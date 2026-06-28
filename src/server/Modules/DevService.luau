@@ -39,6 +39,7 @@ local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ScoringService = require(SSS.Scripts.Modules.ScoringService)
 local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 
 local DevService = {}
 
@@ -1067,6 +1068,15 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		local info = PrestigeService.GetInfo(player)
 		return string.format("lifetimeBanked -> %.0f  PP -> %d  nextCost -> %d  canPrestige -> %s",
 			info.lifetimeBanked, info.prestigePoints, info.nextCost, tostring(info.canPrestige))
+	elseif cmd == "playtime" then
+		local mins = tonumber(a2)
+		if not mins then return "usage: /playtime <minutes>" end
+		mins = math.max(0, mins)
+		PlaytimeBonusService.SetPlaytime(player, mins * 60)
+		local info = PlaytimeBonusService.GetInfo(player)
+		if not info then return "playtime set, but no info (data not loaded yet?)" end
+		return string.format("playtime -> %.0f min  reached %d/%d  claimable %d ($%d)",
+			mins, info.claimedCount + info.availableCount, #info.rungs, info.availableCount, info.availableReward)
 	elseif cmd == "podium" then
 		-- Load the caller's character onto all three rebirths-podium spots, to eyeball the
 		-- build/pose/scale. Routed to PhysicalRebirthsLeaderboard via its server-only hook.
