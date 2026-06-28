@@ -22,6 +22,8 @@ local BallTuningPreview = require(PlayerScripts:WaitForChild("BallTuningPreview"
 local JackpotGateUI = require(PlayerScripts:WaitForChild("JackpotGateUI"))
 local GroupRewardUI = require(PlayerScripts:WaitForChild("GroupRewardUI"))
 local TutorialService = require(PlayerScripts:WaitForChild("TutorialService"))
+local CoinPickups = require(PlayerScripts:WaitForChild("CoinPickups"))
+local PlaytimeUI = require(PlayerScripts:WaitForChild("PlaytimeUI"))
 local Config = require(RS.Shared:WaitForChild("Config"))
 
 print("Bootstrapping services...")
@@ -43,6 +45,8 @@ BallTuningPreview.Init()
 JackpotGateUI.Init()
 GroupRewardUI.Init()
 TutorialService.Init()
+CoinPickups.Init()
+PlaytimeUI.Init()
 
 -- Start shuffle-play background music on join (each track once per cycle, then reshuffle).
 SoundService.SetBackgroundPlaylist(Config.BackgroundPlaylist)

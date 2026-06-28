@@ -1,0 +1,195 @@
+--!strict
+-- Per-player collectible coins. Each workspace part tagged Config.Tags.Coin is a spawn
+-- LOCATION (shared geometry); this service owns, per player, which locations are currently
+-- "active" and what each is worth. Activations/deactivations are sent to that one player's
+-- client (CoinPickups), which renders, animates, and detects the pickup locally — so coins
+-- are independent per player even though the parts are shared. The client requests a claim;
+-- the server validates it against that player's active set, awards the cash, deactivates,
+-- and announces the reward. Spawn cadence, cap, value range, etc. live in Config.Coins.
+
+local SSS = game:GetService("ServerScriptService")
+local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+
+local Config = require(RS.Shared.Config)
+local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+local WarnUI = require(RS.Shared.WarnUI)
+local SoundService = require(RS.Shared.SoundService)
+local StringUtils = require(RS.Shared.StringUtils)
+
+local CoinService = {}
+
+local REWARD_COLOR = Color3.fromRGB(255, 210, 60)
+
+type PlayerState = {
+	active: { [Instance]: number }, -- coin location -> value
+	count: number,
+	ready: boolean,                 -- client has announced it's listening (CoinReady)
+	nextSpawn: number,              -- os.clock() of the next scheduled spawn (huge until ready)
+}
+
+local states: { [Player]: PlayerState } = {}
+
+-- Remotes (created in Init).
+local activateRE: RemoteEvent
+local deactivateRE: RemoteEvent
+local claimRE: RemoteEvent
+local readyRE: RemoteEvent
+
+local function coinLocations(): { Instance }
+	return CollectionService:GetTagged(Config.Tags.Coin)
+end
+
+-- Random reward snapped to ValueStep, inclusive of both ends of the range.
+local function rollValue(): number
+	local c = Config.Coins
+	local steps = math.floor((c.ValueMax - c.ValueMin) / c.ValueStep)
+	return c.ValueMin + math.random(0, steps) * c.ValueStep
+end
+
+local function scheduleNext(state: PlayerState)
+	local c = Config.Coins
+	state.nextSpawn = os.clock() + c.SpawnIntervalMin
+		+ math.random() * (c.SpawnIntervalMax - c.SpawnIntervalMin)
+end
+
+-- Activate one currently-inactive location for this player, if there's room and a free spot.
+local function spawnFor(player: Player, state: PlayerState)
+	if state.count >= Config.Coins.MaxActive then
+		return
+	end
+	local candidates: { Instance } = {}
+	for _, coin in coinLocations() do
+		if not state.active[coin] then
+			table.insert(candidates, coin)
+		end
+	end
+	if #candidates == 0 then
+		return
+	end
+	local coin = candidates[math.random(1, #candidates)]
+	local value = rollValue()
+	state.active[coin] = value
+	state.count += 1
+	activateRE:FireClient(player, coin, value)
+end
+
+-- Client is listening: seed its initial coins and start its spawn timer. Re-ready (e.g. a
+-- client re-init) just replays the current active set so nothing is lost.
+local function onReady(player: Player)
+	local state = states[player]
+	if not state then
+		return
+	end
+	if state.ready then
+		for coin, value in state.active do
+			activateRE:FireClient(player, coin, value)
+		end
+		return
+	end
+	state.ready = true
+	for _ = 1, Config.Coins.InitialSpawn do
+		spawnFor(player, state)
+	end
+	scheduleNext(state)
+end
+
+-- Client touched a coin and wants to claim it. Validate against this player's active set,
+-- award, announce, and deactivate. Always deactivate on the client so a stray/stale claim
+-- can't leave a coin stuck hidden.
+local function onClaim(player: Player, coin: Instance)
+	local state = states[player]
+	if not state then
+		return
+	end
+	local value = state.active[coin]
+	if not value then
+		deactivateRE:FireClient(player, coin)
+		return
+	end
+	state.active[coin] = nil
+	state.count -= 1
+	CurrencyService.AddPoints(player, value, "Coin pickup")
+	WarnUI.Warn(player, "+$" .. StringUtils.FormatShort(value), REWARD_COLOR, Config.Coins.RewardWarnLifetime)
+	SoundService.PlayForClient(player, { soundId = Config.Sounds.Collect1 })
+	deactivateRE:FireClient(player, coin)
+end
+
+local function onPlayerAdded(player: Player)
+	states[player] = { active = {}, count = 0, ready = false, nextSpawn = math.huge }
+end
+
+local function onPlayerRemoving(player: Player)
+	states[player] = nil
+end
+
+-- Coins must never interfere with the ball simulation or block players (visibility is per
+-- player, handled on the client). Make them inert + static, authoritatively, for everyone.
+local function makeInert(coin: Instance)
+	if coin:IsA("BasePart") then
+		coin.CanCollide = false
+		coin.Anchored = true
+	end
+	for _, d in coin:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.CanCollide = false
+			d.Anchored = true
+		end
+	end
+end
+
+function CoinService.Init()
+	activateRE = Instance.new("RemoteEvent")
+	activateRE.Name = "CoinActivate"
+	activateRE.Parent = RS.Remote
+	deactivateRE = Instance.new("RemoteEvent")
+	deactivateRE.Name = "CoinDeactivate"
+	deactivateRE.Parent = RS.Remote
+	claimRE = Instance.new("RemoteEvent")
+	claimRE.Name = "CoinClaim"
+	claimRE.Parent = RS.Remote
+	readyRE = Instance.new("RemoteEvent")
+	readyRE.Name = "CoinReady"
+	readyRE.Parent = RS.Remote
+
+	for _, coin in coinLocations() do
+		makeInert(coin)
+	end
+	CollectionService:GetInstanceAddedSignal(Config.Tags.Coin):Connect(makeInert)
+	CollectionService:GetInstanceRemovedSignal(Config.Tags.Coin):Connect(function(coin)
+		for _, state in states do
+			if state.active[coin] then
+				state.active[coin] = nil
+				state.count -= 1
+			end
+		end
+	end)
+
+	claimRE.OnServerEvent:Connect(function(player, coin)
+		if typeof(coin) == "Instance" then
+			onClaim(player, coin)
+		end
+	end)
+	readyRE.OnServerEvent:Connect(onReady)
+
+	for _, player in Players:GetPlayers() do
+		onPlayerAdded(player)
+	end
+	Players.PlayerAdded:Connect(onPlayerAdded)
+	Players.PlayerRemoving:Connect(onPlayerRemoving)
+
+	-- Spawn ticker: once a ready player's timer elapses, activate a coin and reschedule.
+	RunService.Heartbeat:Connect(function()
+		local now = os.clock()
+		for player, state in states do
+			if state.ready and now >= state.nextSpawn then
+				spawnFor(player, state)
+				scheduleNext(state)
+			end
+		end
+	end)
+end
+
+return CoinService

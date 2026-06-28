@@ -33,6 +33,7 @@ local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
+local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 
 local DataService = {}
 
@@ -132,6 +133,7 @@ export type PlayerBlob = {
 	profile: ProfileService.Profile?,
 	prestige: PrestigeService.PrestigeData?,
 	stats: StatsService.Stats?,
+	playtime: PlaytimeBonusService.PlaytimeData?,
 }
 
 -- Players whose load succeeded (so we may safely save them). A player who never
@@ -178,6 +180,7 @@ local function applyBlob(player: Player, blob: PlayerBlob?)
 	ProfileService.ApplyData(player, blob and blob.profile)
 	PrestigeService.ApplyData(player, blob and blob.prestige)
 	StatsService.ApplyData(player, blob and blob.stats)
+	PlaytimeBonusService.ApplyData(player, blob and blob.playtime)
 end
 
 local function serializeBlob(player: Player): PlayerBlob
@@ -186,6 +189,7 @@ local function serializeBlob(player: Player): PlayerBlob
 		profile = ProfileService.SerializeData(player),
 		prestige = PrestigeService.SerializeData(player),
 		stats = StatsService.SerializeData(player),
+		playtime = PlaytimeBonusService.SerializeData(player),
 	}
 end
 
@@ -461,6 +465,7 @@ local function onPlayerRemoving(player: Player)
 	ProfileService.Clear(player)
 	PrestigeService.Clear(player)
 	StatsService.Clear(player)
+	PlaytimeBonusService.Clear(player)
 end
 
 function DataService.Init()

@@ -41,6 +41,7 @@ Config.Tags = {
 	Obby = "Obby",                       -- An obby model auto-wired by ObbyService (see ObbyZone)
 	GroupReward = "GroupReward",         -- A floor part that grants the group reward on touch (see GroupRewardService)
 	UpgradeShop = "UpgradeShop",         -- A part that opens the upgrade shop on touch (Track attribute picks the track; see client UpgradeShop)
+	Coin = "Coin",                       -- A collectible-coin spawn location (per-player; see CoinService server + CoinPickups client)
 }
 
 Config.Attributes = {
@@ -101,7 +102,44 @@ Config.DestroyTargets = {
 }
 
 Config.Currency = {
-	StartingBalance = 500,
+	-- Cold-start onboarding: 100 couldn't afford a single core upgrade (cheapest was 230), so
+	-- new players could only buy near-useless cheap axes and bled out. 1000 buys ~3 core tiers
+	-- up front so the first decisions are impactful ones. Axes were repriced to ~1.5–2k so they
+	-- sit ABOVE the core tracks (mid-game purchases), not below them.
+	StartingBalance = 1000,
+}
+
+-- Per-player collectible coins. Each workspace part tagged Config.Tags.Coin is a spawn
+-- LOCATION (shared geometry); the server (CoinService) owns which locations are "active" for
+-- each player and what each is worth, while the client (CoinPickups) renders, animates, and
+-- collects them locally — so coins are independent per player. Onboarding income that keeps
+-- new players afloat while they figure out the upgrade loop.
+Config.Coins = {
+	MaxActive = 5,            -- most coins active for one player at a time
+	InitialSpawn = 2,         -- coins handed to a player as soon as their client is ready
+	SpawnIntervalMin = 30,    -- seconds between spawns (uniform random in [min, max]) per player
+	SpawnIntervalMax = 60,
+	ValueMin = 100,           -- reward range (cash), inclusive both ends
+	ValueMax = 2000,
+	ValueStep = 50,           -- rewards snap to this increment
+	ShineTopFraction = 0.25,  -- coins in the top this fraction of the value range also get a light
+	RedTopFraction = 0.5,     -- coins in the top this fraction are tinted red (parts + decals)
+	RewardWarnLifetime = 2,   -- seconds the "+$X" WarnUI banner stays up
+	ValuePoissonMean = 6.8    -- Poisson lambda (steps above ValueMin)
+}
+
+-- Playtime reward ladder (see PlaytimeBonusService). Cumulative seconds played -> claimable
+-- cash bonus. Retention + early-game afloat. Rungs MUST be ascending by Time and are claimed
+-- in order, so only APPEND new rungs (the persisted claimed-count assumes a stable order).
+Config.PlaytimeBonuses = {
+	Rungs = {
+		{ Time = 3 * 60,   Reward = 1000 },
+		{ Time = 15 * 60,  Reward = 5000 },
+		{ Time = 45 * 60,  Reward = 20000 },
+		{ Time = 90 * 60,  Reward = 50000 },
+		{ Time = 180 * 60, Reward = 150000 },
+		{ Time = 360 * 60, Reward = 500000 },
+	},
 }
 
 -- Ball physics caps. MaxSpeed bounds a ball's velocity magnitude (studs/sec) while it
@@ -145,7 +183,7 @@ Config.Prestige = {
 
 Config.Economy = {
 	StartMaxBet = 40,         -- guideline §4; base for the MaxBet track
-	TrickleFraction = 0.01,    -- × currentMaxBet, free per batch (§1.2)
+	TrickleFraction = 0.05,    -- × currentMaxBet, free per batch (§1.2)
 	VJackFraction = 0.55,     -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
 	BasePriceGrowth = 4.5,    -- default upgrade Cost.Growth (price multiplier per tier)
 }
@@ -176,7 +214,7 @@ Config.Upgrades = {
 	MaxBet = {
 		PerTier = 1.5,
 		Cost = { Base = 250, Growth = 1.9 },
-		Name = "Max Bet", Desc = "Raise your betting ceiling.",
+		Name = "Max Bet", Short = "Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰"
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
@@ -189,7 +227,7 @@ Config.Upgrades = {
 	FlatRate = {
 		Base = 0.2, PerTier = 1.85,
 		Cost = { Base = 260, Growth = 1.9 },
-		Name = "Combo", Desc = "More cash per bounce during a combo ("..Config.Scoring.MinCombo.." or more)",
+		Name = "Combo", Short = "Combo", Desc = "More cash per bounce during a combo ("..Config.Scoring.MinCombo.." or more)",
 		Icon = "⚡"
 	},
 	-- baseAdditive = Base + C1 * tier + C2 * tier^2 + C3 * tier^3
@@ -198,7 +236,7 @@ Config.Upgrades = {
 	BaseAdditive = {
 		Base = 0.0, C1 = 0.05, C2 = 0.0, C3 = 0.0,
 		Cost = { Base = 300, Growth = 1.7 },
-		Name = "Base Bonus", Desc = "Boost your marble cash payout.",
+		Name = "Base Bonus", Short = "Base", Desc = "Boost your marble cash payout.",
 		Icon = "➕"
 	},
 	-- Minimum delay between launches. PerTier 0.67→0.82: gentler throughput ramp. Cost growth
@@ -207,7 +245,7 @@ Config.Upgrades = {
 		Base = 2, PerTier = 0.82,
 		MaxTier = 12,
 		Cost = { Base = 230, Growth = 1.9 },
-		Name = "Launch Delay", Desc = "Decrease time between launches",
+		Name = "Launch Delay", Short = "Freq", Desc = "Decrease time between launches",
 		Icon = "🔄"
 	},
 	-- pegHeatFactor = PerTier * tier (additive). Sensitivity to peg heat (§1.5,
@@ -216,7 +254,7 @@ Config.Upgrades = {
 	PegHeat = {
 		PerTier = 0.05,  -- INFERRED magnitude; tune against the heat map
 		Cost = { Base = 220, Growth = 1.7 },
-		Name = "Heat Sense", Desc = "Hot and cold obstacles affect you more strongly.",
+		Name = "Heat Sense", Short = "Heat", Desc = "Hot and cold obstacles affect you more strongly.",
 		Icon = "🔥"
 	},
 }
@@ -238,6 +276,7 @@ type AxisDef = {
 	Ranges: { { Min: number, Max: number } },
 	Cost: { Base: number, Growth: number }?,
 	Name: string?,
+	Short: string?,
 	Desc: string?,
 	Icon: string?
 }
@@ -259,8 +298,8 @@ Config.Axes = {
 			{ Min = 0.04, Max = 0.96 },
 			{ Min = 0.0, Max = 1.0 },
 		},
-		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Bounciness", Desc = "How bouncy the marble is.",
+		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Name = "Bounciness", Short = "Bounce", Desc = "How bouncy the marble is.",
 		Icon = "💨"
 	},
 	Size = {
@@ -280,8 +319,8 @@ Config.Axes = {
 			{ Min = 0.51, Max = 0.98 },
 			{ Min = 0.5, Max = 1 },
 		},
-		Cost = { Base = 200, Growth = 1.8 },
-		Name = "Marble Size", Desc = "Unlock different marble sizes.",
+		Cost = { Base = 2000, Growth = 1.8 },
+		Name = "Marble Size", Short = "Size", Desc = "Unlock different marble sizes.",
 		Icon = "◯"
 	},
 	Angle = {
@@ -301,8 +340,8 @@ Config.Axes = {
 			{ Min = -math.rad(55.7), Max = math.rad(55.7) },
 			{ Min = -math.rad(65.0), Max = math.rad(65.0) },
 		},
-		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Angle", Desc = "Tune the launch direction.",
+		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Name = "Angle", Short = "Angle", Desc = "Tune the launch direction.",
 		Icon = "🏹"
 	},
 	Arc = {
@@ -322,8 +361,8 @@ Config.Axes = {
 			{ Min = math.rad(5), Max = math.rad(69.6) },
 			{ Min = math.rad(5), Max = math.rad(80.0) },
 		},
-		Cost = { Base = 105, Growth = Config.Economy.BasePriceGrowth },
-		Name = "Launcher Swivel", Desc = "Widen or tighten the possible launch angles.",
+		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Name = "Launcher Swivel", Short = "Swivel", Desc = "Widen or tighten the possible launch angles.",
 		Icon = "🎯"
 	},
 } :: { [string]: AxisDef }

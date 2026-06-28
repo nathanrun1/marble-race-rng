@@ -12,6 +12,7 @@ local PegService = require(SSS.Scripts.Modules.PegService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
+local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 local DataService = require(SSS.Scripts.Modules.DataService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local BallEffects = require(RS.Shared.BallEffects)
@@ -23,6 +24,7 @@ local ProductService = require(RS.Shared.ProductService)
 local MonetizationService = require(SSS.Scripts.Modules.MonetizationService)
 local ObbyService = require(SSS.Scripts.Modules.ObbyService)
 local GroupRewardService = require(SSS.Scripts.Modules.GroupRewardService)
+local CoinService = require(SSS.Scripts.Modules.CoinService)
 local DestroyTargetService = require(SSS.Scripts.Modules.DestroyTargetService)
 local DevService = require(SSS.Scripts.Modules.DevService)
 
@@ -37,6 +39,9 @@ PrestigeService.Init()
 -- DataService: it's a passive data service DataService loads + saves, and its remotes
 -- must exist before the first ApplyData pushes initial stats.
 StatsService.Init()
+-- PlaytimeBonusService before DataService (it's a passive data service DataService loads/saves
+-- via ApplyData/SerializeData): creates its remotes + starts the playtime tracker.
+PlaytimeBonusService.Init()
 -- DataService after the data services are set up: it owns the player-data lifecycle
 -- (seeds defaults, loads/saves persistence) and drives their ApplyData.
 DataService.Init()
@@ -82,3 +87,6 @@ ObbyService.Init()
 -- GroupRewardService after Currency/Stats: auto-wires the group-reward pads and owns
 -- the claim + cooldown (reads balance/stats, grants through Currency).
 GroupRewardService.Init()
+-- CoinService after Currency/WarnUI/Sound: owns per-player collectible-coin availability and
+-- claiming (grants through Currency, announces via WarnUI, plays a collect SFX).
+CoinService.Init()
