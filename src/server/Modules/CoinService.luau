@@ -42,11 +42,24 @@ local function coinLocations(): { Instance }
 	return CollectionService:GetTagged(Config.Tags.Coin)
 end
 
+-- Sample a Poisson(lambda) count via Knuth's algorithm.
+local function samplePoisson(lambda: number): number
+	local L = math.exp(-lambda)
+	local k = 0
+	local p = 1
+	repeat
+		k += 1
+		p *= math.random()
+	until p <= L
+	return k - 1
+end
+
 -- Random reward snapped to ValueStep, inclusive of both ends of the range.
 local function rollValue(): number
 	local c = Config.Coins
 	local steps = math.floor((c.ValueMax - c.ValueMin) / c.ValueStep)
-	return c.ValueMin + math.random(0, steps) * c.ValueStep
+	local k = math.min(samplePoisson(c.ValuePoissonMean), steps)
+	return c.ValueMin + k * c.ValueStep
 end
 
 local function scheduleNext(state: PlayerState)

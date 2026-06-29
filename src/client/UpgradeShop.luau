@@ -96,12 +96,8 @@ end
 
 -- Floating readout: short name (top), price chip (mid), level (bottom). Adorned above the
 -- icon tile if there is one, else above the pad itself.
-local function makeBillboard(pad: BasePart): Display
-	local adornee: BasePart = pad
-	local icon = pad:FindFirstChild("Icon")
-	if icon and icon:IsA("BasePart") then
-		adornee = icon
-	end
+local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
+	local adornee: BasePart = iconTile or pad
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "ShopInfo"
@@ -111,7 +107,7 @@ local function makeBillboard(pad: BasePart): Display
 	bb.AlwaysOnTop = false
 	bb.LightInfluence = 0
 	bb.MaxDistance = 90
-	bb.Parent = adornee
+	bb.Parent = pad -- parent to the pad so dedupe + streaming cleanup track the tagged part
 
 	local root = Instance.new("Frame")
 	root.BackgroundTransparency = 1
@@ -249,29 +245,56 @@ local function requestRefresh()
 end
 
 ----------------------------------------------------------------------------------
--- Icon painting + touch wiring (unchanged behaviour) + display setup
+-- Icon painting + touch wiring + display setup (streaming/replication-safe)
 ----------------------------------------------------------------------------------
-local function applyIcon(inst: Instance, track: string)
+-- A tagged part can replicate/stream in BEFORE its Icon child does (worse on mobile), and can
+-- stream in and out repeatedly. Without guarding, that adorns the billboard to the ground (no
+-- Icon tile yet), skips the icon text, and builds DUPLICATE billboards/emitters/Touched
+-- connections that pile up — a real source of mobile churn/lag. So: dedupe per part, wait for
+-- the Icon tile, and tear down on stream-out.
+local seen: { [BasePart]: boolean } = {}
+local displaysByPart: { [BasePart]: Display } = {}
+
+-- Paint the icon tile's surface label, waiting for the SurfaceGui/TextLabel to replicate.
+local function paintIcon(iconTile: Instance, track: string)
 	local icon = iconFor(track)
 	if not icon then return end
-	local container = inst:FindFirstChild("Icon")
-	local gui = container and container:FindFirstChild("SurfaceGui")
-	local label = gui and gui:FindFirstChild("TextLabel")
+	local gui = iconTile:WaitForChild("SurfaceGui", 5)
+	local label = gui and gui:WaitForChild("TextLabel", 5)
 	if label and label:IsA("TextLabel") then
 		label.Text = icon
 	end
 end
 
-local function setupShopAt(inst: Instance)
-	if not inst:IsA("BasePart") then return end
-	local track: string? = inst:GetAttribute(TRACK_ATTR) :: string?
-	if not track then return end
-	applyIcon(inst, track)
-
-	-- Floating readout + affordability sparkle (skip if already built for this part).
-	if not inst:FindFirstChild("ShopInfo") then
-		table.insert(displays, makeBillboard(inst))
+-- Resolve the (possibly late-replicating) Icon tile, paint it, and build the billboard adorned
+-- to it. Runs in its own task so the WaitForChilds don't block other parts' setup.
+local function buildDisplay(inst: BasePart, track: string)
+	local iconChild = inst:WaitForChild("Icon", 10)
+	if not inst:IsDescendantOf(workspace) then
+		return -- streamed out / destroyed while we waited
 	end
+	local iconTile = if iconChild and iconChild:IsA("BasePart") then iconChild else nil
+	if iconTile then
+		paintIcon(iconTile, track)
+	end
+	if displaysByPart[inst] or inst:FindFirstChild("ShopInfo") then
+		return -- already built
+	end
+	local display = makeBillboard(inst, iconTile)
+	displaysByPart[inst] = display
+	table.insert(displays, display)
+	requestRefresh()
+end
+
+local function setupShopAt(inst: Instance)
+	if not inst:IsA("BasePart") or seen[inst] then
+		return
+	end
+	local track: string? = inst:GetAttribute(TRACK_ATTR) :: string?
+	if not track then
+		return
+	end
+	seen[inst] = true
 
 	inst.Touched:Connect(function(obj: Instance)
 		if not obj:IsDescendantOf(player.Character) then return end
@@ -281,16 +304,33 @@ local function setupShopAt(inst: Instance)
 		end
 		ShopUI.OpenShop(track)
 	end)
+
+	task.spawn(buildDisplay, inst, track)
+end
+
+-- Streaming cleanup: when a tagged part leaves, drop its Display so refreshAll doesn't touch a
+-- destroyed part and the list doesn't grow with stale entries.
+local function teardownShopAt(inst: Instance)
+	if not inst:IsA("BasePart") then return end
+	seen[inst] = nil
+	defaultColors[inst] = nil
+	local d = displaysByPart[inst]
+	if not d then return end
+	displaysByPart[inst] = nil
+	for i, other in displays do
+		if other == d then
+			table.remove(displays, i)
+			break
+		end
+	end
 end
 
 function UpgradeShop.Init()
 	for _, inst in CollectionService:GetTagged(Config.Tags.UpgradeShop) do
 		setupShopAt(inst)
 	end
-	CollectionService:GetInstanceAddedSignal(Config.Tags.UpgradeShop):Connect(function(inst)
-		setupShopAt(inst)
-		requestRefresh()
-	end)
+	CollectionService:GetInstanceAddedSignal(Config.Tags.UpgradeShop):Connect(setupShopAt)
+	CollectionService:GetInstanceRemovedSignal(Config.Tags.UpgradeShop):Connect(teardownShopAt)
 
 	BalanceChangedRE.OnClientEvent:Connect(requestRefresh)
 	ProfileChangedRE.OnClientEvent:Connect(requestRefresh)
