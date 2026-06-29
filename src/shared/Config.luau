@@ -484,6 +484,17 @@ Config.GroupReward = {
 	MsgColor = Color3.fromRGB(230,230,230),
 }
 
+-- Day/night cycle (server DayNightCycle behaviour). Lighting.ClockTime runs from SunriseTime up
+-- to SunsetTime over DayMinutes of real time, then SunsetTime back round to SunriseTime over
+-- NightMinutes — so the two halves can last different real durations. Servers start at sunrise.
+Config.DayNight = {
+	DayMinutes   = 8,   -- real minutes for the day half (sunrise -> sunset)
+	NightMinutes = 4,   -- real minutes for the night half (sunset -> sunrise)
+	SunriseTime  = 6,   -- ClockTime (hour, 0-24) the day starts at
+	SunsetTime   = 18,  -- ClockTime (hour, 0-24) the night starts at
+	StartTime    = 9.4, -- ClockTime the cycle begins at when the server starts
+}
+
 table.freeze(Config.Tags)
 table.freeze(Config.Attributes)
 table.freeze(Config.Scoring)
@@ -571,8 +582,8 @@ Config.Tutorial = {
 		{
 			text = "Spend your cash on upgrades, then rebirth for permanent boosts.",
 			camera = {
-				Position = Vector3.new(-38.124, 55.946, -121.592),
-				Orientation = Vector3.new(-26.526, 45.613, 0),
+				Position = Vector3.new(-9.47156047821045, 145.8722381591797, -165.1833038330078),
+				Orientation = Vector3.new(-17.448, 117.043, 0),
 				FieldOfView = 70,
 			},
 		},
@@ -580,7 +591,7 @@ Config.Tutorial = {
 			text = "If you run out of cash, complete these obbies to earn more. There are also coins available around the map to collect. Good luck!",
 			boxPosition = UDim2.fromScale(0.5, 0.8),
 			camera = {
-				Position = Vector3.new(13.617, 69.141, -135.484),
+				Position = Vector3.new(13.617, 154, -135.484),
 				Orientation = Vector3.new(-14.94, -20.121, 0),
 				FieldOfView = 70,
 			},
@@ -590,6 +601,7 @@ Config.Tutorial = {
 }
 
 table.freeze(Config.Animations)
+table.freeze(Config.DayNight)
 table.freeze(Config.Obby)
 table.freeze(Config.GroupReward)
 table.freeze(Config.Podium)
