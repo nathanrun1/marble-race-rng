@@ -42,6 +42,7 @@ Config.Tags = {
 	GroupReward = "GroupReward",         -- A floor part that grants the group reward on touch (see GroupRewardService)
 	UpgradeShop = "UpgradeShop",         -- A part that opens the upgrade shop on touch (Track attribute picks the track; see client UpgradeShop)
 	Coin = "Coin",                       -- A collectible-coin spawn location (per-player; see CoinService server + CoinPickups client)
+	CameraZone = "CameraZone",           -- A trigger volume: while the local player stands in it, the board camera turns on (client CameraZone)
 }
 
 Config.Attributes = {
@@ -95,9 +96,15 @@ Config.Pegs = {
 Config.DestroyTargets = {
 	Jackpot = "JACKPOT", -- sentinel: this slot is a JackpotTarget, not a PointMul slot
 	Multipliers = {
-		[0] = "JACKPOT", [1] = 2.2, [2] = 1.1, [3] = 0.55, [4] = 0.35, [5] = 0.25,
-		[6] = 0.17, [7] = 0.12, [8] = 0.08, [9] = 0.08, [10] = 0.12, [11] = 0.17,
-		[12] = 0.25, [13] = 0.35, [14] = 0.55, [15] = 1.1, [16] = 2.2, [17] = "JACKPOT",
+		-- "S5" table. Non-jackpot slots (1..16) are tuned to a GENTLE EV ≈ 0.9 with a low
+		-- variance (median ≈ 0.62, std ≈ 0.65) — so a non-targeting player bleeds slowly and
+		-- steadily instead of riding a 0.25-median slot machine. Skewed outward: 4 winning
+		-- slots/side (1.1 → 2.6) at the edges, losing center (0.4 → 0.62). The big 12× jackpot
+		-- (slots 0/17) sits behind the value+heat gate (CollisionService), so its variance is
+		-- quarantined to targeting builds that clear it (gate-open EV ≈ 1.34). See balance memory.
+		[0] = "JACKPOT", [1] = 2.6, [2] = 1.8, [3] = 1.3, [4] = 1.1, [5] = 0.62,
+		[6] = 0.52, [7] = 0.45, [8] = 0.4, [9] = 0.4, [10] = 0.45, [11] = 0.52,
+		[12] = 0.62, [13] = 1.1, [14] = 1.3, [15] = 1.8, [16] = 2.6, [17] = "JACKPOT",
 	} :: { [number]: number | string },
 }
 
@@ -160,7 +167,9 @@ Config.Admins = { 89831196, 338455474, 110797589, 245715627 }
 Config.Prestige = {
 	Scale      = 10000, -- denominator in PP formula
 	Exponent   = 0.35,  -- sublinear compression
-	CostBase   = 50,    -- PP cost of first prestige (tuned so an optimal build prestiges ~30 min in)
+	CostBase   = 700,   -- PP cost of first prestige (~30 min for an optimal build on the S5 slot table;
+	                    -- assumes the gate is cleared early, i.e. VJackFraction ≈ 0.55. Re-tune DOWN if
+	                    -- VJackFraction is raised so the jackpot is targeting-gated later in a run.)
 	-- Per-level cost growth. Constant time-to-prestige requires CostGrowth = MultPer^Exponent
 	-- (because the LB needed for prestige N grows as CostGrowth^(N/Exponent) while the global
 	-- multiplier only offsets it as MultPer^N). Break-even here is 1.25^0.35 ≈ 1.08. The old 2.0

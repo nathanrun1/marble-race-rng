@@ -47,8 +47,12 @@ local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
 local HEAT_COLOR_POS     = Color3.fromRGB(255, 140, 0)
 local HEAT_COLOR_NEG     = Color3.fromRGB(80, 160, 255)
-local MIN_COMBO_TO_SHOW  = Config.Scoring.MinCombo
-local HIGH_COMBO         = Config.Scoring.MinCombo + 5
+-- Combo POPUP gating (the combo still PAYS from Config.Scoring.MinCombo; these only
+-- govern the on-screen celebration so low combos stay silent and the FX tracks real
+-- payout). Show the popup a few over the pay gate; "hot combo" (bigger popup + Combo2)
+-- a bit higher still.
+local MIN_COMBO_TO_SHOW  = Config.Scoring.MinCombo + 3
+local HIGH_COMBO         = Config.Scoring.MinCombo + 8
 -- Exponential follow rate for the value-UI anchor (higher = snappier / less lag,
 -- lower = smoother). Frame-rate independent via 1 - exp(-rate * dt).
 local VALUE_FOLLOW_RATE  = 30
@@ -328,16 +332,23 @@ local HIGH_POINT_MAX_LIFETIME   = 1.5
 -- window then switch it off — every client renders the same burst.
 function BallEffects.ShowPointFX(ball: BasePart?, cframe: CFrame, multiplier: number)
 	if not (cframe and multiplier) then return end
-	-- Check if below special FX threshold
-	if multiplier < Config.Scoring.SpecialFXMinMultiplier then
-		SoundService.Play({ soundId = Config.Sounds.Collect1, position = cframe.Position, volume = 1.5 })  -- Default collect sound
-		return
-	end
 
 	local isJackpot = multiplier == Config.Scoring.JackpotMultiplier
 
+	-- Honest juice: only a real GAIN is celebrated. A non-positive slot (<= 1x — you broke
+	-- even or lost) plays no sound and throws no particles; the "x0.3" value popup (posted
+	-- separately) is the only, honest, feedback.
+	if not isJackpot and multiplier <= 1.0 then
+		return
+	end
+
+	-- Lower positive (1x .. SpecialFXMin): a quiet collect, no particle burst. Higher
+	-- positive: the second collect sound + burst. Jackpot: the jackpot sound + burst.
 	if isJackpot then
 		SoundService.Play({ soundId = Config.Sounds.Jackpot, position = cframe.Position, volume = 2.5})
+	elseif multiplier < Config.Scoring.SpecialFXMinMultiplier then
+		SoundService.Play({ soundId = Config.Sounds.Collect1, position = cframe.Position, volume = 1.5 })
+		return
 	else
 		SoundService.Play({ soundId = Config.Sounds.Collect2, position = cframe.Position, volume = 1.5 })
 	end
