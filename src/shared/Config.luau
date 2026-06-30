@@ -162,14 +162,17 @@ Config.Groups = {
 }
 
 -- Admin UserIds: granted dev commands (DevService) and hidden from every leaderboard.
-Config.Admins = { 89831196, 338455474, 110797589, 245715627 }
+Config.Admins = { 89831196 }
 
 Config.Prestige = {
-	Scale      = 10000, -- denominator in PP formula
+	Scale      = 18820000, -- denominator in PP formula. Sized together with CostBase so the first
+	                       -- prestige costs 50 PP at the SAME lifetime-banked threshold (~30 min) as the
+	                       -- old Scale=10000/CostBase=700 did — every PP value just shrinks ~14×, timing
+	                       -- unchanged (LB_n = Scale × cost(n)^(1/Exponent), invariant under this rescale).
 	Exponent   = 0.35,  -- sublinear compression
-	CostBase   = 700,   -- PP cost of first prestige (~30 min for an optimal build on the S5 slot table;
-	                    -- assumes the gate is cleared early, i.e. VJackFraction ≈ 0.55. Re-tune DOWN if
-	                    -- VJackFraction is raised so the jackpot is targeting-gated later in a run.)
+	CostBase   = 50,    -- PP cost of first prestige (computeCost is 1-indexed, so this IS prestige #1's
+	                    -- cost). With Scale above, ~30 min for an optimal build on the S5 slot table
+	                    -- (assumes the gate is cleared early, i.e. VJackFraction ≈ 0.55).
 	-- Per-level cost growth. Constant time-to-prestige requires CostGrowth = MultPer^Exponent
 	-- (because the LB needed for prestige N grows as CostGrowth^(N/Exponent) while the global
 	-- multiplier only offsets it as MultPer^N). Break-even here is 1.25^0.35 ≈ 1.08. The old 2.0
@@ -492,7 +495,7 @@ Config.DayNight = {
 	NightMinutes = 4,   -- real minutes for the night half (sunset -> sunrise)
 	SunriseTime  = 6,   -- ClockTime (hour, 0-24) the day starts at
 	SunsetTime   = 18,  -- ClockTime (hour, 0-24) the night starts at
-	StartTime    = 9.4, -- ClockTime the cycle begins at when the server starts
+	StartTime    = 0.0--9.4, -- ClockTime the cycle begins at when the server starts
 }
 
 table.freeze(Config.Tags)

@@ -109,7 +109,7 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 	if track == "MaxBet" then
 		return StringUtils.FormatShort(ProfileStats.GetMaxBet(u))
 	elseif track == "FlatRate" then
-		return string.format("%.2f", ProfileStats.GetFlatPerBounce(u))
+		return StringUtils.FormatMoney(ProfileStats.GetFlatPerBounce(u))
 	elseif track == "BaseAdditive" then
 		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
 	elseif track == "Frequency" then

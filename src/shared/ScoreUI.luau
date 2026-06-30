@@ -38,10 +38,12 @@ if RunService:IsClient() then
 	local FADE_OUT   = TweenInfo.new(0.4,  Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	local MSG_DELAY  = 0.05   -- seconds between queued messages appearing
 	local DISPLAY_TIME = 2.5 -- seconds each message stays visible before fading
+	local MAX_QUEUE_AGE = 15 -- seconds a message may wait in the queue before it's dropped unshown
+	                         -- (a flood backs the queue up; stale lines aren't worth showing late)
 
 	local msgFrame: Frame? = nil
 	local msgCounter = 0
-	local messageQueue: { { text: string, color: Color3? } } = {}
+	local messageQueue: { { text: string, color: Color3?, t: number } } = {}
 	local isProcessing = false
 
 	local function showLabel(text: string, color: Color3?)
@@ -88,10 +90,12 @@ if RunService:IsClient() then
 		task.spawn(function()
 			while #messageQueue > 0 do
 				local msg = table.remove(messageQueue, 1)
-				if msg then
+				-- Drop messages that waited too long: they're stale, so skip them with no delay
+				-- (a backlog clears instantly) and only pace the ones we actually show.
+				if msg and os.clock() - msg.t <= MAX_QUEUE_AGE then
 					showLabel(msg.text, msg.color)
+					task.wait(MSG_DELAY)
 				end
-				task.wait(MSG_DELAY)
 			end
 			isProcessing = false
 		end)
@@ -134,7 +138,7 @@ if RunService:IsClient() then
 
 		local remote = RS.Remote:WaitForChild("ScoreMessage") :: RemoteEvent
 		remote.OnClientEvent:Connect(function(text: string, color: Color3?)
-			table.insert(messageQueue, { text = text, color = color })
+			table.insert(messageQueue, { text = text, color = color, t = os.clock() })
 			processQueue()
 		end)
 	end
