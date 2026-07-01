@@ -111,6 +111,23 @@ local function initRightBar()
 		end
 	end
 
+	local ballDropHost = rightBar:FindFirstChild("BallDropHost")
+	-- Read the count from Config rather than trusting the model's static label text, so a
+	-- future Config.BallDrop.Count change can't silently drift from what the button displays.
+	local ballDropLabel = ballDropHost:FindFirstChild("Button")
+	ballDropLabel = ballDropLabel and ballDropLabel:FindFirstChild("MultLabel")
+	if ballDropLabel and ballDropLabel:IsA("TextLabel") then
+		ballDropLabel.Text = "DROP " .. tostring(Config.BallDrop.Count) .. " FREE"
+	end
+	local ballDropId = tonumber(Config.Products.BallDropMaxBet)
+	if ballDropId and ballDropId ~= 0 then
+		UIButton.bind(ballDropHost, {
+			onClick = function()
+				ProductService.Prompt(ballDropId)
+			end,
+		})
+	end
+
 	-- Starter pack: a game pass, shown only while unowned and under the upgrade
 	-- threshold.
 	local starterHost = rightBar:WaitForChild("StarterPackHost") :: GuiObject

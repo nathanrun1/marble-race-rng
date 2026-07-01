@@ -10,6 +10,7 @@
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local Config = require(RS.Shared.Config)
 local BallSkins = require(RS.Shared.BallSkins)
@@ -56,6 +57,33 @@ local rows: { [string]: TextButton } = {}
 local ccLabel: TextLabel? = nil
 local buyButton: TextButton? = nil
 local selectedNameLabel: TextLabel? = nil
+
+-- Forward-declared: refresh() is defined further down, but fetchRobuxPrices (below) needs to
+-- call it once a price resolves, and it fires from a task.spawn callback that runs after the
+-- whole module (including the real refresh definition) has loaded.
+local refresh: () -> ()
+
+-- Robux price (per rarity, from Config.Cosmetics.RarityProducts) so the buy button can show
+-- both ways to afford a skin. GetProductInfo yields, so this is fetched once up front and
+-- cached — never called from refresh(), which runs often (e.g. every CosmeticChanged).
+local robuxPriceByRarity: { [number]: number } = {}
+
+local function fetchRobuxPrices()
+	for rarity, idStr in Config.Cosmetics.RarityProducts do
+		local productId = tonumber(idStr)
+		if productId and productId ~= 0 then
+			task.spawn(function()
+				local ok, productInfo = pcall(function()
+					return MarketplaceService:GetProductInfo(productId, Enum.InfoType.Product)
+				end)
+				if ok and productInfo and type(productInfo.PriceInRobux) == "number" then
+					robuxPriceByRarity[rarity] = productInfo.PriceInRobux
+					refresh()
+				end
+			end)
+		end
+	end
+end
 
 local function corner(parent: Instance, r: number)
 	local c = Instance.new("UICorner")
@@ -178,7 +206,7 @@ local function refreshRow(id: string, skin: BallSkins.BallSkin)
 	end
 end
 
-local function refresh()
+function refresh()
 	if ccLabel then
 		ccLabel.Text = StringUtils.FormatShort(info.cc) .. " CC"
 	end
@@ -201,7 +229,12 @@ local function refresh()
 			buyButton.Text = "EQUIP"
 			buyButton.BackgroundColor3 = GREEN
 		else
-			buyButton.Text = "BUY  •  " .. StringUtils.FormatShort(sel.price) .. " CC"
+			local text = "BUY  •  " .. StringUtils.FormatShort(sel.price) .. " CC"
+			local robuxPrice = robuxPriceByRarity[sel.rarity]
+			if robuxPrice then
+				text ..= "  |  R$" .. robuxPrice
+			end
+			buyButton.Text = text
 			buyButton.BackgroundColor3 = YELLOW
 		end
 	end
@@ -303,8 +336,8 @@ local function build(surface: SurfaceGui)
 	selectedNameLabel.TextScaled = true
 
 	local buy = Instance.new("TextButton")
-	buy.Size = UDim2.fromScale(0.42, 0.7)
-	buy.Position = UDim2.fromScale(0.58, 0.15)
+	buy.Size = UDim2.fromScale(0.48, 0.7)
+	buy.Position = UDim2.fromScale(0.50, 0.15)
 	buy.BackgroundColor3 = YELLOW
 	buy.Text = "BUY"
 	buy.TextColor3 = Color3.fromRGB(30, 28, 10)
@@ -316,6 +349,8 @@ local function build(surface: SurfaceGui)
 	local buyPad = Instance.new("UIPadding")
 	buyPad.PaddingTop = UDim.new(0.18, 0)
 	buyPad.PaddingBottom = UDim.new(0.18, 0)
+	buyPad.PaddingLeft = UDim.new(0.05, 0)
+	buyPad.PaddingRight = UDim.new(0.05, 0)
 	buyPad.Parent = buy
 	buy.Activated:Connect(CosmeticsShop.purchase)
 	buyButton = buy
@@ -348,6 +383,8 @@ function CosmeticsShop.Init()
 		info = got
 		refresh()
 	end
+
+	fetchRobuxPrices()
 end
 
 return CosmeticsShop

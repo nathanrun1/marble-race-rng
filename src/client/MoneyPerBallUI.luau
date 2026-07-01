@@ -1,13 +1,11 @@
 --!strict
--- Top-of-screen "average money per ball" readout (green, always visible). Averages the banked
--- cash of the last WINDOW balls. So an upgrade registers quickly instead of being diluted by old
--- balls, a profile change (upgrade / loadout / prestige) temporarily biases the average toward
--- the newest balls, then relaxes back to a flat 20-ball mean as fresh balls come in.
+-- Top-of-screen "average money per ball" readout (green, always visible). Shows the server-
+-- authoritative lifetime average (StatsService.GetAvgMoneyPerBall: ballEarnings / ballsBanked) —
+-- the same number the leaderstats column and the global leaderboard use — instead of a locally
+-- computed figure, so the player never sees a different value here than everywhere else.
 --
--- Data source: CurrencyService's BalanceChanged carries each ball's banked cash as its delta
--- (reason starts with "Ball "), and ProfileChanged is the build-changed signal. This is purely
--- a snappy recency-weighted display; the persisted/ranked $/marble metric (leaderstats column,
--- global leaderboard, MoneyPerBallRank below) is computed server-side in StatsService instead.
+-- Data source: BalanceChanged tells us a ball banked (reason starts with "Ball "), which
+-- schedules a throttled GetStats pull; the display then eases toward whatever that pull returns.
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -18,28 +16,22 @@ local AutoScale = require(RS.Shared.AutoScale)
 
 local MoneyPerBallUI = {}
 
-local WINDOW     = 15    -- balls averaged (wider = steadier against jackpot/payout variance)
-local FLAT_DECAY = 1.0   -- steady state: every ball in the window weighted equally
-local BIAS_DECAY = 0.9   -- recency-weight base right after a build change (lower = newest dominates,
-                         -- but jumpier; ~0.9 still medians over ~10 recent balls so it stays steady
-                         -- eFven mid-upgrade, just nudged toward the newest)
-local RELAX      = 0.25  -- per-ball relaxation of decay back toward FLAT_DECAY (higher = bias fades
-                         -- faster, so it settles back to the steady average sooner)
-local GREEN      = Color3.fromRGB(96, 224, 120)
-local SMOOTH_RATE = 3.0  -- per-second rate the shown number eases toward the target median (higher =
-                         -- snappier). The display decays toward the target EVERY frame, so the number
-                         -- always glides instead of stepping when a ball enters/leaves the window.
-local UPDATE_PERIOD = 1.0  -- How often the shown $/marble updates
+local GREEN = Color3.fromRGB(96, 224, 120)
+local SMOOTH_RATE = 3.0     -- per-second rate the shown number eases toward the target (higher =
+                            -- snappier). Eases every frame so it glides rather than snapping.
+local UPDATE_PERIOD = 1.0   -- how often the shown $/marble text updates
+local PULL_INTERVAL = 0.75  -- min seconds between GetStats pulls (coalesces bursts of balls)
 
-local values: { number } = {}  -- banked cash, oldest first / newest last, capped at WINDOW
-local decay = FLAT_DECAY
-local target = 0    -- recency-weighted median the display glides toward (recomputed per ball / change)
-local displayed = 0 -- the eased value actually shown; decays toward `target` every frame
+local target = 0    -- server-reported average the display glides toward
+local displayed = 0 -- the eased value actually shown
 local label: TextLabel? = nil
 
 local rankLabel: TextLabel? = nil
 
 local prevUpdate = nil
+
+local getStatsRF: RemoteFunction? = nil
+local pullQueued = false
 
 -- Is this balance change a ball banking? CurrencyService uses "Ball destroyed at target: ..." and
 -- "Ball stuck (timeout): ..." for banks (both start "Ball "); coins/playtime/etc. don't.
@@ -47,66 +39,45 @@ local function isBallBank(reason: any): boolean
 	return typeof(reason) == "string" and string.match(reason, "^Ball ") ~= nil
 end
 
--- Weighted MEDIAN of the window (still shown as "Average" in the UI, but a median so a rare
--- jackpot doesn't yank the number around). Each ball is weighted by recency — newest weight 1,
--- each older one ×decay: decay == 1 is a plain median; decay < 1 (just after a build change)
--- leans it toward the newest balls, so an upgrade still surfaces within a few balls.
-local function weightedMedian(): number
-	local n = #values
-	if n == 0 then
-		return 0
+-- Pull the current server-authoritative average and set it as the glide target.
+local function pullTarget()
+	if not getStatsRF then
+		return
 	end
-	local sorted = table.create(n)
-	local total = 0.0
-	for j = 1, n do
-		local w = decay ^ (n - j) -- n - j == age in balls (0 = newest)
-		sorted[j] = { v = values[j], w = w }
-		total += w
-	end
-	table.sort(sorted, function(a, b)
-		return a.v < b.v
+	local ok, stats = pcall(function()
+		return (getStatsRF :: RemoteFunction):InvokeServer()
 	end)
-	local half = total / 2
-	local acc = 0.0
-	for _, p in sorted do
-		acc += p.w
-		if acc >= half then
-			return p.v
-		end
+	if not ok or type(stats) ~= "table" then
+		return
 	end
-	return sorted[n].v
+	local earnings = (stats :: any).ballEarnings
+	local banked = (stats :: any).ballsBanked
+	if type(earnings) == "number" and type(banked) == "number" and banked > 0 then
+		target = earnings / banked
+	end
 end
 
--- The median the display should glide toward (cheap; only recomputed on a ball or build change).
-local function recomputeTarget()
-	target = weightedMedian()
+-- Coalesce bursts of ball-bank events (many a second at high frequency tiers) into one
+-- GetStats round-trip every PULL_INTERVAL rather than invoking the remote per ball.
+local function schedulePull()
+	if pullQueued then
+		return
+	end
+	pullQueued = true
+	task.delay(PULL_INTERVAL, function()
+		pullQueued = false
+		pullTarget()
+	end)
 end
 
 -- Per frame: ease the shown number toward the target so it always moves smoothly — no hard step
--- when a value enters or leaves the window. Frame-rate independent.
+-- when a fresh pull changes it. Frame-rate independent.
 local function step(dt: number)
 	displayed += (target - displayed) * (1 - math.exp(-SMOOTH_RATE * dt))
 	if label and (os.clock() - prevUpdate) > UPDATE_PERIOD then
 		prevUpdate = os.clock()
 		label.Text = "💰 Average $/Marble: $" .. StringUtils.FormatShort(displayed) .. " 💰"
 	end
-end
-
-local function onBallBanked(amount: number)
-	table.insert(values, amount)
-	if #values > WINDOW then
-		table.remove(values, 1)
-	end
-	-- Relax the recency bias one step toward a flat median for the next ball, then re-target.
-	decay += (FLAT_DECAY - decay) * RELAX
-	recomputeTarget()
-end
-
--- Build changed (upgrade / loadout / prestige): arm the recency bias so the target shifts toward
--- the new output within a few balls (the display then glides to it smoothly).
-local function onProfileChanged()
-	decay = BIAS_DECAY
-	recomputeTarget()
 end
 
 local function createUI(playerGui: PlayerGui)
@@ -173,20 +144,20 @@ function MoneyPerBallUI.Init()
 	local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 	createUI(playerGui)
 
+	getStatsRF = RS.Remote:WaitForChild("GetStats") :: RemoteFunction
+
 	local balanceRE = RS.Remote:WaitForChild("BalanceChanged") :: RemoteEvent
-	balanceRE.OnClientEvent:Connect(function(_new: number, amount: number, reason: any)
+	balanceRE.OnClientEvent:Connect(function(_new: number, _amount: number, reason: any)
 		if isBallBank(reason) then
-			onBallBanked(amount)
+			schedulePull()
 		end
 	end)
-
-	local profileRE = RS.Remote:WaitForChild("ProfileChanged") :: RemoteEvent
-	profileRE.OnClientEvent:Connect(onProfileChanged)
 
 	local rankRE = RS.Remote:WaitForChild("MoneyPerBallRank") :: RemoteEvent
 	rankRE.OnClientEvent:Connect(onRankUpdated)
 
-	recomputeTarget()
+	pullTarget() -- seed from current server state (e.g. rejoining with existing lifetime balls)
+	displayed = target
 	RunService.Heartbeat:Connect(step)
 
 	prevUpdate = os.clock()

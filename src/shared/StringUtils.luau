@@ -17,25 +17,37 @@ function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: num
         [1e3]  = "K",
     }
 
+    local sciFactor = 0
+    local factor = ""
+
     if n >= SCI_AT then
-        local factor = math.floor(math.log10(n))
-        n /= 10 ^ factor
+        sciFactor = math.floor(math.log10(n))
+        n /= 10 ^ sciFactor
         if floorRound then
             n = math.floor(n * 10 ^ precision) / (10 ^ precision)
         end
-        return string.format("%."..precision.."fe%d", n, factor) 
+        
     end 
 
     for _, f in ipairs(FACTORS_ORD) do
         local l = FACTORS[f]
         if n < f then continue end
         n /= f
-        if floorRound then
-            n = math.floor(n * 10 ^ precision) / (10 ^ precision)
-        end
-        return ("%."..precision.."f"..l):format(n)
+
+        factor = l
     end
-    return string.format("%."..precision.."f", n)
+
+    if floorRound then
+        print(n)
+        n = math.floor(n * 10 ^ precision) / (10 ^ precision)
+        print(n)
+    end
+
+    if sciFactor > 0 then
+        return string.format("%."..precision.."fe%d", n, sciFactor) 
+    else
+        return string.format("%."..precision.."f%s", n, factor)
+    end
 end
 
 -- Money string: comma-grouped below 1K (so small balances read exactly), short

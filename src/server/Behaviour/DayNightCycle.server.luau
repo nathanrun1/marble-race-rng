@@ -43,7 +43,9 @@ end
 
 -- Anchor `start` so the first tick lands on StartTime, then the cycle runs from there.
 local start = os.clock() - cyclePosForClock(DAY.StartTime)
-while true do
-	Lighting.ClockTime = clockTimeFor(os.clock() - start)
-	task.wait(UPDATE_INTERVAL)
+if Config.DayNight.Enabled then
+	while true do
+		Lighting.ClockTime = clockTimeFor(os.clock() - start)
+		task.wait(UPDATE_INTERVAL)
+	end
 end

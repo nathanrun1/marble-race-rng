@@ -31,14 +31,15 @@ local BOOST_PRODUCT_ID = tonumber(Config.Products.UpgradeBoost)
 -- precise struct stays available to ProfileStats; here we only read the fields
 -- relevant to pricing, caps, and display.
 type UpgradeDef = {
-	Cost: { Base: number, Growth: number },
+	Cost: { Initial: number?, Base: number, Growth: number },
 	Name: string?,
 	Desc: string?,
 	Icon: string?,
 	Caps: { number }?,                         -- Frequency: tier cap = #Caps - 1
 	Widths: { number }?,                       -- Arc: tier cap = #Widths - 1
 	Ranges: { { Min: number, Max: number } }?, -- continuous axes: cap = #Ranges - 1
-	MaxTier: number?
+	MaxTier: number?,
+	Locked: boolean?, -- starts hidden behind a flat unlock; see Info.locked
 }
 
 -- Everything purchasable: the idle/scoring tracks (Config.Upgrades) AND the
@@ -63,6 +64,11 @@ export type Info = {
 	maxed: boolean,
 	price: number?,   -- nil if maxed
 	canAfford: boolean,
+	-- True for a Locked track still at tier 0: the shop UI shows a "???" teaser (name only)
+	-- with a flat unlock price instead of the real desc/icon/tier/values. Buying tier 0->1 is
+	-- otherwise an ordinary purchase — same price, same Purchase() call — just re-skinned as
+	-- "Unlock". Once tier >= 1 it behaves exactly like any other upgrade forever after.
+	locked: boolean,
 }
 export type PurchaseResult = {
 	ok: boolean,
@@ -89,6 +95,9 @@ end
 -- first tier costs Base, each further tier multiplies by Growth.
 local function priceAt(track: string, currentTier: number): number?
 	local def = UpgradeDefs[track]
+	if currentTier == 0 and def.Cost.Initial then
+		return def.Cost.Initial
+	end
 	local maxTier = maxTierOf(def)
 	if maxTier and currentTier >= maxTier then
 		return nil
@@ -113,6 +122,7 @@ function UpgradeService.GetInfo(player: Player, track: string): Info?
 		maxed = price == nil,
 		price = price,
 		canAfford = price ~= nil and CurrencyService.GetPoints(player) >= price,
+		locked = def.Locked == true and tier == 0,
 	}
 end
 
@@ -206,9 +216,14 @@ function UpgradeService.RequestBoost(player: Player, track: string): number?
 		warn("UpgradeService: Config.Products.UpgradeBoost is not a valid product id")
 		return nil
 	end
+	local tier = ProfileService.GetUpgradeTier(player, track)
+	-- Don't prompt on a still-locked track — the 3× pack isn't offered until it's unlocked.
+	if def.Locked == true and tier == 0 then
+		return nil
+	end
 	-- Don't prompt on a maxed track — there'd be nothing to grant.
 	local maxTier = maxTierOf(def)
-	if maxTier and ProfileService.GetUpgradeTier(player, track) >= maxTier then
+	if maxTier and tier >= maxTier then
 		return nil
 	end
 	ProfileService.SetPendingBoostTrack(player, track)

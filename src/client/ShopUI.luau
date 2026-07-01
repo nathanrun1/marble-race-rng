@@ -19,6 +19,12 @@ local PlayerGui: PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 local ShopGui = PlayerGui:WaitForChild("ShopGui") :: any
 local ShopFrame: Frame = ShopGui.ShopFrame :: Frame
 
+-- Locked tracks hide the Effect/Track/3x sections (see loadShop), which would otherwise leave
+-- dead space below the buy button. Fixed heights (X/position untouched) rather than
+-- AutomaticSize, so the two states are exactly as tall as their content is meant to be.
+local UNLOCKED_SIZE_Y = 437
+local LOCKED_SIZE_Y = 300
+
 -- Capture the studio-authored center position; off-screen-right is +1 X scale.
 local POS_OPEN  = ShopFrame.Position
 local POS_RIGHT = UDim2.new(
@@ -41,9 +47,16 @@ local UI = {
 	tiers = ShopGui.ShopFrame.Head.TierBadge.BadgeStack.TierNumber, -- TextLabel
 	price = ShopGui.ShopFrame.BuyButton.BuyInner.PriceChip.PriceLabel, -- TextLabel
 	purchaseBtn = ShopGui.ShopFrame.BuyButton, -- ImageButton
+	word = ShopGui.ShopFrame.BuyButton.BuyInner.Word, -- TextLabel ("UPGRADE" / "Unlock")
 	curValue = ShopGui.ShopFrame.Effect.CurrentCell.Frame.Value, -- TextLabel
 	nextValue = ShopGui.ShopFrame.Effect.NextCell.Frame.Value, -- TextLabel
 	track = ShopGui.ShopFrame.Track, -- Frame
+	effect = ShopGui.ShopFrame.Effect, -- Frame
+	effectSpacer = ShopGui.ShopFrame:FindFirstChild("EffectSpacer") :: GuiObject?,
+	boostHost = ShopGui.ShopFrame:FindFirstChild("3xButtonHost") :: GuiObject?,
+	frameStroke = ShopGui.ShopFrame:FindFirstChildOfClass("UIStroke") :: UIStroke?,
+	iconStroke = ShopGui.ShopFrame.Head.Icon:FindFirstChildOfClass("UIStroke") :: UIStroke?,
+	tierStroke = ShopGui.ShopFrame.Head.TierBadge:FindFirstChildOfClass("UIStroke") :: UIStroke?,
     closeBtn = ShopGui.ShopFrame.UIListIgnore.CloseButton
 }
 
@@ -58,6 +71,7 @@ export type Info = {
 	maxed: boolean,
 	price: number?,   -- nil if maxed
 	canAfford: boolean,
+	locked: boolean,
 }
 export type PurchaseResult = {
 	ok: boolean,
@@ -69,6 +83,23 @@ export type Upgrades = { [string]: number }
 local MAGENTA      = Color3.fromRGB(236, 63, 212)   -- #ec3fd4  borders / accent
 local PIP_BORDER   = Color3.fromRGB(234, 220, 240)  -- #eadcf0  empty pip border
 local CHIP         = Color3.fromRGB(244, 238, 248)  -- #f4eef8  chip / empty pip
+
+-- Locked-upgrade teaser styling: a still-hidden upgrade shows a "???" placeholder in a
+-- grey/black theme instead of its real name/desc/values, with the buy button reading
+-- "Unlock" instead of "UPGRADE". Only the name stays visible (see Config.Upgrades/Axes
+-- entries with Locked = true).
+local LOCK_STROKE   = Color3.fromRGB(70, 70, 78)   -- grey/black border
+local LOCK_ICON     = "❓"
+local LOCK_DESC     = "???"
+local LOCK_TIER     = "?"
+local LOCK_WORD     = "Unlock"
+
+-- Original (unlocked) styling, captured once so a locked track can be restored exactly
+-- when re-rendered after unlocking.
+local ORIGINAL_FRAME_STROKE = UI.frameStroke and UI.frameStroke.Color
+local ORIGINAL_ICON_STROKE = UI.iconStroke and UI.iconStroke.Color
+local ORIGINAL_TIER_STROKE = UI.tierStroke and UI.tierStroke.Color
+local ORIGINAL_WORD = UI.word.Text
 
 local loadedTrack: string? = nil
 
@@ -225,40 +256,85 @@ function adjustButton(canAfford: boolean)
 	end
 end
 
+-- Grey/restore the teaser-only chrome (frame border, icon border, tier badge border, buy
+-- button word) for a locked vs. unlocked track. Everything else that differs (desc/icon/tier
+-- text, effect + track + 3x visibility) is set directly in loadShop since it has no "restore
+-- to original" concept — it's just re-populated from the fresh Info every load.
+local function applyLockChrome(locked: boolean)
+	if UI.frameStroke then
+		UI.frameStroke.Color = if locked then LOCK_STROKE else ORIGINAL_FRAME_STROKE
+	end
+	if UI.iconStroke then
+		UI.iconStroke.Color = if locked then LOCK_STROKE else ORIGINAL_ICON_STROKE
+	end
+	if UI.tierStroke then
+		UI.tierStroke.Color = if locked then LOCK_STROKE else ORIGINAL_TIER_STROKE
+	end
+	UI.word.Text = if locked then LOCK_WORD else ORIGINAL_WORD
+
+	local size = ShopFrame.Size
+	local targetY = if locked then LOCKED_SIZE_Y else UNLOCKED_SIZE_Y
+	ShopFrame.Size = UDim2.new(size.X.Scale, size.X.Offset, 0, targetY)
+end
+
 -- Loads ShopGui contents with the given track. Returns the loaded upgrade info.
 function loadShop(track: string): Info
 	local allUpgradeInfo: { [string]: Info } = GetUpgradeInfoRF:InvokeServer()
 	local upgradeInfo: Info = allUpgradeInfo[track]
 	assert(upgradeInfo)
-	
+
 	UI.name.Text = upgradeInfo.name
-	UI.desc.Text = upgradeInfo.desc
-	UI.icon.Text = upgradeInfo.icon
-	if upgradeInfo.maxTier ~= nil then
-		UI.tiers.Text = upgradeInfo.tier.." / "..upgradeInfo.maxTier
+	applyLockChrome(upgradeInfo.locked)
+
+	if upgradeInfo.locked then
+		UI.desc.Text = LOCK_DESC
+		UI.icon.Text = LOCK_ICON
+		UI.tiers.Text = LOCK_TIER
 	else
-		UI.tiers.Text = upgradeInfo.tier
+		UI.desc.Text = upgradeInfo.desc
+		UI.icon.Text = upgradeInfo.icon
+		if upgradeInfo.maxTier ~= nil then
+			UI.tiers.Text = upgradeInfo.tier.." / "..upgradeInfo.maxTier
+		else
+			UI.tiers.Text = upgradeInfo.tier
+		end
 	end
+
     if upgradeInfo.price then
         UI.price.Text = "$"..StringUtils.FormatShort(upgradeInfo.price)
     else
         UI.price.Text = "MAXED"
     end
 	adjustButton(upgradeInfo.canAfford)
-	
-	UI.curValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier)
-	if not upgradeInfo.maxed then
-		UI.nextValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier + 1)
-	else
-		UI.nextValue.Text = "—"
+
+	-- Current/next values, the tier-pip track, and the 3× boost all reveal progress on the
+	-- track, so a still-locked upgrade hides all three instead of rendering them.
+	UI.effect.Visible = not upgradeInfo.locked
+	if UI.effectSpacer then
+		UI.effectSpacer.Visible = not upgradeInfo.locked
 	end
-	
-	createPips(UI.track, upgradeInfo.maxTier, upgradeInfo.tier)
+	if not upgradeInfo.locked then
+		UI.curValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier)
+		if not upgradeInfo.maxed then
+			UI.nextValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier + 1)
+		else
+			UI.nextValue.Text = "—"
+		end
+	end
+
+	UI.track.Visible = not upgradeInfo.locked
+	if not upgradeInfo.locked then
+		createPips(UI.track, upgradeInfo.maxTier, upgradeInfo.tier)
+	end
 
     -- Offer the 3× boost only when at least 3 tiers remain (unbounded tracks always
-    -- qualify). Otherwise grey the button out and suppress the can't-afford prompt.
-    boostAvailable = upgradeInfo.maxTier == nil
-        or (upgradeInfo.maxTier - upgradeInfo.tier) >= BOOST_TIERS
+    -- qualify) and the track is already unlocked. Otherwise grey the button out (or hide
+    -- it entirely while locked) and suppress the can't-afford prompt.
+    boostAvailable = not upgradeInfo.locked and (upgradeInfo.maxTier == nil
+        or (upgradeInfo.maxTier - upgradeInfo.tier) >= BOOST_TIERS)
+    if UI.boostHost then
+        UI.boostHost.Visible = not upgradeInfo.locked
+    end
     if boostButton then
         boostButton.SetDisabled(not boostAvailable)
         -- Pulse gold↔white to draw the eye while the 3× boost is purchasable.

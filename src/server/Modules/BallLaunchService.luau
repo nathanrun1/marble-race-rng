@@ -125,6 +125,38 @@ function BallLaunchService.LaunchTest(player: Player, opts: TestLaunchOptions?):
 	})
 end
 
+-- Seconds between each ball in LaunchMaxBetBatch, so a dropped batch doesn't all spawn stacked
+-- on the exact same point in the same instant.
+local BALL_DROP_STAGGER = 0.12
+
+-- Robux perk (Config.BallDrop): instantly fire `count` balls valued at the player's CURRENT max
+-- bet (ProfileStats.GetMaxBet — NOT their chosen loadout.Bet), free and bypassing the launch
+-- cooldown/affordability check, same spirit as LaunchTest. Fires the balls in the background
+-- (staggered) so the caller (the dev-product grant handler) can return immediately.
+function BallLaunchService.LaunchMaxBetBatch(player: Player, count: number)
+	local upgrades = ProfileService.GetUpgrades(player)
+	local loadout = ProfileService.GetLoadout(player)
+	local maxBet = ProfileStats.GetMaxBet(upgrades)
+	task.spawn(function()
+		for _ = 1, count do
+			if not player.Parent then
+				return -- player left mid-drop
+			end
+			if BallService.GetLiveCount(player.UserId) < MAX_BALLS_PER_PLAYER then
+				local phase = (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
+				BallService.Spawn(genSpawnPos(), {
+					ownerUserId = player.UserId,
+					velocity = deriveLaunchVelocity(phase, loadout.axes.Arc, loadout.axes.Angle),
+					initialValue = maxBet,
+					weight = 1 - loadout.axes.Elasticity,
+					size = loadout.axes.Size,
+				})
+			end
+			task.wait(BALL_DROP_STAGGER)
+		end
+	end)
+end
+
 -- Current launcher swivel phase (0..1). The client renders its own smooth swivel and
 -- periodically resyncs to this so the visual matches the server's actual fire timing.
 function BallLaunchService.GetPhase(): number

@@ -34,6 +34,8 @@ local TRACK_ATTR = "Track"
 local AFFORD_COLOR = Color3.fromRGB(64, 200, 99)  -- can buy → green
 local DENY_COLOR   = Color3.fromRGB(214, 74, 64)  -- can't afford → red
 local MAXED_COLOR  = Color3.fromRGB(128, 128, 140) -- nothing left to buy → grey
+local LOCKED_COLOR = Color3.fromRGB(90, 90, 96)   -- still locked → grey/black (pad + IconFrame)
+local LOCKED_ICON  = "❓"
 
 -- Track defs live in Config.Upgrades or Config.Axes (axes are purchasable tracks too).
 local function defFor(track: string): any
@@ -61,6 +63,8 @@ type Display = {
 	priceChip: Frame,
 	emitter: ParticleEmitter,
 	platform: BasePart,
+	iconLabel: TextLabel?, -- the Icon tile's emoji label, so a locked track can show "❓"
+	iconFrame: BasePart?,  -- separate housing part greyed out alongside the platform when locked
 }
 
 local displays: { Display } = {}
@@ -196,20 +200,51 @@ local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 	}
 end
 
--- Apply a GetUpgradeInfo entry { tier, price, canAfford, maxed } to one display.
+-- Apply a GetUpgradeInfo entry { tier, price, canAfford, maxed, locked } to one display.
 local function applyInfo(d: Display, info: any)
+	if info.locked then
+		-- Teaser state: still shows the name (already on the billboard) + the flat unlock
+		-- price, but hides tier/level and greys the pad + IconFrame instead of colouring
+		-- them by affordability.
+		d.tierLabel.Text = "🔒 Locked"
+		d.priceLabel.Text = "$" .. StringUtils.FormatShort(info.price)
+		d.priceChip.BackgroundColor3 = MAXED_COLOR
+		d.emitter.Enabled = false
+		d.platform.Color = LOCKED_COLOR
+		if d.iconFrame then
+			d.iconFrame.Color = LOCKED_COLOR
+		end
+		if d.iconLabel then
+			d.iconLabel.Text = LOCKED_ICON
+		end
+		return
+	end
+
 	d.tierLabel.Text = "Lv. " .. tostring(info.tier)
+	if d.iconLabel then
+		local icon = iconFor(d.track)
+		if icon then
+			d.iconLabel.Text = icon
+		end
+	end
 	if info.maxed then
 		d.priceLabel.Text = "MAX"
 		d.priceChip.BackgroundColor3 = MAXED_COLOR
 		d.emitter.Enabled = false
 		d.platform.Color = defaultColors[d.platform]
+		if d.iconFrame then
+			d.iconFrame.Color = defaultColors[d.iconFrame]
+		end
 	else
 		d.priceLabel.Text = "$" .. StringUtils.FormatShort(info.price)
 		local afford = info.canAfford == true
 		d.priceChip.BackgroundColor3 = if afford then AFFORD_COLOR else DENY_COLOR
 		local defaultColor = defaultColors[d.platform]
 		d.platform.Color = if afford then defaultColors[d.platform] else Color3.new(defaultColor.R * 0.8, defaultColor.G * 0.8, defaultColor.B * 0.8)
+		if d.iconFrame then
+			local iconDefault = defaultColors[d.iconFrame]
+			d.iconFrame.Color = if afford then iconDefault else Color3.new(iconDefault.R * 0.8, iconDefault.G * 0.8, iconDefault.B * 0.8)
+		end
 		d.emitter.Enabled = afford
 	end
 end
@@ -255,32 +290,40 @@ end
 local seen: { [BasePart]: boolean } = {}
 local displaysByPart: { [BasePart]: Display } = {}
 
--- Paint the icon tile's surface label, waiting for the SurfaceGui/TextLabel to replicate.
-local function paintIcon(iconTile: Instance, track: string)
-	local icon = iconFor(track)
-	if not icon then return end
+-- Resolve the icon tile's surface label, waiting for the SurfaceGui/TextLabel to replicate.
+-- Doesn't set its text here — applyInfo owns that (it needs to show "❓" instead of the real
+-- icon while the track is still locked), this just hands back the label to write into.
+local function resolveIconLabel(iconTile: Instance): TextLabel?
 	local gui = iconTile:WaitForChild("SurfaceGui", 5)
 	local label = gui and gui:WaitForChild("TextLabel", 5)
 	if label and label:IsA("TextLabel") then
-		label.Text = icon
+		return label
 	end
+	return nil
 end
 
--- Resolve the (possibly late-replicating) Icon tile, paint it, and build the billboard adorned
--- to it. Runs in its own task so the WaitForChilds don't block other parts' setup.
+-- Resolve the (possibly late-replicating) Icon tile + IconFrame housing, build the billboard
+-- adorned to the Icon tile, and wire both into the Display so applyInfo can paint/grey them.
+-- Runs in its own task so the WaitForChilds don't block other parts' setup.
 local function buildDisplay(inst: BasePart, track: string)
 	local iconChild = inst:WaitForChild("Icon", 10)
 	if not inst:IsDescendantOf(workspace) then
 		return -- streamed out / destroyed while we waited
 	end
 	local iconTile = if iconChild and iconChild:IsA("BasePart") then iconChild else nil
-	if iconTile then
-		paintIcon(iconTile, track)
-	end
+	local iconLabel: TextLabel? = if iconTile then resolveIconLabel(iconTile) else nil
 	if displaysByPart[inst] or inst:FindFirstChild("ShopInfo") then
 		return -- already built
 	end
 	local display = makeBillboard(inst, iconTile)
+	display.iconLabel = iconLabel
+
+	local iconFrame = inst:FindFirstChild("IconFrame")
+	if iconFrame and iconFrame:IsA("BasePart") then
+		display.iconFrame = iconFrame
+		defaultColors[iconFrame] = iconFrame.Color
+	end
+
 	displaysByPart[inst] = display
 	table.insert(displays, display)
 	requestRefresh()
@@ -317,6 +360,9 @@ local function teardownShopAt(inst: Instance)
 	local d = displaysByPart[inst]
 	if not d then return end
 	displaysByPart[inst] = nil
+	if d.iconFrame then
+		defaultColors[d.iconFrame] = nil
+	end
 	for i, other in displays do
 		if other == d then
 			table.remove(displays, i)

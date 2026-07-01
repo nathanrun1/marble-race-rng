@@ -159,25 +159,25 @@ local Skins: { [string]: BallSkin } = {
 		data = { color = Color3.fromRGB(163, 163, 163) },
 	},
 	slate = {
-		name = "Slate", rarity = 1, price = 150,
+		name = "Slate", rarity = 1, price = 50,
 		data = { color = Color3.fromRGB(92, 99, 112) },
 	},
 	coral = {
-		name = "Coral", rarity = 1, price = 150,
+		name = "Coral", rarity = 1, price = 50,
 		data = { color = Color3.fromRGB(255, 127, 110) },
 	},
 	charcoal = {
-		name = "Charcoal", rarity = 1, price = 150,
+		name = "Charcoal", rarity = 1, price = 50,
 		data = { color = Color3.fromRGB(48, 50, 58) },
 	},
 	rose = {
-		name = "Rose", rarity = 1, price = 200,
+		name = "Rose", rarity = 1, price = 65,
 		data = { color = Color3.fromRGB(240, 110, 170) },
 	},
 
 	------------------------------------------------------------------ Uncommon (one bold emitter)
 	mint = {
-		name = "Mint", rarity = 2, price = 300,
+		name = "Mint", rarity = 2, price = 150,
 		data = {
 			color = Color3.fromRGB(120, 230, 180),
 			particles = { {
@@ -191,7 +191,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	ocean = {
-		name = "Ocean", rarity = 2, price = 300,
+		name = "Ocean", rarity = 2, price = 150,
 		data = {
 			color = Color3.fromRGB(40, 130, 230),
 			particles = { {
@@ -204,7 +204,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	sunburst = {
-		name = "Sunburst", rarity = 2, price = 350,
+		name = "Sunburst", rarity = 2, price = 175,
 		data = {
 			color = Color3.fromRGB(255, 205, 60),
 			particles = { {
@@ -218,7 +218,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	lime = {
-		name = "Lime", rarity = 2, price = 300,
+		name = "Lime", rarity = 2, price = 150,
 		data = {
 			color = Color3.fromRGB(170, 240, 60),
 			particles = { {
@@ -230,7 +230,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	bubblegum = {
-		name = "Bubblegum", rarity = 2, price = 400,
+		name = "Bubblegum", rarity = 2, price = 200,
 		data = {
 			color = Color3.fromRGB(255, 150, 215),
 			particles = { {
@@ -246,7 +246,7 @@ local Skins: { [string]: BallSkin } = {
 
 	------------------------------------------------------------------ Rare
 	ember = {
-		name = "Ember", rarity = 3, price = 750,
+		name = "Ember", rarity = 3, price = 300,
 		data = {
 			color = Color3.fromRGB(230, 90, 30),
 			particles = {
@@ -269,7 +269,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	toxic = {
-		name = "Toxic", rarity = 3, price = 750,
+		name = "Toxic", rarity = 3, price = 300,
 		data = {
 			color = Color3.fromRGB(120, 255, 60),
 			particles = {
@@ -292,7 +292,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	amethyst = {
-		name = "Amethyst", rarity = 3, price = 800,
+		name = "Amethyst", rarity = 3, price = 320,
 		data = {
 			color = Color3.fromRGB(150, 80, 220),
 			particles = { {
@@ -306,7 +306,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	frost = {
-		name = "Frost", rarity = 3, price = 850,
+		name = "Frost", rarity = 3, price = 340,
 		data = {
 			color = Color3.fromRGB(180, 230, 255),
 			particles = { {
@@ -321,7 +321,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	crimson = {
-		name = "Crimson", rarity = 3, price = 800,
+		name = "Crimson", rarity = 3, price = 320,
 		data = {
 			color = Color3.fromRGB(200, 30, 50),
 			particles = { {
@@ -334,7 +334,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	jade = {
-		name = "Jade", rarity = 3, price = 850,
+		name = "Jade", rarity = 3, price = 340,
 		data = {
 			color = Color3.fromRGB(40, 200, 130),
 			particles = { {
@@ -348,7 +348,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	shadow = {
-		name = "Shadow", rarity = 3, price = 900,
+		name = "Shadow", rarity = 3, price = 360,
 		data = {
 			color = Color3.fromRGB(30, 28, 40),
 			particles = { {
@@ -365,7 +365,7 @@ local Skins: { [string]: BallSkin } = {
 
 	------------------------------------------------------------------ Epic (loud, multi-layer)
 	inferno = {
-		name = "Inferno", rarity = 4, price = 2000,
+		name = "Inferno", rarity = 4, price = 750,
 		data = {
 			color = Color3.fromRGB(200, 30, 20),
 			particles = {
@@ -394,7 +394,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	voltage = {
-		name = "Voltage", rarity = 4, price = 2200,
+		name = "Voltage", rarity = 4, price = 825,
 		data = {
 			color = Color3.fromRGB(90, 200, 255),
 			particles = {
@@ -416,7 +416,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	midas = {
-		name = "Midas", rarity = 4, price = 2500,
+		name = "Midas", rarity = 4, price = 950,
 		data = {
 			color = Color3.fromRGB(255, 200, 50),
 			particles = {
@@ -443,7 +443,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	plasma = {
-		name = "Plasma", rarity = 4, price = 2300,
+		name = "Plasma", rarity = 4, price = 875,
 		data = {
 			color = Color3.fromRGB(230, 60, 255),
 			particles = {
@@ -469,7 +469,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	aurora = {
-		name = "Aurora", rarity = 4, price = 2600,
+		name = "Aurora", rarity = 4, price = 975,
 		data = {
 			color = Color3.fromRGB(60, 230, 180),
 			particles = {
@@ -491,7 +491,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	obsidian = {
-		name = "Obsidian", rarity = 4, price = 2400,
+		name = "Obsidian", rarity = 4, price = 900,
 		data = {
 			color = Color3.fromRGB(24, 22, 34),
 			particles = {
@@ -516,7 +516,7 @@ local Skins: { [string]: BallSkin } = {
 
 	------------------------------------------------------------------ Legendary (deliberately loud)
 	nebula = {
-		name = "Nebula", rarity = 5, price = 5000,
+		name = "Nebula", rarity = 5, price = 2000,
 		data = {
 			color = Color3.fromRGB(230, 60, 200),
 			particles = {
@@ -551,7 +551,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	galaxy = {
-		name = "Galaxy", rarity = 5, price = 6000,
+		name = "Galaxy", rarity = 5, price = 2400,
 		data = {
 			color = Color3.fromRGB(60, 40, 120),
 			particles = {
@@ -586,7 +586,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	supernova = {
-		name = "Supernova", rarity = 5, price = 5500,
+		name = "Supernova", rarity = 5, price = 2200,
 		data = {
 			color = Color3.fromRGB(255, 240, 200),
 			particles = {
@@ -619,7 +619,7 @@ local Skins: { [string]: BallSkin } = {
 		},
 	},
 	prism = {
-		name = "Prism", rarity = 5, price = 7000,
+		name = "Prism", rarity = 5, price = 2800,
 		data = {
 			color = Color3.fromRGB(255, 255, 255),
 			particles = {

@@ -167,10 +167,12 @@ Config.Groups = {
 Config.Admins = { 89831196 }
 
 Config.Prestige = {
-	Scale      = 18820000, -- denominator in PP formula. Sized together with CostBase so the first
-	                       -- prestige costs 50 PP at the SAME lifetime-banked threshold (~30 min) as the
-	                       -- old Scale=10000/CostBase=700 did — every PP value just shrinks ~14×, timing
-	                       -- unchanged (LB_n = Scale × cost(n)^(1/Exponent), invariant under this rescale).
+	Scale      = 18820, -- denominator in PP formula (earnedPP = (creditedBanked/Scale)^Exponent).
+	                       -- Divided ×10^3 from 18820000 to make rebirths easier: since required cash
+	                       -- LB_n = Scale × cost(n)^(1/Exponent), this divides the lifetime-banked
+	                       -- threshold for EVERY prestige level by 1000 while CostBase (still 50 PP for
+	                       -- prestige #1) and the whole PP cost curve are untouched — only how much cash
+	                       -- it takes to earn a given amount of PP changed, not the PP economy itself.
 	Exponent   = 0.35,  -- sublinear compression
 	CostBase   = 50,    -- PP cost of first prestige (computeCost is 1-indexed, so this IS prestige #1's
 	                    -- cost). With Scale above, ~30 min for an optimal build on the S5 slot table
@@ -227,9 +229,13 @@ Config.Upgrades = {
 	-- so bet-spam snowballed instantly. Cost grows 1.9× so tiers gate on time, not trivially.
 	MaxBet = {
 		PerTier = 1.5,
-		Cost = { Base = 250, Growth = 1.9 },
+		Cost = { Initial = 1000, Base = 250, Growth = 1.9 },
 		Name = "Max Bet", Short = "Bet", Desc = "Raise your betting ceiling.",
-		Icon = "💰"
+		Icon = "💰",
+		-- Starts hidden behind a flat unlock (tier 0->1, still just Cost.Base — the
+		-- geometric curve is already flat at tier 0). UpgradeService/ShopUI/UpgradeShop
+		-- all key off this to show a "???" teaser instead of the real name/desc/values.
+		Locked = true,
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	-- Combo bonus is an ABSOLUTE point add (combo × this), free of the bet — the low-bet/high-
@@ -258,9 +264,10 @@ Config.Upgrades = {
 	Frequency = {
 		Base = 2, PerTier = 0.82,
 		MaxTier = 12,
-		Cost = { Base = 230, Growth = 1.9 },
+		Cost = { Initial = 750, Base = 230, Growth = 1.9 },
 		Name = "Launch Delay", Short = "Freq", Desc = "Decrease time between launches",
-		Icon = "🔄"
+		Icon = "🔄",
+		Locked = true,
 	},
 	-- pegHeatFactor = PerTier * tier (additive). Sensitivity to peg heat (§1.5,
 	-- simplified): tier 0 = heat has no effect; higher = aimed hot pegs pay more
@@ -292,7 +299,8 @@ type AxisDef = {
 	Name: string?,
 	Short: string?,
 	Desc: string?,
-	Icon: string?
+	Icon: string?,
+	Locked: boolean?
 }
 Config.Axes = {
 	Elasticity = {
@@ -312,9 +320,10 @@ Config.Axes = {
 			{ Min = 0.04, Max = 0.96 },
 			{ Min = 0.0, Max = 1.0 },
 		},
-		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Cost = { Initial = 4000, Base = 1500, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Bounciness", Short = "Bounce", Desc = "How bouncy the marble is.",
-		Icon = "💨"
+		Icon = "💨",
+		Locked = true,
 	},
 	Size = {
 		Default = 1.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
@@ -333,9 +342,10 @@ Config.Axes = {
 			{ Min = 0.51, Max = 0.98 },
 			{ Min = 0.5, Max = 1 },
 		},
-		Cost = { Base = 2000, Growth = 1.8 },
+		Cost = { Initial = 4500, Base = 2000, Growth = 1.8 },
 		Name = "Marble Size", Short = "Size", Desc = "Unlock different marble sizes.",
-		Icon = "◯"
+		Icon = "◯",
+		Locked = true,
 	},
 	Angle = {
 		Default = 0.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
@@ -354,9 +364,10 @@ Config.Axes = {
 			{ Min = -math.rad(55.7), Max = math.rad(55.7) },
 			{ Min = -math.rad(65.0), Max = math.rad(65.0) },
 		},
-		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Cost = { Initial = 4000, Base = 1500, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Angle", Short = "Angle", Desc = "Tune the launch direction.",
-		Icon = "🏹"
+		Icon = "🏹",
+		Locked = true,
 	},
 	Arc = {
 		Default = math.rad(15),
@@ -375,9 +386,10 @@ Config.Axes = {
 			{ Min = math.rad(5), Max = math.rad(69.6) },
 			{ Min = math.rad(5), Max = math.rad(80.0) },
 		},
-		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Cost = { Initial = 3500, Base = 1500, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Launcher Swivel", Short = "Swivel", Desc = "Widen or tighten the possible launch angles.",
-		Icon = "🎯"
+		Icon = "🎯",
+		Locked = true,
 	},
 } :: { [string]: AxisDef }
 
@@ -448,6 +460,8 @@ Config.Products = {
 	Multiplier4x  = "3605951969",
 	Multiplier8x  = "3605951998",
 	Multiplier16x = "3605952025",
+	-- TODO: placeholder — replace with the real dev product id from the Creator Dashboard.
+	BallDropMaxBet = "3607663509",
 }
 
 -- Robux game passes (permanent, one-time ownership — distinct from consumable dev
@@ -461,6 +475,13 @@ Config.GamePasses = {
 -- offers the next level in order, and disappears once the top one is owned.
 Config.CashMultiplier = {
 	Levels = { 2, 4, 8, 16 }, -- purchasable multipliers, ascending; last = max
+}
+
+-- Ball Drop (Robux): a consumable dev product (Config.Products.BallDropMaxBet) that instantly
+-- fires Count balls, each valued at the player's CURRENT max bet (not their chosen loadout.Bet) —
+-- free, bypassing the launch cooldown/affordability check (see BallLaunchService.LaunchMaxBetBatch).
+Config.BallDrop = {
+	Count = 30,
 }
 
 -- Starter pack (Robux): a one-time new-player boost. Grants UpgradeTiers on every
@@ -484,7 +505,13 @@ Config.Cosmetics = {
 	-- Robux fallback: one dev product per rarity (index = rarity 1..5). When a player can't afford the
 	-- selected skin with CC, the shop prompts the product for that skin's rarity, which grants it.
 	-- PLACEHOLDER ids — fill in real product ids per rarity from the Creator Dashboard.
-	RarityProducts = { "0", "0", "0", "0", "0" },
+	RarityProducts = { 
+		"3607562563", 
+		"3607562601", 
+		"3607562664", 
+		"3607562701", 
+		"3607562744" 
+	},
 }
 
 Config.Obby = {
@@ -506,8 +533,9 @@ Config.GroupReward = {
 -- to SunsetTime over DayMinutes of real time, then SunsetTime back round to SunriseTime over
 -- NightMinutes — so the two halves can last different real durations. Servers start at sunrise.
 Config.DayNight = {
-	DayMinutes   = 8,   -- real minutes for the day half (sunrise -> sunset)
-	NightMinutes = 4,   -- real minutes for the night half (sunset -> sunrise)
+	Enabled      = true, -- Whether day/night cycle is enabled
+	DayMinutes   = 4,   -- real minutes for the day half (sunrise -> sunset)
+	NightMinutes = 9,   -- real minutes for the night half (sunset -> sunrise)
 	SunriseTime  = 6,   -- ClockTime (hour, 0-24) the day starts at
 	SunsetTime   = 18,  -- ClockTime (hour, 0-24) the night starts at
 	StartTime    = 9.4, -- ClockTime the cycle begins at when the server starts

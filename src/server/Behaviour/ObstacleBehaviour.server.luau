@@ -7,7 +7,17 @@ local CollectionService = game:GetService("CollectionService")
 local Config = require(RS.Shared.Config)
 
 local HEARTBEAT_DELAY = 0.01
+-- Guard against a huge single rotation jump (e.g. the very first tick, or a lag spike) — dt is
+-- clamped to this before being applied, since a stray huge dt would otherwise snap the obstacle
+-- to a wildly different angle in one frame instead of smoothly catching up.
+local MAX_DT = 0.25
 
+-- Rotation speed, degrees/second per axis. Composed incrementally each tick (same mechanism as
+-- before, since that's what actually rotates obstacles correctly) — the only thing that was
+-- broken is what "dt" was: it used to always be the fixed HEARTBEAT_DELAY constant regardless of
+-- how long the tick actually took, so the true rotation rate silently depended on how close
+-- task.wait(0.01) came to an exact 0.01s (it never does). dt is now the REAL elapsed time
+-- between ticks, measured via os.clock().
 local toRotate: { [Instance]: Vector3 } = {}
 
 type AlternationInfo = {
@@ -16,25 +26,28 @@ type AlternationInfo = {
 }
 local toAlternate: { [Instance]: AlternationInfo } = {}
 
-local function getCFrame(instance: Instance)
+-- Non-asserting: init() runs this over every Config.Tags.Obstacle instance in the whole game in
+-- one loop, so throwing on an unsupported type would abort init() before doHeartbeat() ever
+-- runs — silently killing rotation/alternation for every obstacle in the game, not just the
+-- offending one.
+local function tryGetCFrame(instance: Instance): CFrame?
     if instance:IsA("BasePart") then
         return instance.CFrame
     elseif instance:IsA("Model") then
         return instance:GetPivot()
-    else
-        assert(false, "getCFrame() not implemented for type: "..instance.ClassName)
     end
+    return nil
 end
 
-local function applyRotation(instance: Instance, angles: Vector3, timeDelta: number)
-    local anglesScaled = angles * timeDelta
+local function applyRotation(instance: Instance, angles: Vector3, dt: number)
+    local anglesScaled = angles * dt
     local rotation = CFrame.Angles(math.rad(anglesScaled.X), math.rad(anglesScaled.Y), math.rad(anglesScaled.Z))
     if instance:IsA("BasePart") then
         instance.CFrame = instance.CFrame * rotation
     elseif instance:IsA("Model") then
         instance:PivotTo(instance:GetPivot() * rotation)
         for _, c in instance:GetChildren() do
-            applyRotation(c, angles, timeDelta)
+            applyRotation(c, angles, dt)
         end
     end
 end
@@ -52,21 +65,37 @@ local function applyAlternation(instance: Instance, altInfo: AlternationInfo)
     end
 end
 
-local function applyRotations(timeDelta: number)
+-- pcall-wrapped: this runs every ~0.01s for every tracked obstacle in one loop with no yields
+-- in between, so an uncaught error from ANY single entry (e.g. one that got Destroyed elsewhere
+-- in the game while still tracked here) would otherwise kill the whole doHeartbeat loop
+-- permanently on that tick — silently stopping rotation/alternation for every obstacle forever,
+-- not just the offending one. warn() surfaces the failure instead of eating it silently.
+local function applyRotations(dt: number)
     for obs, angles in toRotate do
-        applyRotation(obs, angles, timeDelta)
+        local ok, err = pcall(applyRotation, obs, angles, dt)
+        if not ok then
+            warn(("ObstacleBehaviour: rotation failed for %s: %s"):format(obs:GetFullName(), tostring(err)))
+        end
     end
 end
 
 local function applyAlternations()
     for obs, altInfo in toAlternate do
-        applyAlternation(obs, altInfo)
+        local ok, err = pcall(applyAlternation, obs, altInfo)
+        if not ok then
+            warn(("ObstacleBehaviour: alternation failed for %s: %s"):format(obs:GetFullName(), tostring(err)))
+        end
     end
 end
 
--- Runs every heartbeat
-local function heartbeat(timeDelta: number)
-    applyRotations(timeDelta)
+-- Runs every heartbeat, using the REAL elapsed time since the last tick (not the fixed
+-- HEARTBEAT_DELAY constant task.wait was previously assumed to deliver exactly).
+local lastTime = os.clock()
+local function heartbeat()
+    local now = os.clock()
+    local dt = math.min(now - lastTime, MAX_DT)
+    lastTime = now
+    applyRotations(dt)
     applyAlternations()
 end
 
@@ -74,7 +103,7 @@ end
 local function doHeartbeat()
     while true do
         task.wait(HEARTBEAT_DELAY)
-        heartbeat(HEARTBEAT_DELAY)
+        heartbeat()
     end
 end
 
@@ -86,10 +115,16 @@ local function init()
         local altAttr: Vector3 = o:GetAttribute(Config.Attributes.ObstacleAlternation) :: Vector3
 
         if rotateAttr then
-            toRotate[o] = rotateAttr 
+            toRotate[o] = rotateAttr
         end
         if altAttr then
-            toAlternate[o] = { angles = altAttr, initialCF = getCFrame(o) }
+            local cf = tryGetCFrame(o)
+            if cf then
+                toAlternate[o] = { angles = altAttr, initialCF = cf }
+            else
+                warn(("ObstacleBehaviour: %s is tagged %s with an ObstacleAlternation attribute but isn't a BasePart/Model (%s) — skipping")
+                    :format(o:GetFullName(), Config.Tags.Obstacle, o.ClassName))
+            end
         end
     end
 

@@ -23,6 +23,7 @@ local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local DataService = require(SSS.Scripts.Modules.DataService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
+local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local BallSkins = require(RS.Shared.BallSkins)
 
 local MonetizationService = {}
@@ -114,10 +115,25 @@ local function registerCosmeticFallback()
 	end
 end
 
+-- Consumable dev product (Config.Products.BallDropMaxBet): instantly fires Config.BallDrop.Count
+-- balls valued at the player's current max bet — see BallLaunchService.LaunchMaxBetBatch.
+local function registerBallDrop()
+	local id = productId("BallDropMaxBet")
+	if id and id ~= 0 then
+		ProductService.RegisterProduct(id, function(player: Player, _receiptInfo: any): boolean
+			BallLaunchService.LaunchMaxBetBatch(player, Config.BallDrop.Count)
+			SoundService.PlayForClient(player, { soundId = Config.Sounds.Upgrade })
+			AnnounceUI.Announce(player, Config.BallDrop.Count .. " Balls at Max Bet!", Color3.fromRGB(255, 140, 60))
+			return true
+		end)
+	end
+end
+
 function MonetizationService.Init()
 	registerCashMultipliers()
 	registerStarterPack()
 	registerCosmeticFallback()
+	registerBallDrop()
 end
 
 return MonetizationService
