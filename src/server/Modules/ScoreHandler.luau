@@ -55,6 +55,7 @@ export type BallState = {
 	coldPegs: number,
 	neutralPegs: number,
 	jackpotHit: boolean,
+	lastBounceBurst: number?, -- os.clock() of the last cosmetic bounce-burst (debounce)
 }
 
 -- (ball, info) — banked at a DestroyTarget, just before despawn.
@@ -190,11 +191,21 @@ end
 
 -- Hit sub-handlers. Each mutates state and fires effects for one concern.
 
+local BOUNCE_BURST_INTERVAL = 0.12 -- min seconds between cosmetic bounce bursts per ball (dense peg
+                                   -- fields would otherwise spam them, and flood the owner's client)
+
 local function handleBounce(ball: BasePart, player: Player, state: BallState)
 	state.bounces += 1
 	local flatRate = ProfileStats.GetFlatPerBounce(ProfileService.GetUpgrades(player))
 	if flatRate > 0 then
 		BallEffects.DoClientEffect(player, "ShowComboPopup", ball, ball.CFrame, state.bounces, flatRate)
+	end
+	-- Cosmetic skin bounce burst (owner-only, debounced). The client Emits the SkinBounce emitter,
+	-- which is a no-op if the equipped skin has no bounce effect set.
+	local now = os.clock()
+	if now - (state.lastBounceBurst or 0) >= BOUNCE_BURST_INTERVAL then
+		state.lastBounceBurst = now
+		BallEffects.DoClientEffect(player, "EmitBounce", ball)
 	end
 end
 

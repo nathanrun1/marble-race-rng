@@ -14,6 +14,7 @@ local RS = game:GetService("ReplicatedStorage")
 
 local Config = require(RS.Shared.Config)
 local BallEffects = require(RS.Shared.BallEffects)
+local BallSkins = require(RS.Shared.BallSkins)
 
 local BallTuningPreview = {}
 
@@ -29,6 +30,7 @@ local arc = 0
 local aim = 0
 local size = 1
 local elasticity = 0.5
+local equippedSkinId = BallSkins.GetDefaultId()  -- cosmetic shown on the preview ball
 
 local visible = false
 
@@ -108,11 +110,15 @@ local function updateBall()
 	if not ball then
 		return
 	end
-	ball.Size = baseBallSize * size
 	ball.CFrame = CFrame.new(cfg.BallPosition)
-	-- Elasticity → weight drives the material (heavy = metal); BallEffects paints it.
-	ball:SetAttribute(Config.Attributes.Weight, 1 - elasticity)
-	BallEffects.ApplyHeat(ball, 0, 1)
+	-- One shared path for size, elasticity→material, and the equipped cosmetic (skin + particles).
+	BallEffects.ApplyAppearance(ball, {
+		skinId = equippedSkinId,
+		weight = 1 - elasticity,
+		sizeScale = size,
+		baseSize = baseBallSize,
+		heat = 0,
+	})
 end
 
 local function refresh()
@@ -150,6 +156,25 @@ end
 function BallTuningPreview.Init()
 	applyProfile(GetProfileRF:InvokeServer())
 	ProfileChangedRE.OnClientEvent:Connect(applyProfile)
+
+	-- Show the equipped cosmetic on the preview ball too, kept in sync with the cosmetics shop.
+	local cosmeticChanged = Remote:WaitForChild("CosmeticChanged", 10)
+	if cosmeticChanged and cosmeticChanged:IsA("RemoteEvent") then
+		cosmeticChanged.OnClientEvent:Connect(function(info: any)
+			if info and type(info.equipped) == "string" then
+				equippedSkinId = info.equipped
+				refresh()
+			end
+		end)
+	end
+	local getInfo = Remote:FindFirstChild("GetCosmeticInfo")
+	if getInfo and getInfo:IsA("RemoteFunction") then
+		local info = getInfo:InvokeServer()
+		if info and type(info.equipped) == "string" then
+			equippedSkinId = info.equipped
+			refresh()
+		end
+	end
 end
 
 return BallTuningPreview

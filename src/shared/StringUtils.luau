@@ -6,7 +6,7 @@ function StringUtils.Commas(n: number): string
 	return (out:gsub("^,", ""))
 end
 
-function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: number): string
+function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: number?): string
     precision = precision or 2
     local SCI_AT = 1e15
     local FACTORS_ORD = {1e12, 1e9, 1e6, 1e3}
@@ -40,20 +40,20 @@ end
 
 -- Money string: comma-grouped below 1K (so small balances read exactly), short
 -- suffixed (K/M/B/T/Q) above. Always prefixed with "$".
-function StringUtils.FormatMoney(n: number): string
+function StringUtils.FormatMoney(n: number, floorRound: boolean?, precision: number?): string
     if n < 1000 then
         return "$" .. StringUtils.Commas(n)
     end
-    return "$" .. StringUtils.FormatShort(n)
+    return "$" .. StringUtils.FormatShort(n, floorRound, precision)
 end
 
 -- Like FormatMoney but for non-currency counts (PP, costs, ...): comma-grouped below
 -- 1K, short-suffixed (K/M/B/T) above, no "$".
-function StringUtils.FormatCompact(n: number): string
+function StringUtils.FormatCompact(n: number, floorRound: boolean?, precision: number?): string
     if n < 1000 then
         return StringUtils.Commas(n)
     end
-    return StringUtils.FormatShort(n)
+    return StringUtils.FormatShort(n, floorRound, precision)
 end
 
 return StringUtils

@@ -17,6 +17,7 @@ local Config = require(RS.Shared.Config)
 local StringUtils = require(RS.Shared.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
 local AutoScale = require(RS.Shared.AutoScale)
+local BallSkins = require(RS.Shared.BallSkins)
 
 local BallEffects = {}
 
@@ -31,7 +32,7 @@ local HEAVY_AT           = 0.66
 -- Ownership visibility: every viewer sees a ball at UNOWNED_TRANSPARENCY (set
 -- server-side, replicated). Each client then makes its OWN balls fully opaque
 -- locally, so a player can pick their balls out from everyone else's.
-local UNOWNED_TRANSPARENCY = 0.7
+local UNOWNED_TRANSPARENCY = 0.3
 local OWNED_TRANSPARENCY    = 0
 local FREQ_PARTICLE_AT   = 4
 local HEAT_NEON_AT       = 1
@@ -42,6 +43,11 @@ local BRIGHTNESS_PER_HEAT        = 0.08
 local MIN_BRIGHTNESS, MAX_BRIGHTNESS = 0.35, 2.0
 local FREQ_EMITTER_NAME  = "FreqParticles"
 local FIRE_NAME          = "HeatFire"
+local SKIN_EMITTER_NAME  = "SkinParticles" -- the cosmetic skin's ambient emitters (see BallSkins)
+local BOUNCE_EMITTER_NAME = "SkinBounce"   -- burst-only emitter fired on bounce (skin.data.bounce)
+local ORBIT_PART_NAME    = "SkinOrbit"     -- cosmetic parts that revolve around the ball (skin.data.orbits)
+local HIGHLIGHT_NAME     = "SkinHighlight" -- the glow on "good" (rarer) skins (skin.data.highlight)
+local HIGHLIGHT_MIN_RARITY = 3             -- rarity at/above which a skin auto-gets a glow
 local POPUP_TWEEN        = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
@@ -91,6 +97,136 @@ local function applyFreqParticles(ball: BasePart, n: number)
 	elseif existing then
 		existing:Destroy()
 	end
+end
+
+-- Build the cosmetic skin's ParticleEmitters on the ball. A skin may LAYER several; each becomes a
+-- "SkinParticles<i>" emitter. Only the fields a skin sets are applied; the rest stay default.
+-- (Moved here from CosmeticService so ApplyAppearance owns the whole cosmetic layer.)
+local function clearSkinParticles(ball: BasePart)
+	for _, child in ball:GetChildren() do
+		if child:IsA("ParticleEmitter") and child.Name:sub(1, #SKIN_EMITTER_NAME) == SKIN_EMITTER_NAME then
+			child:Destroy()
+		end
+	end
+end
+
+local function buildSkinEmitter(p: BallSkins.ParticleData): ParticleEmitter
+	local e = Instance.new("ParticleEmitter")
+	e.Color = p.color or ColorSequence.new(Color3.new(1, 1, 1))
+	if p.texture then e.Texture = p.texture end
+	e.Rate = p.rate or 20
+	e.Lifetime = p.lifetime or NumberRange.new(0.5, 1)
+	e.Speed = p.speed or NumberRange.new(1, 2)
+	e.Size = p.size or NumberSequence.new(0.3, 0)
+	e.Transparency = p.transparency or NumberSequence.new(0.2, 1)
+	e.SpreadAngle = p.spreadAngle or Vector2.new(0, 0)
+	e.LightEmission = p.lightEmission or 0
+	if p.lightInfluence ~= nil then e.LightInfluence = p.lightInfluence end
+	if p.rotation then e.Rotation = p.rotation end
+	if p.rotSpeed then e.RotSpeed = p.rotSpeed end
+	if p.acceleration then e.Acceleration = p.acceleration end
+	if p.drag ~= nil then e.Drag = p.drag end
+	if p.velocityInheritance ~= nil then e.VelocityInheritance = p.velocityInheritance end
+	if p.emissionDirection then e.EmissionDirection = p.emissionDirection end
+	if p.zOffset ~= nil then e.ZOffset = p.zOffset end
+	if p.squash then e.Squash = p.squash end
+	if p.orientation then e.Orientation = p.orientation end
+	if p.brightness ~= nil then e.Brightness = p.brightness end
+	if p.shape then e.Shape = p.shape end
+	return e
+end
+
+local function applySkinParticles(ball: BasePart, particles: { BallSkins.ParticleData }?)
+	clearSkinParticles(ball)
+	if not particles then
+		return
+	end
+	for i, p in particles do
+		local e = buildSkinEmitter(p)
+		e.Name = SKIN_EMITTER_NAME .. tostring(i)
+		e.Parent = ball
+	end
+end
+
+-- A burst-only emitter for the skin's bounce effect (skin.data.bounce). Kept at Rate 0 / disabled;
+-- BallEffects.EmitBounce fires a one-off Emit() of BurstCount particles on each bounce.
+local function applyBounceEmitter(ball: BasePart, bounce: BallSkins.ParticleData?)
+	local existing = ball:FindFirstChild(BOUNCE_EMITTER_NAME)
+	if existing then
+		existing:Destroy()
+	end
+	if not bounce then
+		return
+	end
+	local e = buildSkinEmitter(bounce)
+	e.Name = BOUNCE_EMITTER_NAME
+	e.Rate = 0
+	e.Enabled = false
+	e:SetAttribute("BurstCount", bounce.burstCount or 14)
+	e.Parent = ball
+end
+
+-- Cosmetic parts that revolve around the ball (skin.data.orbits). Each is an anchored, non-colliding
+-- part; its orbit params live as attributes so the per-frame positioner (UpdateOrbits) — run by the
+-- client ball animator and the shop sample — can move it without touching the skin table.
+local function clearOrbits(ball: BasePart)
+	for _, child in ball:GetChildren() do
+		if child:IsA("BasePart") and child.Name:sub(1, #ORBIT_PART_NAME) == ORBIT_PART_NAME then
+			child:Destroy()
+		end
+	end
+end
+
+local function applyOrbits(ball: BasePart, orbits: { BallSkins.OrbitData }?)
+	clearOrbits(ball)
+	if not orbits then
+		return
+	end
+	for i, o in orbits do
+		local p = Instance.new("Part")
+		p.Name = ORBIT_PART_NAME .. tostring(i)
+		p.Shape = o.shape or Enum.PartType.Ball
+		p.Size = o.size or Vector3.new(0.6, 0.6, 0.6)
+		p.Color = o.color or Color3.fromRGB(255, 255, 255)
+		p.Material = o.material or Enum.Material.Neon
+		p.Transparency = if o.transparency ~= nil then o.transparency else 0.4
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = false
+		p.Massless = true
+		p:SetAttribute("OrbitAxis", o.axis or Vector3.yAxis)
+		p:SetAttribute("OrbitOffset", o.offset or Vector3.new(2, 0, 0))
+		p:SetAttribute("OrbitSpeed", o.speed or 2)
+		p:SetAttribute("OrbitPhase", o.phase or 0)
+		if o.spin then
+			p:SetAttribute("OrbitSpin", o.spin)
+		end
+		p.Parent = ball
+	end
+end
+
+-- The glow on rarer skins. A Highlight Adorned to the ball; colours default to the skin's base colour
+-- (so it's "appropriate" without per-skin config), overridable via skin.data.highlight. DepthMode is
+-- Occluded by default, so the glow is hidden behind walls rather than X-raying through them.
+local function applyHighlight(ball: BasePart, hl: BallSkins.HighlightData?, baseColor: Color3)
+	local existing = ball:FindFirstChild(HIGHLIGHT_NAME) :: Highlight?
+	if not hl then
+		if existing then
+			existing:Destroy()
+		end
+		return
+	end
+	local h = existing or Instance.new("Highlight")
+	h.Name = HIGHLIGHT_NAME
+	h.Adornee = ball
+	h.FillColor = hl.fillColor or baseColor
+	h.OutlineColor = hl.outlineColor or baseColor
+	h.FillTransparency = if hl.fillTransparency ~= nil then hl.fillTransparency else 0.75
+	h.OutlineTransparency = if hl.outlineTransparency ~= nil then hl.outlineTransparency else 0
+	h.DepthMode = hl.depthMode or Enum.HighlightDepthMode.Occluded
+	h.Parent = ball
 end
 
 local function applyHeatParticles(ball: BasePart, heat: number)
@@ -148,6 +284,76 @@ end
 function BallEffects.SetBaseColor(ball: BasePart, color: Color3)
 	baseColors[ball] = color
 	applyColor(ball, color, 0)
+end
+
+-- One entry point for ALL of a ball's appearance: cosmetic skin (base colour + particles) plus the
+-- tuning look (size scale, elasticity→weight material) plus the heat paint. Shared by the live ball
+-- spawn (CosmeticService), the cosmetic shop sample, and the ball-tuning preview, so they can't
+-- drift. Only the fields you pass are applied (size needs baseSize; an omitted weight is left alone).
+export type Appearance = {
+	skinId: string?,    -- cosmetic skin id (BallSkins); nil/unknown -> default
+	weight: number?,    -- 0..1, heavy -> metal material (typically 1 - elasticity)
+	sizeScale: number?, -- multiply baseSize by this (requires baseSize)
+	baseSize: Vector3?, -- the unscaled size to scale from
+	heat: number?,      -- accumulated heat to paint (default 0)
+}
+function BallEffects.ApplyAppearance(ball: BasePart, appearance: Appearance)
+	local skin = BallSkins.Get(appearance.skinId or BallSkins.GetDefaultId())
+		or BallSkins.Get(BallSkins.GetDefaultId())
+	if skin then
+		baseColors[ball] = skin.data.color
+		applySkinParticles(ball, skin.data.particles)
+		applyBounceEmitter(ball, skin.data.bounce)
+		applyOrbits(ball, skin.data.orbits)
+		local hl = skin.data.highlight
+		if not hl and skin.rarity >= HIGHLIGHT_MIN_RARITY then
+			hl = {} -- auto-glow for "good" skins, coloured by the skin's base colour
+		end
+		applyHighlight(ball, hl, skin.data.color)
+	end
+	if appearance.weight ~= nil then
+		ball:SetAttribute(Config.Attributes.Weight, appearance.weight)
+	end
+	if appearance.sizeScale and appearance.baseSize then
+		ball.Size = appearance.baseSize * appearance.sizeScale
+	end
+	-- Paints colour (from the skin base), material (weight + heat) and heat particles.
+	BallEffects.ApplyHeat(ball, appearance.heat or 0, 1)
+end
+
+-- Fire the skin's bounce burst (a one-off Emit of the SkinBounce emitter), if the equipped skin has
+-- one. Safe to call from either context; the burst renders for whoever calls it (so the owner's
+-- client fires it on bounce, and the cosmetic sample fires it on the showcase timer).
+function BallEffects.EmitBounce(ball: BasePart?)
+	if not ball then
+		return
+	end
+	local e = ball:FindFirstChild(BOUNCE_EMITTER_NAME) :: ParticleEmitter?
+	if e then
+		e:Emit((e:GetAttribute("BurstCount") :: number?) or 14)
+	end
+end
+
+-- Per-frame positioner for a ball's orbiting cosmetic parts: each revolves around the ball about its
+-- OrbitAxis at OrbitSpeed (offset by OrbitOffset), optionally spinning on its own (OrbitSpin). Called
+-- every frame by the client ball animator and by the cosmetic sample, so it works for any ball.
+function BallEffects.UpdateOrbits(ball: BasePart)
+	local t = os.clock()
+	local ballCF = ball.CFrame
+	for _, p in ball:GetChildren() do
+		if p:IsA("BasePart") and p.Name:sub(1, #ORBIT_PART_NAME) == ORBIT_PART_NAME then
+			local axis = (p:GetAttribute("OrbitAxis") :: Vector3?) or Vector3.yAxis
+			local offset = (p:GetAttribute("OrbitOffset") :: Vector3?) or Vector3.new(2, 0, 0)
+			local speed = (p:GetAttribute("OrbitSpeed") :: number?) or 2
+			local phase = (p:GetAttribute("OrbitPhase") :: number?) or 0
+			local spin = p:GetAttribute("OrbitSpin") :: Vector3?
+			local cf = ballCF * CFrame.fromAxisAngle(axis, t * speed + phase) * CFrame.new(offset)
+			if spin then
+				cf = cf * CFrame.Angles(t * spin.X, t * spin.Y, t * spin.Z)
+			end
+			p.CFrame = cf
+		end
+	end
 end
 
 -- Play heat transition sound if applicable
@@ -483,6 +689,21 @@ local TouchInputService = game:GetService("TouchInputService")
 		ball:Destroy()
 	end
 
+	-- Balls that carry orbiting cosmetic parts, animated locally every frame (everyone sees them).
+	local orbitBalls: { [BasePart]: boolean } = {}
+	local function trackOrbits(ball: BasePart)
+		-- Orbit parts may replicate a moment after the ball, so scan now and watch for late ones.
+		local function check(child: Instance)
+			if child:IsA("BasePart") and child.Name:sub(1, #ORBIT_PART_NAME) == ORBIT_PART_NAME then
+				orbitBalls[ball] = true
+			end
+		end
+		for _, c in ball:GetChildren() do
+			check(c)
+		end
+		ball.ChildAdded:Connect(check)
+	end
+
 	local function onBallTagged(ball: BasePart)
 		local own = isOwnBall(ball)
 		if ballsHidden and not own then
@@ -498,6 +719,7 @@ local TouchInputService = game:GetService("TouchInputService")
 				BallEffects.SetValueUI(ball, effectiveValue)
 			end
 		end
+		trackOrbits(ball) -- orbiting cosmetic parts are visible to everyone
 	end
 
 	-- Toggle whether OTHER players' balls are shown. Turning it on destroys every
@@ -535,6 +757,21 @@ local TouchInputService = game:GetService("TouchInputService")
 		CollectionService:GetInstanceAddedSignal(Config.Tags.Ball):Connect(function(inst)
 			if inst:IsA("BasePart") then
 				onBallTagged(inst)
+			end
+		end)
+		CollectionService:GetInstanceRemovedSignal(Config.Tags.Ball):Connect(function(inst)
+			orbitBalls[inst :: BasePart] = nil
+		end)
+
+		-- Animate orbiting cosmetic parts each frame (local to this client; the parts are server-
+		-- created and replicated, so every viewer sees the orbit).
+		RunService.RenderStepped:Connect(function()
+			for ball in orbitBalls do
+				if ball.Parent then
+					BallEffects.UpdateOrbits(ball)
+				else
+					orbitBalls[ball] = nil
+				end
 			end
 		end)
 	end

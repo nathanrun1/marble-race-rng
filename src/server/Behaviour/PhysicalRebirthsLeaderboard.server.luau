@@ -10,6 +10,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local RunService = game:GetService("RunService")
 local SSS = game:GetService("ServerScriptService")
 
 local StringUtils = require(ReplicatedStorage.Shared.StringUtils)
@@ -88,9 +89,19 @@ end
 -- Persistent leaderboard via DataService (false in Studio → per-server fallback below).
 local enabled = DataService.LeaderboardsEnabled()
 
--- Admins are hidden from leaderboards: never written, filtered from display.
+-- Admins are hidden from leaderboards: never written to the store, filtered from the
+-- persisted (top-N) display.
 local function isExcluded(userId: number): boolean
     return table.find(Config.Admins, userId) ~= nil
+end
+
+-- Studio's fallback render reads live local state, not the store, so relaxing this for admins
+-- there is safe — it never affects what gets persisted (writeCount always uses isExcluded).
+local function isHiddenInLocalView(userId: number): boolean
+    if RunService:IsStudio() then
+        return false
+    end
+    return isExcluded(userId)
 end
 
 -- Cloned rows currently shown (rebuilt each refresh).
@@ -282,7 +293,7 @@ local function localEntries(): { Entry }
     local entries: { Entry } = {}
     for _, player in Players:GetPlayers() do
         local count = PrestigeService.GetCount(player)
-        if count > 0 and not isExcluded(player.UserId) then
+        if count > 0 and not isHiddenInLocalView(player.UserId) then
             table.insert(entries, { userId = player.UserId, count = count })
         end
     end

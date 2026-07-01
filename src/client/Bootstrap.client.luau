@@ -25,6 +25,9 @@ local GroupRewardUI = require(PlayerScripts:WaitForChild("GroupRewardUI"))
 local TutorialService = require(PlayerScripts:WaitForChild("TutorialService"))
 local CoinPickups = require(PlayerScripts:WaitForChild("CoinPickups"))
 local PlaytimeUI = require(PlayerScripts:WaitForChild("PlaytimeUI"))
+local MoneyPerBallUI = require(PlayerScripts:WaitForChild("MoneyPerBallUI"));
+local CosmeticsShop = require(PlayerScripts:WaitForChild("CosmeticsShop"))
+local CosmeticBallSample = require(PlayerScripts:WaitForChild("CosmeticBallSample"))
 local Config = require(RS.Shared:WaitForChild("Config"))
 
 print("Bootstrapping services...")
@@ -49,6 +52,9 @@ GroupRewardUI.Init()
 TutorialService.Init()
 CoinPickups.Init()
 PlaytimeUI.Init()
+MoneyPerBallUI.Init()
+CosmeticsShop.Init()
+CosmeticBallSample.Init()
 
 -- Start shuffle-play background music on join (each track once per cycle, then reshuffle).
 SoundService.SetBackgroundPlaylist(Config.BackgroundPlaylist)

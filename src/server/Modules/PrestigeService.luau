@@ -13,6 +13,7 @@ local Config = require(RS.Shared.Config)
 local Signal = require(RS.Shared.Signal)
 local AnnounceUI = require(RS.Shared.AnnounceUI)
 local WarnUI = require(RS.Shared.WarnUI)
+local StringUtils = require(RS.Shared.StringUtils)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local BallService = require(SSS.Scripts.Modules.BallService)
@@ -207,6 +208,14 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	-- left intact (it's a high-water mark), so available PP simply drops by nextCost — leaving
 	-- at most the ~1× buffer the hold cap allows, never enough to chain a second prestige.
 	d.ppSpent += info.nextCost
+	-- Rebirthing converts the RP spent on this rebirth into CC (the cosmetics currency). Lazy-require
+	-- to avoid a load-time cycle, same as the ScoringService/UpgradeService requires above.
+	local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
+	local ccGained = math.floor(info.nextCost * Config.Cosmetics.RebirthCCRatio)
+	CosmeticService.AddCC(player, ccGained)
+	if ccGained > 0 then
+		WarnUI.Warn(player, "Earned " .. StringUtils.FormatShort(ccGained) .. " CC!", Color3.fromRGB(255, 210, 60), 4)
+	end
 	d.count += 1
 	-- Re-arm the "Prestige available!" edge so it announces again next time they climb back.
 	alertCanPrestige[player.UserId] = false

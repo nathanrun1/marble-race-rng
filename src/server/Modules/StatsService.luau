@@ -13,9 +13,11 @@
 -- it has no dependency on the purchase/lifecycle services that depend on it.
 
 local RS = game:GetService("ReplicatedStorage")
+local SSS = game:GetService("ServerScriptService")
 
 local Signal = require(RS.Shared.Signal)
 local Config = require(RS.Shared.Config)
+local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 
 local StatsService = {}
 
@@ -25,6 +27,8 @@ export type Stats = {
 	ownsStarterPack: boolean,
 	lastGroupRewardClaim: number, -- os.time() of the last group-reward claim (0 = never)
 	completedTutorial: boolean,   -- whether the join tutorial has been finished/skipped
+	ballEarnings: number,         -- lifetime cash banked from balls (server-authoritative; NOT reset by prestige)
+	ballsBanked: number,          -- lifetime count of balls banked, paired with ballEarnings for an average
 }
 
 -- stats[userId] = Stats
@@ -33,8 +37,22 @@ local stats: { [number]: Stats } = {}
 -- (player, stats) — fired after any change.
 StatsService.Changed = Signal.new()
 
+-- (player, avgMoneyPerBall) — fired on every ball banked, server-side only (no remote, no
+-- StatsService.Changed announce: balls can bank many times a second, so this stays a cheap
+-- in-process signal for consumers — the leaderstats column, the global leaderboard writer —
+-- that want a fresh average without paying for a client round-trip on every ball).
+StatsService.BallBanked = Signal.new()
+
 local function defaults(): Stats
-	return { upgradesPurchased = 0, cashMultiplier = 1, ownsStarterPack = false, lastGroupRewardClaim = 0, completedTutorial = false }
+	return {
+		upgradesPurchased = 0,
+		cashMultiplier = 1,
+		ownsStarterPack = false,
+		lastGroupRewardClaim = 0,
+		completedTutorial = false,
+		ballEarnings = 0,
+		ballsBanked = 0,
+	}
 end
 
 -- Non-asserting: returns live state, or fresh defaults if the player isn't loaded yet
@@ -85,6 +103,18 @@ end
 
 function StatsService.HasCompletedTutorial(player: Player): boolean
 	return get(player.UserId).completedTutorial
+end
+
+-- Server-authoritative lifetime average $/marble (ballEarnings / ballsBanked), 0 if no balls
+-- banked yet. This is what feeds the global money/ball leaderboard — unlike the client's own
+-- recency-windowed display average, it can't be spoofed since it's derived purely from banked
+-- cash the server itself credited.
+function StatsService.GetAvgMoneyPerBall(player: Player): number
+	local s = get(player.UserId)
+	if s.ballsBanked <= 0 then
+		return 0
+	end
+	return s.ballEarnings / s.ballsBanked
 end
 
 --------------------------------------------------------------------------------
@@ -166,6 +196,12 @@ function StatsService.ApplyData(player: Player, saved: Stats?)
 		if type(saved.completedTutorial) == "boolean" then
 			s.completedTutorial = saved.completedTutorial
 		end
+		if type(saved.ballEarnings) == "number" then
+			s.ballEarnings = saved.ballEarnings
+		end
+		if type(saved.ballsBanked) == "number" then
+			s.ballsBanked = saved.ballsBanked
+		end
 	end
 	stats[player.UserId] = s
 	announce(player)
@@ -179,10 +215,32 @@ function StatsService.Clear(player: Player)
 	stats[player.UserId] = nil
 end
 
+-- Same "Ball ..." reason convention CurrencyService uses for ball-bank credits (see
+-- MoneyPerBallUI's isBallBank on the client) — everything else (coins, playtime, starter
+-- pack, ...) uses a different reason and must not count toward the average.
+local function isBallBank(reason: any): boolean
+	return typeof(reason) == "string" and string.match(reason, "^Ball ") ~= nil
+end
+
 function StatsService.Init()
 	local re = Instance.new("RemoteEvent")
 	re.Name = "StatsChanged"
 	re.Parent = RS.Remote
+
+	-- Track lifetime ball earnings/count server-side (authoritative — CurrencyService only
+	-- fires this from server-side banking logic, so it can't be spoofed by a client remote).
+	CurrencyService.Changed:Connect(function(player: Player, _newBalance: number, delta: number, reason: any)
+		if not isBallBank(reason) or delta <= 0 then
+			return
+		end
+		local s = stats[player.UserId]
+		if not s then
+			return
+		end
+		s.ballEarnings += delta
+		s.ballsBanked += 1
+		StatsService.BallBanked:Fire(player, s.ballEarnings / s.ballsBanked)
+	end)
 	statsChangedRE = re
 
 	local rf = Instance.new("RemoteFunction")

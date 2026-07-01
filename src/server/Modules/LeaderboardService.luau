@@ -9,8 +9,9 @@
 -- remaining numeric column (Prestige). True cash-ranked ordering needs a custom UI.
 --
 -- The stats mirror their services: seeded from current state and updated on
--- CurrencyService.Changed / PrestigeService.Changed. Both of those services'
--- Init must run first (so balance + prestige data exist) — see Services bootstrap.
+-- CurrencyService.Changed / PrestigeService.Changed / StatsService.BallBanked. Those
+-- services' Init must run first (so balance + prestige + ball-earnings data exist) —
+-- see Services bootstrap.
 
 local Players = game:GetService("Players")
 local SSS = game:GetService("ServerScriptService")
@@ -18,15 +19,17 @@ local RS = game:GetService("ReplicatedStorage")
 
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local StatsService = require(SSS.Scripts.Modules.StatsService)
 local StringUtils = require(RS.Shared.StringUtils)
 
 local LeaderboardService = {}
 
 local CASH_STAT = "Cash"
 local PRESTIGE_STAT = "Prestige"
+local AVGBALL_STAT = "Avg $/Marble"
 
 -- userId -> the value objects we update
-local stats: { [number]: { cash: StringValue, prestige: IntValue } } = {}
+local stats: { [number]: { cash: StringValue, prestige: IntValue, avgBall: StringValue } } = {}
 
 local function onPlayerAdded(player: Player)
 	local leaderstats = Instance.new("Folder")
@@ -42,9 +45,16 @@ local function onPlayerAdded(player: Player)
 	prestige.Value = PrestigeService.GetCount(player)
 	prestige.Parent = leaderstats
 
+	-- Average banked cash per ball — server-authoritative lifetime average (StatsService),
+	-- seeded from current state and kept live via StatsService.BallBanked.
+	local avgBall = Instance.new("StringValue")
+	avgBall.Name = AVGBALL_STAT
+	avgBall.Value = "$" .. StringUtils.FormatShort(StatsService.GetAvgMoneyPerBall(player))
+	avgBall.Parent = leaderstats
+
 	-- Parent last, once fully built, so the leaderboard never shows a half-set row.
 	leaderstats.Parent = player
-	stats[player.UserId] = { cash = cash, prestige = prestige }
+	stats[player.UserId] = { cash = cash, prestige = prestige, avgBall = avgBall }
 end
 
 local function onPlayerRemoving(player: Player)
@@ -57,6 +67,13 @@ function LeaderboardService.Init()
 	for _, p in Players:GetPlayers() do
 		onPlayerAdded(p)
 	end
+
+	StatsService.BallBanked:Connect(function(player: Player, avg: number)
+		local s = stats[player.UserId]
+		if s then
+			s.avgBall.Value = "$" .. StringUtils.FormatShort(avg)
+		end
+	end)
 
 	CurrencyService.Changed:Connect(function(player: Player, newBalance: number)
 		local s = stats[player.UserId]

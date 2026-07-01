@@ -22,6 +22,8 @@ local StatsService = require(SSS.Scripts.Modules.StatsService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local DataService = require(SSS.Scripts.Modules.DataService)
+local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
+local BallSkins = require(RS.Shared.BallSkins)
 
 local MonetizationService = {}
 
@@ -93,9 +95,29 @@ local function registerStarterPack()
 	end)
 end
 
+-- Robux fallback for buying a cosmetic the player can't afford with CC: one dev product per rarity
+-- (Config.Cosmetics.RarityProducts). Each grants the player's currently-selected skin, but only if
+-- its rarity matches the product — so a cheap (low-rarity) product can't unlock a rarer skin.
+local function registerCosmeticFallback()
+	for rarity, idStr in Config.Cosmetics.RarityProducts do
+		local id = tonumber(idStr)
+		if id and id ~= 0 then
+			ProductService.RegisterProduct(id, function(player: Player, _receiptInfo: any): boolean
+				local skinId = CosmeticService.GetSelected(player)
+				local skin = BallSkins.Get(skinId)
+				if skin and skin.rarity == rarity then
+					CosmeticService.GrantSkin(player, skinId)
+				end
+				return true
+			end)
+		end
+	end
+end
+
 function MonetizationService.Init()
 	registerCashMultipliers()
 	registerStarterPack()
+	registerCosmeticFallback()
 end
 
 return MonetizationService

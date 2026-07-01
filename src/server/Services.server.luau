@@ -65,12 +65,12 @@ DestroyTargetService.Init()
 -- now-connected added-signal, so the overlap filter picks them up.
 PegService.Init()
 BallService.Init()
--- BallEffects before launches start: it self-connects to BallSpawned to paint
--- each ball from its owner's profile.
-BallEffects.Init()
--- CosmeticService after BallEffects: it self-connects to BallSpawned to paint each
--- ball with its owner's equipped skin, overriding BallEffects' default base colour.
+-- CosmeticService BEFORE BallEffects on purpose: Signal fires handlers LIFO (most-recently-connected
+-- runs FIRST), so connecting CosmeticService first makes its equipped-skin paint run LAST — winning
+-- over BallEffects' default base colour instead of being overwritten by it.
 CosmeticService.Init()
+-- BallEffects self-connects to BallSpawned to paint each ball (heat/material + default base colour).
+BallEffects.Init()
 ScoreUI.Init()
 -- AnnounceUI: creates the AnnounceMessage remote for large centered banner messages.
 AnnounceUI.Init()

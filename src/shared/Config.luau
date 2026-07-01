@@ -43,6 +43,8 @@ Config.Tags = {
 	UpgradeShop = "UpgradeShop",         -- A part that opens the upgrade shop on touch (Track attribute picks the track; see client UpgradeShop)
 	Coin = "Coin",                       -- A collectible-coin spawn location (per-player; see CoinService server + CoinPickups client)
 	CameraZone = "CameraZone",           -- A trigger volume: while the local player stands in it, the board camera turns on (client CameraZone)
+	CosmeticsGui = "CosmeticsGui",       -- A SurfaceGui the cosmetics shop is built into (client CosmeticsShop)
+	CosmeticBallSample = "CosmeticBallSample", -- A part; a sample ball of the selected cosmetic floats above it (client CosmeticBallSample)
 }
 
 Config.Attributes = {
@@ -472,6 +474,19 @@ Config.StarterPack = {
 	PostPrestigeFreeTier = 1,  -- free tier on all tracks after each prestige (owners only)
 }
 
+-- Cosmetics (ball skins) economy. Skins themselves live in shared/BallSkins; this holds the
+-- currency tuning. CC (Cosmetic Coins) is earned by rebirthing — RebirthCCRatio × the RP spent on
+-- each rebirth — and spent on skins. The yellow-themed shop lives on a SurfaceGui tagged
+-- Config.Tags.CosmeticsGui, with a floating sample ball over Config.Tags.CosmeticBallSample.
+-- RarityProducts (one Robux dev product per rarity) is the fallback when a player can't afford a skin.
+Config.Cosmetics = {
+	RebirthCCRatio = 1.0, -- CC granted per 1 RP spent on a rebirth
+	-- Robux fallback: one dev product per rarity (index = rarity 1..5). When a player can't afford the
+	-- selected skin with CC, the shop prompts the product for that skin's rarity, which grants it.
+	-- PLACEHOLDER ids — fill in real product ids per rarity from the Creator Dashboard.
+	RarityProducts = { "0", "0", "0", "0", "0" },
+}
+
 Config.Obby = {
 	DefaultWalkSpeed = 32,  -- restored when a player leaves the obby area
 	ObbyWalkSpeed = 16,     -- forced while inside the Checkpoints.In volume
@@ -495,7 +510,7 @@ Config.DayNight = {
 	NightMinutes = 4,   -- real minutes for the night half (sunset -> sunrise)
 	SunriseTime  = 6,   -- ClockTime (hour, 0-24) the day starts at
 	SunsetTime   = 18,  -- ClockTime (hour, 0-24) the night starts at
-	StartTime    = 0.0--9.4, -- ClockTime the cycle begins at when the server starts
+	StartTime    = 9.4, -- ClockTime the cycle begins at when the server starts
 }
 
 table.freeze(Config.Tags)
@@ -521,6 +536,7 @@ table.freeze(Config.Products)
 table.freeze(Config.GamePasses)
 table.freeze(Config.CashMultiplier)
 table.freeze(Config.StarterPack)
+table.freeze(Config.Cosmetics)
 
 Config.Animations = {
 	ElectroSwing = "81301976341047",

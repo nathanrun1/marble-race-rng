@@ -1,13 +1,9 @@
 --!strict
--- Manages ball appearance (cosmetic skins): a skin's base colour plus its single
--- ParticleEmitter. Applied to each ball on spawn from its owner's equipped skin.
---
--- Gameplay feedback (heat colour/material, value UI, popups) stays in BallEffects;
--- this owns only the cosmetic layer. A skin's colour becomes the ball's base colour
--- (via BallEffects.SetBaseColor), which BallEffects then brightens with heat.
---
--- Skeleton: equipped skins are in-memory and default for everyone. A later pass can
--- source them from the profile / a cosmetics inventory and add a purchase/equip flow.
+-- Ball cosmetics: the CC (Cosmetic Coin) currency, per-player skin ownership, the equipped
+-- skin, and the shop's select / buy / equip flow. Skins are defined in shared/BallSkins;
+-- BallEffects.ApplyAppearance paints them. CC is earned by rebirthing (PrestigeService grants it)
+-- and spent here. Passive data service: DataService owns the lifecycle (ApplyData/SerializeData/
+-- Clear), this just holds state, mutates it, and pushes changes to the owning client.
 
 local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
@@ -15,81 +11,230 @@ local Players = game:GetService("Players")
 
 local BallSkins = require(RS.Shared.BallSkins)
 local BallEffects = require(RS.Shared.BallEffects)
+local Signal = require(RS.Shared.Signal)
 local BallService = require(SSS.Scripts.Modules.BallService)
 
 local CosmeticService = {}
 
-local SKIN_EMITTER_NAME = "SkinParticles"
 local DEFAULT_SKIN = BallSkins.GetDefaultId()
 
--- userId -> equipped skin id (in-memory for now)
-local equipped: { [number]: string } = {}
+export type CosmeticData = {
+	cc: number,                   -- Cosmetic Coin balance
+	owned: { [string]: boolean }, -- owned skin ids (the default skin is always owned)
+	equipped: string,             -- equipped skin id
+}
 
--- Build/refresh the skin's single ParticleEmitter on the ball (or remove it when the
--- skin has none). Nil fields fall back to sensible defaults.
-local function applyParticle(ball: BasePart, particle: BallSkins.ParticleData?)
-	local existing = ball:FindFirstChild(SKIN_EMITTER_NAME) :: ParticleEmitter?
-	if not particle then
-		if existing then
-			existing:Destroy()
-		end
-		return
-	end
-	local emitter = existing or Instance.new("ParticleEmitter")
-	emitter.Name = SKIN_EMITTER_NAME
-	emitter.Color = particle.color or ColorSequence.new(Color3.new(1, 1, 1))
-	if particle.texture then
-		emitter.Texture = particle.texture
-	end
-	emitter.Rate = particle.rate or 20
-	emitter.Lifetime = particle.lifetime or NumberRange.new(0.5, 1)
-	emitter.Speed = particle.speed or NumberRange.new(1, 2)
-	emitter.Size = particle.size or NumberSequence.new(0.3, 0)
-	emitter.Transparency = particle.transparency or NumberSequence.new(0.2, 1)
-	emitter.SpreadAngle = particle.spreadAngle or Vector2.new(0, 0)
-	emitter.LightEmission = particle.lightEmission or 0
-	if particle.rotation then
-		emitter.Rotation = particle.rotation
-	end
-	if particle.rotSpeed then
-		emitter.RotSpeed = particle.rotSpeed
-	end
-	emitter.Parent = ball
+export type CosmeticInfo = {
+	cc: number,
+	equipped: string,
+	selected: string,             -- skin highlighted in the shop (sample ball + buy-button target)
+	owned: { [string]: boolean },
+}
+
+export type PurchaseResult = { ok: boolean, reason: string?, bought: boolean?, equipped: boolean? }
+
+local data: { [number]: CosmeticData } = {}
+local selected: { [number]: string } = {} -- in-memory shop selection (not persisted)
+
+-- (player, info) — fired after any cosmetic change.
+CosmeticService.Changed = Signal.new()
+
+local changedRE: RemoteEvent
+
+local function defaults(): CosmeticData
+	return { cc = 0, owned = { [DEFAULT_SKIN] = true }, equipped = DEFAULT_SKIN }
 end
 
--- Paint a ball with the given skin (falls back to default for an unknown id).
-function CosmeticService.ApplySkin(ball: BasePart, skinId: string)
-	local skin = BallSkins.Get(skinId) or BallSkins.Get(DEFAULT_SKIN)
-	if not skin then
-		return
+local function get(userId: number): CosmeticData
+	return data[userId] or defaults()
+end
+
+local function buildInfo(player: Player): CosmeticInfo
+	local d = get(player.UserId)
+	return {
+		cc = d.cc,
+		equipped = d.equipped,
+		selected = selected[player.UserId] or d.equipped,
+		owned = d.owned,
+	}
+end
+
+local function announce(player: Player)
+	local info = buildInfo(player)
+	CosmeticService.Changed:Fire(player, info)
+	if changedRE then
+		changedRE:FireClient(player, info)
 	end
-	BallEffects.SetBaseColor(ball, skin.data.color)
-	applyParticle(ball, skin.data.particle)
+end
+
+--------------------------------------------------------------------------------
+-- Appearance (used by ball spawn + previews, all via BallEffects.ApplyAppearance)
+--------------------------------------------------------------------------------
+function CosmeticService.ApplySkin(ball: BasePart, skinId: string)
+	BallEffects.ApplyAppearance(ball, { skinId = skinId })
 end
 
 function CosmeticService.GetEquipped(player: Player): string
-	return equipped[player.UserId] or DEFAULT_SKIN
+	return get(player.UserId).equipped
 end
 
-function CosmeticService.SetEquipped(player: Player, skinId: string): boolean
+--------------------------------------------------------------------------------
+-- CC currency
+--------------------------------------------------------------------------------
+function CosmeticService.GetCC(player: Player): number
+	return get(player.UserId).cc
+end
+
+-- Grant CC (e.g. converted from RP on a rebirth). Spending happens inside Purchase.
+function CosmeticService.AddCC(player: Player, amount: number)
+	if amount <= 0 then
+		return
+	end
+	local d = data[player.UserId]
+	if not d then
+		return
+	end
+	d.cc += math.floor(amount)
+	announce(player)
+end
+
+--------------------------------------------------------------------------------
+-- Ownership / equip / select / purchase
+--------------------------------------------------------------------------------
+function CosmeticService.IsOwned(player: Player, skinId: string): boolean
+	return get(player.UserId).owned[skinId] == true
+end
+
+-- Highlight a skin in the shop — drives the floating sample ball and the buy button's price/state.
+function CosmeticService.Select(player: Player, skinId: string)
 	if not BallSkins.Get(skinId) then
+		return
+	end
+	selected[player.UserId] = skinId
+	announce(player)
+end
+
+function CosmeticService.GetSelected(player: Player): string
+	return selected[player.UserId] or get(player.UserId).equipped
+end
+
+-- Grant a skin outright (no CC cost) and equip it — used by the Robux fallback product.
+function CosmeticService.GrantSkin(player: Player, skinId: string): boolean
+	local d = data[player.UserId]
+	if not d or not BallSkins.Get(skinId) then
 		return false
 	end
-	equipped[player.UserId] = skinId
+	d.owned[skinId] = true
+	d.equipped = skinId
+	announce(player)
 	return true
 end
 
+-- Buy-or-equip the given skin. Owned -> just equip. Affordable -> spend CC, own it, equip. Neither
+-- -> fail with "insufficient_cc" (the client then prompts the Robux fallback).
+function CosmeticService.Purchase(player: Player, skinId: string): PurchaseResult
+	local d = data[player.UserId]
+	local skin = BallSkins.Get(skinId)
+	if not d or not skin then
+		return { ok = false, reason = "invalid" }
+	end
+	if d.owned[skinId] then
+		d.equipped = skinId
+		announce(player)
+		return { ok = true, equipped = true }
+	end
+	if d.cc >= skin.price then
+		d.cc -= skin.price
+		d.owned[skinId] = true
+		d.equipped = skinId
+		announce(player)
+		return { ok = true, bought = true }
+	end
+	return { ok = false, reason = "insufficient_cc" }
+end
+
+--------------------------------------------------------------------------------
+-- Ball spawn paint
+--------------------------------------------------------------------------------
 local function onBallSpawn(ball: BasePart, ballInfo: BallService.BallInfo)
-	local skinId = if ballInfo.ownerUserId then (equipped[ballInfo.ownerUserId] or DEFAULT_SKIN) else DEFAULT_SKIN
-	CosmeticService.ApplySkin(ball, skinId)
+	local ownerId = ballInfo.ownerUserId
+	local d = if ownerId then data[ownerId] else nil
+	CosmeticService.ApplySkin(ball, if d then d.equipped else DEFAULT_SKIN)
+end
+
+--------------------------------------------------------------------------------
+-- Data lifecycle (DataService-driven)
+--------------------------------------------------------------------------------
+function CosmeticService.ApplyData(player: Player, saved: CosmeticData?)
+	local d = defaults()
+	if saved then
+		if type(saved.cc) == "number" then
+			d.cc = saved.cc
+		end
+		if type(saved.owned) == "table" then
+			for id, on in saved.owned do
+				if on == true and BallSkins.Get(id) then
+					d.owned[id] = true
+				end
+			end
+		end
+		if type(saved.equipped) == "string" and d.owned[saved.equipped] then
+			d.equipped = saved.equipped
+		end
+	end
+	d.owned[DEFAULT_SKIN] = true -- the default skin is always owned
+	data[player.UserId] = d
+	selected[player.UserId] = d.equipped
+	announce(player)
+end
+
+function CosmeticService.SerializeData(player: Player): CosmeticData
+	return get(player.UserId)
+end
+
+function CosmeticService.Clear(player: Player)
+	data[player.UserId] = nil
+	selected[player.UserId] = nil
+end
+
+--------------------------------------------------------------------------------
+-- Init
+--------------------------------------------------------------------------------
+local function getRemote(name: string, class: string): Instance
+	local existing = RS.Remote:FindFirstChild(name)
+	if existing then
+		return existing
+	end
+	local r = Instance.new(class)
+	r.Name = name
+	r.Parent = RS.Remote
+	return r
 end
 
 function CosmeticService.Init()
-	-- After BallEffects' own BallSpawned paint, so our skin colour overrides the
-	-- default base colour (connection order = Init order in Services bootstrap).
+	changedRE = getRemote("CosmeticChanged", "RemoteEvent") :: RemoteEvent
+
+	;(getRemote("GetCosmeticInfo", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player)
+		return buildInfo(player)
+	end
+	;(getRemote("PurchaseCosmetic", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player, skinId: any)
+		if type(skinId) ~= "string" then
+			return { ok = false, reason = "invalid" }
+		end
+		return CosmeticService.Purchase(player, skinId)
+	end
+	;(getRemote("SelectCosmetic", "RemoteEvent") :: RemoteEvent).OnServerEvent:Connect(function(player: Player, skinId: any)
+		if type(skinId) == "string" then
+			CosmeticService.Select(player, skinId)
+		end
+	end)
+
+	-- The Signal fires LIFO, and Services bootstrap inits CosmeticService BEFORE BallEffects — so
+	-- this handler (connected first) runs LAST, painting the equipped skin's colour over BallEffects'
+	-- default base colour rather than being overwritten by it.
 	BallService.BallSpawned:Connect(onBallSpawn)
 	Players.PlayerRemoving:Connect(function(player: Player)
-		equipped[player.UserId] = nil
+		selected[player.UserId] = nil
 	end)
 end
 

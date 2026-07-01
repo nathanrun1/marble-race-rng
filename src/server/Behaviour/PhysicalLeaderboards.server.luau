@@ -3,14 +3,19 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local SSS = game:GetService("ServerScriptService")
 
 local StringUtils = require(ReplicatedStorage.Shared.StringUtils)
 local Config = require(ReplicatedStorage.Shared.Config)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 
--- Admins are hidden from leaderboards: no item is created for them.
+-- Admins are hidden from leaderboards: no item is created for them. Except in Studio, where
+-- admins should show up too so the boards can be tested/eyeballed solo.
 local function isExcluded(userId: number): boolean
+    if RunService:IsStudio() then
+        return false
+    end
     return table.find(Config.Admins, userId) ~= nil
 end
 
