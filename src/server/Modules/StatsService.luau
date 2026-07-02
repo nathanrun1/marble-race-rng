@@ -43,6 +43,11 @@ StatsService.Changed = Signal.new()
 -- that want a fresh average without paying for a client round-trip on every ball).
 StatsService.BallBanked = Signal.new()
 
+-- (player, count) — fired only when upgrade tiers are actually acquired this session
+-- (AddUpgradesPurchased), never on load. Consumers that must not mistake a loaded lifetime
+-- total for fresh progress (QuestService) hook this instead of diffing Changed.
+StatsService.UpgradesAdded = Signal.new()
+
 local function defaults(): Stats
 	return {
 		upgradesPurchased = 0,
@@ -132,6 +137,7 @@ function StatsService.AddUpgradesPurchased(player: Player, count: number)
 		return
 	end
 	s.upgradesPurchased += count
+	StatsService.UpgradesAdded:Fire(player, count)
 	announce(player)
 end
 
@@ -162,6 +168,24 @@ function StatsService.SetCompletedTutorial(player: Player)
 		return
 	end
 	s.completedTutorial = true
+	announce(player)
+end
+
+-- Dev only (DevService /avgball): force the lifetime average $/marble by rewriting the
+-- underlying pair (ballEarnings = avg × ballsBanked, count kept, floored at 1 so the
+-- average is well-defined). Everything derives from that pair — GetAvgMoneyPerBall, the
+-- GetStats remote, and the BallBanked consumers (leaderstat column, luck leaderstat,
+-- overhead billboard, global leaderboard writer) — so firing BallBanked propagates the
+-- forced value everywhere at once. Future real banks then keep averaging on top of it.
+function StatsService.SetAvgMoneyPerBall(player: Player, avg: number)
+	local s = stats[player.UserId]
+	if not s then
+		return
+	end
+	avg = math.max(avg, 0)
+	s.ballsBanked = math.max(s.ballsBanked, 1)
+	s.ballEarnings = avg * s.ballsBanked
+	StatsService.BallBanked:Fire(player, avg)
 	announce(player)
 end
 

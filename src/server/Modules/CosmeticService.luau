@@ -98,6 +98,16 @@ function CosmeticService.AddCC(player: Player, amount: number)
 	announce(player)
 end
 
+-- Dev only (DevService /cc): set the CC balance directly, raising or lowering.
+function CosmeticService.SetCC(player: Player, amount: number)
+	local d = data[player.UserId]
+	if not d then
+		return
+	end
+	d.cc = math.max(math.floor(amount), 0)
+	announce(player)
+end
+
 --------------------------------------------------------------------------------
 -- Ownership / equip / select / purchase
 --------------------------------------------------------------------------------

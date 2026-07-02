@@ -12,12 +12,14 @@ local ProfileStats = require(RS.Shared.ProfileStats)
 local StringUtils = require(RS.Shared.StringUtils)
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
+local SoundService = require(RS.Shared.SoundService)
 local Signal = require(RS.Shared.Signal)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local BallService = require(SSS.Scripts.Modules.BallService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
+local GoldenPegService = require(SSS.Scripts.Modules.GoldenPegService)
 
 local ScoreHandler = {}
 
@@ -230,6 +232,26 @@ local function handlePegHeat(ball: BasePart, player: Player, state: BallState, p
 	end
 end
 
+-- Golden peg (prestige perk): if this peg is golden for the owner and this ball hasn't
+-- consumed it yet, roll the outcome (Config.GoldenPegs). Double mutates the LIVE ball
+-- value (so it compounds into the slot multiplier at banking, and the caller's
+-- updateEffectiveValue pushes the new value to the gate + value billboard); clone spawns
+-- a second free ball of the same value via GoldenPegService.
+local GOLD = Color3.fromRGB(255, 200, 40)
+
+local function handleGoldenPeg(ball: BasePart, player: Player, state: BallState, target: Instance)
+	local effect = GoldenPegService.TryConsume(ball, target, state.ownerUserId)
+	if effect == "double" then
+		state.value *= 2
+		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "GOLD ×2!", GOLD)
+		SoundService.PlayForClient(player, { soundId = Config.Sounds.Collect2 })
+	elseif effect == "clone" then
+		GoldenPegService.SpawnClone(ball, state.value, player.UserId)
+		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "GOLD CLONE!", GOLD)
+		SoundService.PlayForClient(player, { soundId = Config.Sounds.Jackpot })
+	end
+end
+
 -- Returns true if the ball was banked (caller should not continue processing).
 local function handleDestroy(ball: BasePart, player: Player, state: BallState, target: Instance): boolean
 	if not target:HasTag(Config.Tags.DestroyTarget) then
@@ -270,6 +292,7 @@ function ScoreHandler.ResolveHit(ball: BasePart, target: Instance, state: BallSt
 	local pegHeat = target:GetAttribute(Config.Attributes.PegHeat) :: number?
 	if pegHeat then
 		handlePegHeat(ball, player, state, pegHeat)
+		handleGoldenPeg(ball, player, state, target)
 	end
 
 	if handleDestroy(ball, player, state, target) then

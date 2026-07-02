@@ -21,15 +21,17 @@ local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local StringUtils = require(RS.Shared.StringUtils)
+local LuckRanks = require(RS.Shared.LuckRanks)
 
 local LeaderboardService = {}
 
 local CASH_STAT = "Cash"
 local PRESTIGE_STAT = "Prestige"
 local AVGBALL_STAT = "Avg $/Marble"
+local LUCK_STAT = "Luck"
 
 -- userId -> the value objects we update
-local stats: { [number]: { cash: StringValue, prestige: IntValue, avgBall: StringValue } } = {}
+local stats: { [number]: { cash: StringValue, prestige: IntValue, avgBall: StringValue, luck: StringValue } } = {}
 
 local function onPlayerAdded(player: Player)
 	local leaderstats = Instance.new("Folder")
@@ -52,9 +54,16 @@ local function onPlayerAdded(player: Player)
 	avgBall.Value = "$" .. StringUtils.FormatShort(StatsService.GetAvgMoneyPerBall(player))
 	avgBall.Parent = leaderstats
 
+	-- Named luck tier for that same average (shared LuckRanks scale) — the social/compare
+	-- version of the $/marble figure.
+	local luck = Instance.new("StringValue")
+	luck.Name = LUCK_STAT
+	luck.Value = LuckRanks.RankFor(StatsService.GetAvgMoneyPerBall(player)).Name
+	luck.Parent = leaderstats
+
 	-- Parent last, once fully built, so the leaderboard never shows a half-set row.
 	leaderstats.Parent = player
-	stats[player.UserId] = { cash = cash, prestige = prestige, avgBall = avgBall }
+	stats[player.UserId] = { cash = cash, prestige = prestige, avgBall = avgBall, luck = luck }
 end
 
 local function onPlayerRemoving(player: Player)
@@ -72,6 +81,7 @@ function LeaderboardService.Init()
 		local s = stats[player.UserId]
 		if s then
 			s.avgBall.Value = "$" .. StringUtils.FormatShort(avg)
+			s.luck.Value = LuckRanks.RankFor(avg).Name
 		end
 	end)
 

@@ -13,6 +13,7 @@ local RunService = game:GetService("RunService")
 
 local StringUtils = require(RS.Shared.StringUtils)
 local AutoScale = require(RS.Shared.AutoScale)
+local LuckRanks = require(RS.Shared.LuckRanks)
 
 local MoneyPerBallUI = {}
 
@@ -27,6 +28,7 @@ local displayed = 0 -- the eased value actually shown
 local label: TextLabel? = nil
 
 local rankLabel: TextLabel? = nil
+local luckLabel: TextLabel? = nil
 
 local prevUpdate = nil
 
@@ -77,6 +79,16 @@ local function step(dt: number)
 	if label and (os.clock() - prevUpdate) > UPDATE_PERIOD then
 		prevUpdate = os.clock()
 		label.Text = "💰 Average $/Marble: $" .. StringUtils.FormatShort(displayed) .. " 💰"
+		-- Luck rank rides the same value: named tier + how far to the next one (shared
+		-- LuckRanks scale — matches the "Luck" leaderstat column exactly). ApplyToLabel
+		-- handles the flat color / top-rank gradient styling.
+		if luckLabel then
+			local rank, nextRank = LuckRanks.RankFor(displayed)
+			luckLabel.Text = if nextRank
+				then string.format("🍀 Luck: %s  (next: %s at $%s)", rank.Name, nextRank.Name, StringUtils.FormatShort(nextRank.Threshold))
+				else "🍀 Luck: " .. rank.Name
+			LuckRanks.ApplyToLabel(luckLabel, rank)
+		end
 	end
 end
 
@@ -108,11 +120,32 @@ local function createUI(playerGui: PlayerGui)
 	AutoScale.Apply(lbl)
 	label = lbl
 
-	-- Global ranking, directly below the $/marble readout.
+	-- Luck rank (named tier for the average), directly below the $/marble readout.
+	local luckLbl = Instance.new("TextLabel")
+	luckLbl.Name = "LuckRank"
+	luckLbl.AnchorPoint = Vector2.new(0.5, 0)
+	luckLbl.Position = UDim2.new(0.5, 0, 0.045, 58)
+	luckLbl.Size = UDim2.fromOffset(620, 30)
+	luckLbl.BackgroundTransparency = 1
+	luckLbl.Text = "🍀 Luck: " .. LuckRanks.Ranks[1].Name
+	luckLbl.TextColor3 = LuckRanks.Ranks[1].Color
+	luckLbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+	luckLbl.TextStrokeTransparency = 0.4
+	luckLbl.TextScaled = false
+	luckLbl.TextSize = 26
+	luckLbl.Font = Enum.Font.GothamBold
+	luckLbl.Active = false
+	luckLbl.Interactable = false
+	luckLbl.Parent = screenGui
+
+	AutoScale.Apply(luckLbl)
+	luckLabel = luckLbl
+
+	-- Global ranking, below the luck rank.
 	local rankLbl = Instance.new("TextLabel")
 	rankLbl.Name = "GlobalRank"
 	rankLbl.AnchorPoint = Vector2.new(0.5, 0)
-	rankLbl.Position = UDim2.new(0.5, 0, 0.045, 60)
+	rankLbl.Position = UDim2.new(0.5, 0, 0.045, 90)
 	rankLbl.Size = UDim2.fromOffset(620, 32)
 	rankLbl.BackgroundTransparency = 1
 	rankLbl.Text = "Global Rank: —"

@@ -27,6 +27,11 @@ local REBIRTH_PURPLE = Color3.fromRGB(179, 136, 255)
 -- (player, info) — fired after prestige state changes.
 PrestigeService.Changed = Signal.new()
 
+-- (player, newCount) — fired only when a prestige is actually performed this session,
+-- never on load/banking (Changed fires for those too). For consumers counting the ACT
+-- of rebirthing (QuestService) rather than mirroring state.
+PrestigeService.Prestiged = Signal.new()
+
 export type PrestigeData = {
 	count: number,
 	-- True cumulative banked, never frozen — the cosmetic "Lifetime Banked" stat.
@@ -233,6 +238,7 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	end
 
 	PrestigeService.Changed:Fire(player, buildInfo(d))
+	PrestigeService.Prestiged:Fire(player, d.count)
 	return true, nil
 end
 

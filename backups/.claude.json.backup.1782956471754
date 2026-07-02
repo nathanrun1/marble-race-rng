@@ -1,0 +1,30 @@
+{
+  "firstStartTime": "2026-07-02T01:40:47.575Z",
+  "machineID": "c9b273e436a90a2c0fc623ef0674b572f1b857ac5edb97f28355f3b9daf28039",
+  "opusProMigrationComplete": true,
+  "sonnet1m45MigrationComplete": true,
+  "seenNotifications": {},
+  "migrationVersion": 13,
+  "userID": "d99f79f3bff89279e632502d46508af56e710f0cde29c5f67295f60981deb0c9",
+  "changelogLastFetched": 1782956448547,
+  "oauthAccount": {
+    "accountUuid": "1ab9ba45-a8d9-4676-91a3-41871f65546c",
+    "emailAddress": "nathanmreilly@gmail.com",
+    "organizationUuid": "028223e5-67a0-4374-9048-cfc41e83a475",
+    "hasExtraUsageEnabled": true,
+    "billingType": "stripe_subscription",
+    "accountCreatedAt": "2025-03-03T23:21:11.033528Z",
+    "subscriptionCreatedAt": "2026-02-10T22:14:53.832317Z",
+    "ccOnboardingFlags": {},
+    "claudeCodeTrialEndsAt": null,
+    "claudeCodeTrialDurationDays": null,
+    "seatTier": null,
+    "displayName": "Nathan",
+    "profileFetchedAt": 1782956454241,
+    "organizationRole": "admin",
+    "workspaceRole": null,
+    "organizationName": "nathanmreilly@gmail.com's Organization"
+  },
+  "hasCompletedOnboarding": true,
+  "lastOnboardingVersion": "2.1.198"
+}

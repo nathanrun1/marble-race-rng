@@ -1,0 +1,71 @@
+{
+  "numStartups": 2,
+  "tipsHistory": {
+    "new-user-warmup": 2,
+    "plan-mode-for-complex-tasks": 2
+  },
+  "firstStartTime": "2026-07-02T01:40:47.575Z",
+  "machineID": "c9b273e436a90a2c0fc623ef0674b572f1b857ac5edb97f28355f3b9daf28039",
+  "opusProMigrationComplete": true,
+  "sonnet1m45MigrationComplete": true,
+  "seenNotifications": {},
+  "migrationVersion": 13,
+  "userID": "d99f79f3bff89279e632502d46508af56e710f0cde29c5f67295f60981deb0c9",
+  "changelogLastFetched": 1782956471742,
+  "hasCompletedOnboarding": true,
+  "lastOnboardingVersion": "2.1.198",
+  "projects": {
+    "/mnt/c/Users/ntabl/dev/repos/marble_race_rng": {
+      "allowedTools": [],
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 1,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false,
+      "lastSessionMetrics": {
+        "frame_duration_ms_count": 10,
+        "frame_duration_ms_min": 0.0633069999998952,
+        "frame_duration_ms_max": 5.186421000000109,
+        "frame_duration_ms_avg": 1.2129016000000548,
+        "frame_duration_ms_p50": 0.6733665000000428,
+        "frame_duration_ms_p95": 3.841681500000126,
+        "frame_duration_ms_p99": 4.917473100000114
+      },
+      "lastGracefulShutdown": false,
+      "lastVersionBase": "2.1.198"
+    }
+  },
+  "githubRepoPaths": {
+    "nathanrun1/marble-race-rng": [
+      "/mnt/c/Users/ntabl/dev/repos/marble_race_rng"
+    ]
+  },
+  "lastReleaseNotesSeen": "2.1.198",
+  "tipLifetimeShownCounts": {
+    "new-user-warmup": 1,
+    "plan-mode-for-complex-tasks": 1
+  },
+  "oauthAccount": {
+    "accountUuid": "1ab9ba45-a8d9-4676-91a3-41871f65546c",
+    "emailAddress": "nathanmreilly@gmail.com",
+    "organizationUuid": "028223e5-67a0-4374-9048-cfc41e83a475",
+    "hasExtraUsageEnabled": true,
+    "billingType": "stripe_subscription",
+    "accountCreatedAt": "2025-03-03T23:21:11.033528Z",
+    "subscriptionCreatedAt": "2026-02-10T22:14:53.832317Z",
+    "ccOnboardingFlags": {},
+    "claudeCodeTrialEndsAt": null,
+    "claudeCodeTrialDurationDays": null,
+    "seatTier": null,
+    "displayName": "Nathan",
+    "profileFetchedAt": 1782956508396,
+    "organizationRole": "admin",
+    "workspaceRole": null,
+    "organizationName": "nathanmreilly@gmail.com's Organization"
+  },
+  "officialMarketplaceAutoInstallAttempted": true,
+  "officialMarketplaceAutoInstalled": true
+}

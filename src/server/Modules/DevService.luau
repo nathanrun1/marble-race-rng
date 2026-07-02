@@ -10,6 +10,9 @@
 --   /bet <n>               set total bet (clamps to current max bet)
 --   /axis <Name> <v>       set a continuous axis (Arc, Angle, Size, Elasticity)
 --   /money <n>             set balance
+--   /cc <n>                set CC (cosmetics currency) balance
+--   /avgball <n>           force lifetime avg $/marble (drives luck rank, leaderstats,
+--                          overhead billboard, global $/marble leaderboard)
 --   /preset <name>         targeting | chaos | hybrid
 --   /test <n> [interval]   fire n test balls (your loadout), print payout stats
 --   /comprtest <n>         sweep all builds (Arc/Angle/Size/Elasticity), n balls each
@@ -40,6 +43,8 @@ local ScoringService = require(SSS.Scripts.Modules.ScoringService)
 local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
+local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
+local StatsService = require(SSS.Scripts.Modules.StatsService)
 
 local DevService = {}
 
@@ -959,7 +964,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, attempt_prestige, podium"
+		return "commands: tier, maxall, bet, axis, money, cc, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -992,6 +997,17 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		if not n then return "usage: /money <n>" end
 		CurrencyService.SetPoints(player, n, "Dev")
 		return string.format("balance -> %.0f", n)
+	elseif cmd == "cc" then
+		local n = tonumber(a2)
+		if not n then return "usage: /cc <n>" end
+		CosmeticService.SetCC(player, n)
+		return string.format("CC -> %d", CosmeticService.GetCC(player))
+	elseif cmd == "avgball" then
+		local n = tonumber(a2)
+		if not n then return "usage: /avgball <n>" end
+		StatsService.SetAvgMoneyPerBall(player, n)
+		return string.format("avg $/marble -> %.2f (luck/leaderstats/boards updated; HUD catches up on the next bank)",
+			StatsService.GetAvgMoneyPerBall(player))
 	elseif cmd == "preset" then
 		local preset = a2 and PRESETS[a2:lower()]
 		if not preset then

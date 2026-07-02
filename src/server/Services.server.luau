@@ -27,6 +27,8 @@ local GroupRewardService = require(SSS.Scripts.Modules.GroupRewardService)
 local CoinService = require(SSS.Scripts.Modules.CoinService)
 local DestroyTargetService = require(SSS.Scripts.Modules.DestroyTargetService)
 local DevService = require(SSS.Scripts.Modules.DevService)
+local QuestService = require(SSS.Scripts.Modules.QuestService)
+local GoldenPegService = require(SSS.Scripts.Modules.GoldenPegService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
 CurrencyService.Init()
@@ -42,6 +44,9 @@ StatsService.Init()
 -- PlaytimeBonusService before DataService (it's a passive data service DataService loads/saves
 -- via ApplyData/SerializeData): creates its remotes + starts the playtime tracker.
 PlaytimeBonusService.Init()
+-- QuestService before DataService (another passive data service): creates its remotes and
+-- connects its metric hooks so quest progress starts counting from the first ApplyData.
+QuestService.Init()
 -- DataService after the data services are set up: it owns the player-data lifecycle
 -- (seeds defaults, loads/saves persistence) and drives their ApplyData.
 DataService.Init()
@@ -64,6 +69,10 @@ DestroyTargetService.Init()
 -- PegService after ScoringService: tagging pegs ScoreTarget fires the
 -- now-connected added-signal, so the overlap filter picks them up.
 PegService.Init()
+-- GoldenPegService after PegService (both walk Workspace.Pegs): owns each player's golden-peg
+-- set (grown per rebirth via PrestigeService.Changed) and the clone spawn; the per-hit trigger
+-- lives in ScoreHandler.
+GoldenPegService.Init()
 BallService.Init()
 -- CosmeticService BEFORE BallEffects on purpose: Signal fires handlers LIFO (most-recently-connected
 -- runs FIRST), so connecting CosmeticService first makes its equipped-skin paint run LAST — winning

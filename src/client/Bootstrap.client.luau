@@ -28,6 +28,8 @@ local PlaytimeUI = require(PlayerScripts:WaitForChild("PlaytimeUI"))
 local MoneyPerBallUI = require(PlayerScripts:WaitForChild("MoneyPerBallUI"));
 local CosmeticsShop = require(PlayerScripts:WaitForChild("CosmeticsShop"))
 local CosmeticBallSample = require(PlayerScripts:WaitForChild("CosmeticBallSample"))
+local QuestUI = require(PlayerScripts:WaitForChild("QuestUI"))
+local GoldenPegView = require(PlayerScripts:WaitForChild("GoldenPegView"))
 local Config = require(RS.Shared:WaitForChild("Config"))
 
 print("Bootstrapping services...")
@@ -55,6 +57,8 @@ PlaytimeUI.Init()
 MoneyPerBallUI.Init()
 CosmeticsShop.Init()
 CosmeticBallSample.Init()
+QuestUI.Init()
+GoldenPegView.Init()
 
 -- Start shuffle-play background music on join (each track once per cycle, then reshuffle).
 SoundService.SetBackgroundPlaylist(Config.BackgroundPlaylist)
