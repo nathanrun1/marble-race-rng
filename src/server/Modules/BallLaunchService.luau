@@ -163,13 +163,12 @@ function BallLaunchService.GetPhase(): number
 	return (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
 end
 
--- Client configures its bet (intent only); the server clamps and stores it on
--- the profile. The launch itself is driven by the batch clock, not this event.
-local function onRequest(player: Player, bet: number)
-	if type(bet) ~= "number" or bet ~= bet or bet < 0 then
-		return -- reject NaN/negative/non-number; do not trust the client
-	end
-	ProfileService.SetBet(player, bet)
+-- Fire one ball at the player's current server-authoritative bet. Bet size is no
+-- longer sent by the client at all — it's a discrete tier the player picks ahead of
+-- time via RaiseBtn/LowerBtn (ProfileService.SetBetTier), stored on the profile.
+-- launchFor reads loadout.Bet directly, so there is nothing left here to trust from
+-- the client; any legacy/extra args the client still sends are ignored.
+local function onRequest(player: Player)
 	launchFor(player)
 end
 

@@ -12,8 +12,14 @@ local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local Config = require(RS.Shared.Config)
+local Signal = require(RS.Shared.Signal)
 
 local CoinPickups = {}
+
+-- Fires () whenever a coin THIS client claimed gets deactivated by the server (i.e. our own
+-- claim request resolved, successfully or not — see onTouched's optimistic-hide comment).
+-- Orthogonal consumer: e.g. the tutorial's "collect a coin" step just listens for this.
+CoinPickups.Claimed = Signal.new()
 
 local player = Players.LocalPlayer
 
@@ -22,6 +28,7 @@ local activateRE = Remote:WaitForChild("CoinActivate") :: RemoteEvent
 local deactivateRE = Remote:WaitForChild("CoinDeactivate") :: RemoteEvent
 local claimRE = Remote:WaitForChild("CoinClaim") :: RemoteEvent
 local readyRE = Remote:WaitForChild("CoinReady") :: RemoteEvent
+local forceSpawnRE = Remote:WaitForChild("ForceSpawnCoin") :: RemoteEvent
 
 -- Visual tuning (gameplay values — value range, spawn cadence — live in Config.Coins).
 local BOB_HEIGHT = 0.6  -- studs up/down
@@ -29,7 +36,11 @@ local BOB_SPEED  = 2.5  -- bob radians/sec
 local SPIN_SPEED = 2.0  -- spin radians/sec
 local COIN_GOLD  = Color3.fromRGB(255, 205, 55)
 local COIN_RED   = Color3.fromRGB(220, 40, 40) -- tint for top-value coins (parts + decals)
+local COIN_BLUE  = Color3.fromRGB(60, 140, 255) -- tint for Diamond coins (parts + decals + shine)
 local TWO_PI     = math.pi * 2
+
+local SPARKLE_GOLD = ColorSequence.new(Color3.fromRGB(255, 240, 170), Color3.fromRGB(255, 200, 40))
+local SPARKLE_BLUE = ColorSequence.new(Color3.fromRGB(190, 225, 255), Color3.fromRGB(60, 140, 255))
 
 type CoinVisual = {
 	coin: PVInstance, -- the tagged BasePart/Model (animated via GetPivot/PivotTo)
@@ -41,6 +52,7 @@ type CoinVisual = {
 	light: PointLight,
 	phase: number,
 	active: boolean,
+	isBlue: boolean, -- current activation's reward type (Diamonds vs cash)
 	pending: boolean, -- claim sent, awaiting server deactivate
 }
 
@@ -90,10 +102,13 @@ local function collectDecals(coin: Instance): { Decal }
 	return decals
 end
 
--- Scale particle output (and the top-value light) to the coin's worth, then it's ready to show.
-local function applyStrength(cv: CoinVisual, value: number)
-	local t = valueT(value)
+-- Scale particle output (and the top-value light) to the coin's worth, then it's ready to
+-- show. Blue (Diamond) coins ignore the cash ValueMin/Max range entirely — their reward
+-- (1-10 Diamonds) isn't on that scale — and always render at full strength/blue tint.
+local function applyStrength(cv: CoinVisual, value: number, isBlue: boolean)
+	local t = if isBlue then 1 else valueT(value)
 	local e = cv.emitter
+	e.Color = if isBlue then SPARKLE_BLUE else SPARKLE_GOLD
 	e.Rate = 6 + 26 * t
 	e.Size = NumberSequence.new({
 		NumberSequenceKeypoint.new(0, 0.2 + 0.55 * t),
@@ -101,22 +116,25 @@ local function applyStrength(cv: CoinVisual, value: number)
 	})
 	e.Speed = NumberRange.new(1 + 2 * t, 2 + 4 * t)
 
-	-- Only the top fraction of the value range gets an actual light source.
-	local shine = t >= (1 - Config.Coins.ShineTopFraction)
+	-- Only the top fraction of the value range gets an actual light source (blue coins
+	-- always get one — they're always "full strength").
+	local shine = isBlue or t >= (1 - Config.Coins.ShineTopFraction)
 	cv.light.Enabled = shine
 	if shine then
+		cv.light.Color = if isBlue then COIN_BLUE else COIN_GOLD
 		cv.light.Brightness = 2 + 4 * t
 		cv.light.Range = 8 + 8 * t
 	end
 
-	-- Top fraction of the value range tints the coin red (parts + decals); others restore
-	-- their authored colour (a coin location can be re-rolled to a lower value).
-	local red = t >= (1 - Config.Coins.RedTopFraction)
+	-- Blue coins always tint blue; otherwise the top fraction of the value range tints red
+	-- (parts + decals); others restore their authored colour (a coin location can be
+	-- re-rolled to a different value/type).
+	local tint = if isBlue then COIN_BLUE elseif t >= (1 - Config.Coins.RedTopFraction) then COIN_RED else nil
 	for _, p in cv.parts do
-		p.Color = if red then COIN_RED else cv.origColor[p]
+		p.Color = tint or cv.origColor[p]
 	end
 	for _, d in cv.decals do
-		d.Color3 = if red then COIN_RED else cv.origColor[d]
+		d.Color3 = tint or cv.origColor[d]
 	end
 end
 
@@ -127,8 +145,9 @@ end
 local SHOWN_TRANSPARENCY = 0
 local HIDDEN_TRANSPARENCY = 1
 
-local function setActive(cv: CoinVisual, active: boolean, value: number?)
+local function setActive(cv: CoinVisual, active: boolean, value: number?, isBlue: boolean?)
 	cv.active = active
+	cv.isBlue = isBlue == true
 	local transparency = if active then SHOWN_TRANSPARENCY else HIDDEN_TRANSPARENCY
 	for _, p in cv.parts do
 		p.Transparency = transparency
@@ -139,7 +158,7 @@ local function setActive(cv: CoinVisual, active: boolean, value: number?)
 	end
 	cv.emitter.Enabled = active
 	if active and value then
-		applyStrength(cv, value)
+		applyStrength(cv, value, cv.isBlue)
 	else
 		cv.light.Enabled = false
 		cv.coin:PivotTo(cv.base) -- home pose
@@ -218,6 +237,7 @@ local function build(coin: Instance): CoinVisual?
 		-- Desync the bob/spin per coin so a cluster doesn't pulse in unison.
 		phase = (base.Position.X + base.Position.Z) % TWO_PI,
 		active = false,
+		isBlue = false,
 		pending = false,
 	}
 	for _, p in cv.parts do
@@ -268,16 +288,19 @@ function CoinPickups.Init()
 	end)
 	CollectionService:GetInstanceRemovedSignal(Config.Tags.Coin):Connect(destroy)
 
-	activateRE.OnClientEvent:Connect(function(coin: Instance, value: number)
+	activateRE.OnClientEvent:Connect(function(coin: Instance, value: number, isBlue: boolean?)
 		local cv = byCoin[coin] or build(coin)
 		if cv then
 			cv.pending = false
-			setActive(cv, true, value)
+			setActive(cv, true, value, isBlue == true)
 		end
 	end)
 	deactivateRE.OnClientEvent:Connect(function(coin: Instance)
 		local cv = byCoin[coin]
 		if cv then
+			if cv.pending then
+				CoinPickups.Claimed:Fire()
+			end
 			cv.pending = false
 			setActive(cv, false)
 		end
@@ -287,6 +310,31 @@ function CoinPickups.Init()
 
 	-- Tell the server we're listening; it seeds our initial coins and starts our timer.
 	readyRE:FireServer()
+end
+
+-- Nearest currently-active coin's world position, or nil if none are active for us right
+-- now. Orthogonal helper for anything that wants to point at "the" coin (e.g. WorldArrow).
+function CoinPickups.GetNearestActivePosition(fromPos: Vector3): Vector3?
+	local best: Vector3? = nil
+	local bestDist = math.huge
+	for _, cv in visuals do
+		if cv.active then
+			local pos = cv.coin:GetPivot().Position
+			local d = (pos - fromPos).Magnitude
+			if d < bestDist then
+				bestDist = d
+				best = pos
+			end
+		end
+	end
+	return best
+end
+
+-- Ask the server to force-activate one coin right now (bypassing the spawn timer), for
+-- callers that need a guaranteed active coin (the tutorial's "collect a coin" step). No-op
+-- server-side if the player's already at MaxActive or there's no free location.
+function CoinPickups.RequestForceSpawn()
+	forceSpawnRE:FireServer()
 end
 
 return CoinPickups

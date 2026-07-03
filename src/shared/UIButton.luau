@@ -2,7 +2,7 @@
 -- Attaches the standard "juicy button" behaviour to an authored button host: hover
 -- brightness lift, press squash toward the shadow, optional gradient state changes,
 -- optional click sound, and either a momentary onClick or a two-state toggle. It can
--- also be DISABLED: greyed out and held pressed-down, ignoring all interaction.
+-- also be DISABLED: button + shadow both grey out (no press-down), ignoring all interaction.
 --
 -- It DECORATES existing Studio-authored UI (the usual shape is
 -- Host > { Shadow, Button > { Hover, Icon, ... } }); it does not build any UI. Point
@@ -108,8 +108,9 @@ function UIButton.bind(host: Instance, config: Config): Handle
 
 	local hoverChild = button:FindFirstChild("Hover")
 	local hover = if hoverChild and hoverChild:IsA("GuiObject") then hoverChild else nil
+	local uiListIgnore = button:FindFirstChild("UIListIgnore")
 	-- Shadow is a sibling of Button under the host; SetColor keeps it a darker match.
-	local shadowChild = host:FindFirstChild("Shadow")
+	local shadowChild = host:FindFirstChild("Shadow") or (if uiListIgnore then uiListIgnore:FindFirstChild("Shadow") else nil)
 	local shadow = if shadowChild and shadowChild:IsA("GuiObject") then shadowChild else nil
 	local restPos = button.Position
 	local pressPos = restPos + UDim2.fromOffset(0, pressOffset)
@@ -151,7 +152,12 @@ function UIButton.bind(host: Instance, config: Config): Handle
 		end
 	end
 
-	-- Disabled visual: grey the button colour and hold it pressed-down.
+	local function shadowShade(color: Color3): Color3
+		return Color3.new(color.R * SHADOW_DARKEN, color.G * SHADOW_DARKEN, color.B * SHADOW_DARKEN)
+	end
+
+	-- Disabled visual: grey the button AND the shadow; stays at rest position (no
+	-- press-down — disabled should read as "off", not "held").
 	local function renderDisabled()
 		if posTween then
 			posTween:Cancel()
@@ -161,7 +167,10 @@ function UIButton.bind(host: Instance, config: Config): Handle
 			hover.BackgroundTransparency = 1
 		end
 		button.BackgroundColor3 = disabledColor
-		button.Position = pressPos
+		button.Position = restPos
+		if shadow then
+			shadow.BackgroundColor3 = shadowShade(disabledColor)
+		end
 	end
 
 	track(button.MouseEnter:Connect(function()
@@ -239,6 +248,9 @@ function UIButton.bind(host: Instance, config: Config): Handle
 		else
 			button.Position = restPos
 			renderEnabled()
+			if shadow then
+				shadow.BackgroundColor3 = shadowShade(defaultBg)
+			end
 		end
 	end
 
@@ -251,7 +263,7 @@ function UIButton.bind(host: Instance, config: Config): Handle
 			button.BackgroundColor3 = color
 		end
 		if shadow then
-			shadow.BackgroundColor3 = Color3.new(color.R * SHADOW_DARKEN, color.G * SHADOW_DARKEN, color.B * SHADOW_DARKEN)
+			shadow.BackgroundColor3 = shadowShade(color)
 		end
 	end
 

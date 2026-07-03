@@ -99,11 +99,33 @@ local function createUI(playerGui: PlayerGui)
 	screenGui.IgnoreGuiInset = false
 	screenGui.Parent = playerGui
 
+	-- All three rows live in one container so they scale AND stack together: a UIScale
+	-- parented to a label only scales that label's own Size, not its Position offset
+	-- relative to the ScreenGui — so three independently-positioned/autoscaled labels
+	-- drift apart as the viewport shrinks (their fixed-pixel gaps don't shrink with them).
+	-- Putting them in a single Frame with ONE UIScale + a UIListLayout fixes both: the
+	-- list layout removes manual offsets entirely, and the shared UIScale scales the
+	-- whole stack (including the layout's padding) as one unit.
+	local container = Instance.new("Frame")
+	container.Name = "TopHUD"
+	container.AnchorPoint = Vector2.new(0.5, 0)
+	container.Position = UDim2.new(0.5, 0, 0.045, 0)
+	container.Size = UDim2.new(0, 620, 0, 0)
+	container.AutomaticSize = Enum.AutomaticSize.Y
+	container.BackgroundTransparency = 1
+	container.Parent = screenGui
+
+	local listLayout = Instance.new("UIListLayout")
+	listLayout.FillDirection = Enum.FillDirection.Vertical
+	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	listLayout.Padding = UDim.new(0, 2)
+	listLayout.Parent = container
+
 	local lbl = Instance.new("TextLabel")
 	lbl.Name = "PerBall"
-	lbl.AnchorPoint = Vector2.new(0.5, 0)
-	lbl.Position = UDim2.new(0.5, 0, 0.045, 0)
-	lbl.Size = UDim2.fromOffset(620, 56)
+	lbl.LayoutOrder = 1
+	lbl.Size = UDim2.new(1, 0, 0, 56)
 	lbl.BackgroundTransparency = 1
 	lbl.Text = "💰 Average $/Marble: $0 💰"
 	lbl.TextColor3 = GREEN
@@ -114,18 +136,14 @@ local function createUI(playerGui: PlayerGui)
 	lbl.Font = Enum.Font.GothamBold
 	lbl.Active = false      -- never sink input: clicks (incl. world SurfaceGuis behind it) pass through
 	lbl.Interactable = false
-	lbl.Parent = screenGui
-
-	-- Shrink on smaller viewports (sizes authored at 1080p), like the other HUD text.
-	AutoScale.Apply(lbl)
+	lbl.Parent = container
 	label = lbl
 
 	-- Luck rank (named tier for the average), directly below the $/marble readout.
 	local luckLbl = Instance.new("TextLabel")
 	luckLbl.Name = "LuckRank"
-	luckLbl.AnchorPoint = Vector2.new(0.5, 0)
-	luckLbl.Position = UDim2.new(0.5, 0, 0.045, 58)
-	luckLbl.Size = UDim2.fromOffset(620, 30)
+	luckLbl.LayoutOrder = 2
+	luckLbl.Size = UDim2.new(1, 0, 0, 30)
 	luckLbl.BackgroundTransparency = 1
 	luckLbl.Text = "🍀 Luck: " .. LuckRanks.Ranks[1].Name
 	luckLbl.TextColor3 = LuckRanks.Ranks[1].Color
@@ -136,17 +154,14 @@ local function createUI(playerGui: PlayerGui)
 	luckLbl.Font = Enum.Font.GothamBold
 	luckLbl.Active = false
 	luckLbl.Interactable = false
-	luckLbl.Parent = screenGui
-
-	AutoScale.Apply(luckLbl)
+	luckLbl.Parent = container
 	luckLabel = luckLbl
 
 	-- Global ranking, below the luck rank.
 	local rankLbl = Instance.new("TextLabel")
 	rankLbl.Name = "GlobalRank"
-	rankLbl.AnchorPoint = Vector2.new(0.5, 0)
-	rankLbl.Position = UDim2.new(0.5, 0, 0.045, 90)
-	rankLbl.Size = UDim2.fromOffset(620, 32)
+	rankLbl.LayoutOrder = 3
+	rankLbl.Size = UDim2.new(1, 0, 0, 32)
 	rankLbl.BackgroundTransparency = 1
 	rankLbl.Text = "Global Rank: —"
 	rankLbl.TextColor3 = GREEN
@@ -157,10 +172,11 @@ local function createUI(playerGui: PlayerGui)
 	rankLbl.Font = Enum.Font.GothamBold
 	rankLbl.Active = false
 	rankLbl.Interactable = false
-	rankLbl.Parent = screenGui
-
-	AutoScale.Apply(rankLbl)
+	rankLbl.Parent = container
 	rankLabel = rankLbl
+
+	-- Shrink the whole stack on smaller viewports (sizes authored at 1080p), as one unit.
+	AutoScale.Apply(container)
 end
 
 -- rank is nil when the player isn't in the top ranks currently rendered on the physical

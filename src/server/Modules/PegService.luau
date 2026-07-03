@@ -19,15 +19,16 @@ local PegService = {}
 local REASSIGN_INTERVAL = 60 -- seconds between repaints
 local COLOR_TWEEN = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- Each repaint we promote random hot pegs to "double-hot": they look like a hot peg but
--- glow (Neon) and emit fire, and are worth double the hot heat. Promotions are transient —
--- their fire particles are cleared on the next repaint.
+-- Each repaint we promote random hot pegs to "double-hot": same look as an ordinary hot
+-- peg by default (SHARED appearance stays identical on purpose — which pegs are promoted
+-- is only revealed locally, per-player, to whoever has invested in PegHeat tier 1+; see
+-- client PegHeatView, which glows/Fires them for eligible viewers by comparing this heat
+-- value against Config.Pegs.HotHeat). The only SERVER-side effect is the heat value itself.
 --
 -- How many we add is a run of coin flips with a halving chance: 50% for the first,
 -- 25% for a second, 12.5% for a third, and so on — and the first failure stops the run.
 local DOUBLE_HOT_FIRST_CHANCE = 0.5
 local DOUBLE_HOT_HEAT = Config.Pegs.HotHeat * 3
-local DOUBLE_HOT_FIRE_NAME = "DoubleHotFire"
 
 -- Heat values are fixed per category and live in Config.Pegs (we don't vary within
 -- hot or cold); color/material remain peg-field presentation owned here.
@@ -47,10 +48,6 @@ local CENTER_WEIGHTS = { Normal = 0.70, Hot = 0.20, Cold = 0.10 }
 
 local pegs: { BasePart } = {}
 local minX, maxX = 0, 0
-
--- The pegs currently promoted to double-hot, so we can strip their fire on the next
--- repaint regardless of what category they re-roll into.
-local doubleHotPegs: { BasePart } = {}
 
 local function weightedPick(weights: { [string]: number }): string
 	local total = 0
@@ -88,44 +85,16 @@ local function applyCategory(peg: BasePart, catName: string)
 	TweenService:Create(peg, COLOR_TWEEN, { Color = cat.Color }):Play()
 end
 
--- Promote a peg to double-hot: keep the hot color but make it glow, attach fire, and
--- override its heat to double. Appearance aside, the only gameplay change is the heat.
+-- Promote a peg to double-hot: same colour/material as an ordinary hot peg (applyCategory
+-- already painted it that way), only the heat attribute changes. No shared Neon/Fire — that
+-- reveal is per-player now (client PegHeatView), gated on the viewer's PegHeat tier.
 local function promoteDoubleHot(peg: BasePart)
-	local hot = CATEGORIES.Hot
 	peg:SetAttribute(Config.Attributes.PegHeat, DOUBLE_HOT_HEAT)
-	peg.Material = Enum.Material.Neon
-	TweenService:Create(peg, COLOR_TWEEN, { Color = hot.Color }):Play()
-
-	local fire = Instance.new("ParticleEmitter")
-	fire.Name = DOUBLE_HOT_FIRE_NAME
-	fire.Texture = "rbxasset://textures/particles/fire_main.dds"
-	fire.Color = ColorSequence.new(Color3.fromRGB(255, 120, 0), Color3.fromRGB(255, 0, 191))
-	fire.LightEmission = 1
-	fire.Lifetime = NumberRange.new(0.4, 0.7)
-	fire.Rate = 30
-	fire.Speed = NumberRange.new(2, 4)
-	fire.SpreadAngle = Vector2.new(20, 20)
-	fire.Size = NumberSequence.new(peg.Size.Magnitude * 0.5)
-	fire.Parent = peg
-end
-
--- Strip the fire particles from every previously promoted peg. Their color/material are
--- reset by the normal repaint that follows.
-local function clearDoubleHot()
-	for _, peg in doubleHotPegs do
-		local fire = peg:FindFirstChild(DOUBLE_HOT_FIRE_NAME)
-		if fire then
-			fire:Destroy()
-		end
-	end
-	table.clear(doubleHotPegs)
 end
 
 -- Repaint every peg from its position. Span is fixed (pegs don't move), so this
 -- only re-rolls the categories.
 local function assignAll()
-	clearDoubleHot()
-
 	local span = maxX - minX
 	local hotPegs: { BasePart } = {}
 	for _, peg in pegs do
@@ -146,7 +115,6 @@ local function assignAll()
 		local idx = math.random(#hotPegs)
 		local chosen = table.remove(hotPegs, idx) :: BasePart -- distinct each time
 		promoteDoubleHot(chosen)
-		table.insert(doubleHotPegs, chosen)
 		chance /= 2
 	end
 end

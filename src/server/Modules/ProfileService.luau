@@ -38,7 +38,9 @@ local ProfileService = {}
 export type Upgrades = { [string]: number }
 
 export type Loadout = {
-	Bet: number,
+	Bet: number,      -- derived: ProfileStats.GetBetSizeAtTier(BetTier). Set via SetBetTier
+	                  -- (player-facing) or the dev-only SetBet (raw, bypasses the tier ladder).
+	BetTier: number,  -- selected rung on the bet ladder, 0 .. the owned MaxBet tier
 	LaunchPhase: number,
 	axes: { [string]: number }, -- continuous synergetic axis positions (Weight, Size, ...)
 }
@@ -89,7 +91,8 @@ local function newProfile(): Profile
 	return {
 		upgrades = upgrades,
 		loadout = {
-			Bet = d.Bet,
+			Bet = ProfileStats.GetBetSizeAtTier(0),
+			BetTier = 0,
 			LaunchPhase = d.LaunchPhase,
 			axes = axes,
 		},
@@ -175,7 +178,12 @@ end
 -- Loadout setters (validated server-side, within unlocked bounds)
 --------------------------------------------------------------------------------
 
--- Bet: 0 .. effective max bet.
+-- Dev-only: set a raw continuous bet (0 .. effective max bet), bypassing the tier
+-- ladder entirely. Never reachable from a client remote — DevService's chat commands
+-- (BIG_BET stress-testing, /bet <n>) are the only callers, for statistical sampling
+-- across bet sizes the ladder doesn't necessarily have a rung for. Does NOT touch
+-- BetTier, so a later SetBetTier/upgrade purchase can still reclamp Bet back down to
+-- whatever the actual selected rung derives to.
 function ProfileService.SetBet(player: Player, bet: number)
 	if type(bet) ~= "number" or bet ~= bet then
 		return -- reject non-number / NaN
@@ -184,6 +192,26 @@ function ProfileService.SetBet(player: Player, bet: number)
 	profile.loadout.Bet = math.clamp(bet, 0, ProfileStats.GetMaxBet(profile.upgrades))
 	ProfileService.Changed:Fire(player, profile)
 	ProfileChangedRE:FireClient(player, profile)
+end
+
+-- Bet tier: 0 .. the player's owned MaxBet tier. A locked/unpurchased rung is never
+-- settable here — the client's "one rung ahead" preview when Raise reaches an unowned
+-- tier is a purely client-side visual; only Unlock's PurchaseUpgrade call can raise the
+-- owned tier itself, after which the client re-selects it with another SetBetTier call.
+-- Also derives loadout.Bet from the clamped tier so every existing consumer of
+-- loadout.Bet (BallLaunchService, CurrencyService charge, ...) is unaffected. Returns
+-- the actual (clamped) tier so the caller (a RemoteFunction) can hand it straight back.
+function ProfileService.SetBetTier(player: Player, tier: number): number
+	local profile = get(player)
+	if type(tier) == "number" and tier == tier then
+		local ownedBetTier = profile.upgrades.MaxBet or 0
+		tier = math.clamp(math.floor(tier), 0, ownedBetTier)
+		profile.loadout.BetTier = tier
+		profile.loadout.Bet = ProfileStats.GetBetSizeAtTier(tier)
+		ProfileService.Changed:Fire(player, profile)
+		ProfileChangedRE:FireClient(player, profile)
+	end
+	return profile.loadout.BetTier
 end
 
 -- -- Ball count N: 1 .. unlocked frequency cap.
@@ -239,7 +267,7 @@ function ProfileService.ResetProfile(player: Player)
 		axes[name] = def.Default
 	end
 	local d = Config.LoadoutDefaults
-	profile.loadout = { Bet = d.Bet, LaunchPhase = d.LaunchPhase, axes = axes }
+	profile.loadout = { Bet = ProfileStats.GetBetSizeAtTier(0), BetTier = 0, LaunchPhase = d.LaunchPhase, axes = axes }
 	ProfileService.Changed:Fire(player, profile)
 	ProfileChangedRE:FireClient(player, profile)
 end
@@ -249,6 +277,7 @@ end
 reclampLoadout = function(profile: Profile)
 	local upgrades = profile.upgrades
 	profile.loadout.Bet = math.clamp(profile.loadout.Bet, 0, ProfileStats.GetMaxBet(upgrades))
+	profile.loadout.BetTier = math.clamp(profile.loadout.BetTier, 0, upgrades.MaxBet or 0)
 	for axis in Config.Axes do
 		local min, max = ProfileStats.GetAxisRange(upgrades, axis)
 		profile.loadout.axes[axis] = math.clamp(profile.loadout.axes[axis], min, max)
@@ -281,6 +310,16 @@ function ProfileService.ApplyData(player: Player, saved: Profile?)
 			if type(sl.Bet) == "number" then
 				profile.loadout.Bet = sl.Bet
 			end
+			if type(sl.BetTier) == "number" then
+				profile.loadout.BetTier = sl.BetTier
+			else
+				-- Migrating an old save with no BetTier field: default to the owned
+				-- MaxBet tier (players habitually maxed their bet under the old
+				-- continuous system) rather than the fresh-profile default of 0,
+				-- overriding the stale raw Bet number above with that tier's size.
+				profile.loadout.BetTier = profile.upgrades.MaxBet or 0
+				profile.loadout.Bet = ProfileStats.GetBetSizeAtTier(profile.loadout.BetTier)
+			end
 			if type(sl.LaunchPhase) == "number" then
 				profile.loadout.LaunchPhase = sl.LaunchPhase
 			end
@@ -309,9 +348,31 @@ function ProfileService.Clear(player: Player)
 	profiles[player.UserId] = nil
 end
 
+-- SetBetTier isn't Studio-authored under RS.Remote like GetProfile/SetAxis are, so
+-- create it on demand (same create-if-missing pattern UpgradeService/CosmeticService
+-- use for their remotes).
+local function getRemoteFunction(name: string): RemoteFunction
+	local existing = RS.Remote:FindFirstChild(name)
+	if existing and existing:IsA("RemoteFunction") then
+		return existing :: RemoteFunction
+	end
+	local rf = Instance.new("RemoteFunction")
+	rf.Name = name
+	rf.Parent = RS.Remote
+	return rf
+end
+
 function ProfileService.Init()
 	RS.Remote.GetProfile.OnServerInvoke = get
 	SetAxisRF.OnServerInvoke = ProfileService.SetAxis
+	-- Client (RaiseBtn/LowerBtn) sends the tier it wants; returns the actual
+	-- (server-clamped) tier so the UI can just render whatever comes back.
+	getRemoteFunction("SetBetTier").OnServerInvoke = function(player: Player, tier: any)
+		if type(tier) ~= "number" then
+			return get(player).loadout.BetTier
+		end
+		return ProfileService.SetBetTier(player, tier)
+	end
 end
 
 return ProfileService

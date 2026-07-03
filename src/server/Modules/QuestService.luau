@@ -201,7 +201,7 @@ local function report(player: Player, key: string, amount: number)
 	end
 end
 
--- Claim one completed quest by index. Returns the CC granted (0 if not claimable).
+-- Claim one completed quest by index. Returns the Diamonds granted (0 if not claimable).
 function QuestService.Claim(player: Player, index: number): number
 	local data = states[player.UserId]
 	if not data then
@@ -213,8 +213,8 @@ function QuestService.Claim(player: Player, index: number): number
 	end
 	q.claimed = true
 	CosmeticService.AddCC(player, q.reward)
-	WarnUI.Warn(player, "Quest Reward: " .. StringUtils.FormatShort(q.reward) .. " CC", QUEST_GREEN, 2.5)
-	SoundService.PlayForClient(player, { soundId = Config.Sounds.Upgrade })
+	WarnUI.Warn(player, "Quest Reward: " .. StringUtils.FormatShort(q.reward) .. " Diamonds", QUEST_GREEN, 2.5)
+	SoundService.PlayForClient(player, { soundId = Config.Sounds.Combo })
 	fireChanged(player)
 	return q.reward
 end

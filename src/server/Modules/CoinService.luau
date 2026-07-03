@@ -15,6 +15,7 @@ local RunService = game:GetService("RunService")
 
 local Config = require(RS.Shared.Config)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local WarnUI = require(RS.Shared.WarnUI)
 local SoundService = require(RS.Shared.SoundService)
 local StringUtils = require(RS.Shared.StringUtils)
@@ -22,9 +23,12 @@ local StringUtils = require(RS.Shared.StringUtils)
 local CoinService = {}
 
 local REWARD_COLOR = Color3.fromRGB(255, 210, 60)
+local DIAMOND_REWARD_COLOR = Color3.fromRGB(255, 210, 60) -- matches the Diamonds theme elsewhere (CosmeticsShop YELLOW)
+
+type CoinEntry = { value: number, isBlue: boolean } -- isBlue: pays Diamonds instead of cash
 
 type PlayerState = {
-	active: { [Instance]: number }, -- coin location -> value
+	active: { [Instance]: CoinEntry }, -- coin location -> reward
 	count: number,
 	ready: boolean,                 -- client has announced it's listening (CoinReady)
 	nextSpawn: number,              -- os.clock() of the next scheduled spawn (huge until ready)
@@ -62,6 +66,21 @@ local function rollValue(): number
 	return c.ValueMin + k * c.ValueStep
 end
 
+-- Blue-coin Diamonds reward: integer in [Min, Max], skewed toward Min via
+-- random()^BiasExponent (1 = uniform; higher = more mass near Min).
+local function rollBlueDiamonds(): number
+	local d = Config.Coins.BlueDiamonds
+	local t = math.random() ^ d.BiasExponent
+	return d.Min + math.floor(t * (d.Max - d.Min + 1))
+end
+
+local function rollCoin(): CoinEntry
+	if math.random() < Config.Coins.BlueChance then
+		return { value = rollBlueDiamonds(), isBlue = true }
+	end
+	return { value = rollValue(), isBlue = false }
+end
+
 local function scheduleNext(state: PlayerState)
 	local c = Config.Coins
 	state.nextSpawn = os.clock() + c.SpawnIntervalMin
@@ -83,10 +102,24 @@ local function spawnFor(player: Player, state: PlayerState)
 		return
 	end
 	local coin = candidates[math.random(1, #candidates)]
-	local value = rollValue()
-	state.active[coin] = value
+	local entry = rollCoin()
+	state.active[coin] = entry
 	state.count += 1
-	activateRE:FireClient(player, coin, value)
+	activateRE:FireClient(player, coin, entry.value, entry.isBlue)
+end
+
+-- Force one immediate activation for `player`, bypassing the normal spawn timer — used by the
+-- tutorial's "collect a coin" step so it never has to wait out a real spawn interval. A no-op
+-- (returns false) if the player isn't ready yet, is already at MaxActive, or there's no free
+-- location; otherwise behaves exactly like a normal spawn (same activateRE push).
+function CoinService.ForceSpawn(player: Player): boolean
+	local state = states[player]
+	if not state or not state.ready then
+		return false
+	end
+	local before = state.count
+	spawnFor(player, state)
+	return state.count > before
 end
 
 -- Client is listening: seed its initial coins and start its spawn timer. Re-ready (e.g. a
@@ -97,8 +130,8 @@ local function onReady(player: Player)
 		return
 	end
 	if state.ready then
-		for coin, value in state.active do
-			activateRE:FireClient(player, coin, value)
+		for coin, entry in state.active do
+			activateRE:FireClient(player, coin, entry.value, entry.isBlue)
 		end
 		return
 	end
@@ -117,15 +150,20 @@ local function onClaim(player: Player, coin: Instance)
 	if not state then
 		return
 	end
-	local value = state.active[coin]
-	if not value then
+	local entry = state.active[coin]
+	if not entry then
 		deactivateRE:FireClient(player, coin)
 		return
 	end
 	state.active[coin] = nil
 	state.count -= 1
-	CurrencyService.AddPoints(player, value, "Coin pickup")
-	WarnUI.Warn(player, "+$" .. StringUtils.FormatShort(value), REWARD_COLOR, Config.Coins.RewardWarnLifetime)
+	if entry.isBlue then
+		CosmeticService.AddCC(player, entry.value)
+		WarnUI.Warn(player, "+" .. StringUtils.FormatShort(entry.value) .. " Diamonds", DIAMOND_REWARD_COLOR, Config.Coins.RewardWarnLifetime)
+	else
+		CurrencyService.AddPoints(player, entry.value, "Coin pickup")
+		WarnUI.Warn(player, "+$" .. StringUtils.FormatShort(entry.value), REWARD_COLOR, Config.Coins.RewardWarnLifetime)
+	end
 	SoundService.PlayForClient(player, { soundId = Config.Sounds.Collect1 })
 	deactivateRE:FireClient(player, coin)
 end
@@ -166,6 +204,9 @@ function CoinService.Init()
 	readyRE = Instance.new("RemoteEvent")
 	readyRE.Name = "CoinReady"
 	readyRE.Parent = RS.Remote
+	local forceSpawnRE = Instance.new("RemoteEvent")
+	forceSpawnRE.Name = "ForceSpawnCoin"
+	forceSpawnRE.Parent = RS.Remote
 
 	for _, coin in coinLocations() do
 		makeInert(coin)
@@ -186,6 +227,9 @@ function CoinService.Init()
 		end
 	end)
 	readyRE.OnServerEvent:Connect(onReady)
+	forceSpawnRE.OnServerEvent:Connect(function(player: Player)
+		CoinService.ForceSpawn(player)
+	end)
 
 	for _, player in Players:GetPlayers() do
 		onPlayerAdded(player)

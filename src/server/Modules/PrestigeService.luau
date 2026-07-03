@@ -182,7 +182,7 @@ function PrestigeService.AddLifetimeBanked(player: Player, amount: number)
 	if capped then
 		local now = os.clock()
 		if now - (lastLimitWarn[player.UserId] or 0) >= Config.Prestige.LimitWarnInterval then
-			WarnUI.Warn(player, "RP limit exceeded, rebirth recommended", nil, 5)
+			WarnUI.Warn(player, "RP limit reached, rebirth recommended", nil, 5)
 			lastLimitWarn[player.UserId] = now
 		end
 	end
@@ -219,7 +219,7 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	local ccGained = math.floor(info.nextCost * Config.Cosmetics.RebirthCCRatio)
 	CosmeticService.AddCC(player, ccGained)
 	if ccGained > 0 then
-		WarnUI.Warn(player, "Earned " .. StringUtils.FormatShort(ccGained) .. " CC!", Color3.fromRGB(255, 210, 60), 4)
+		WarnUI.Warn(player, "Earned " .. StringUtils.FormatShort(ccGained) .. " Diamonds!", Color3.fromRGB(255, 210, 60), 4)
 	end
 	d.count += 1
 	-- Re-arm the "Prestige available!" edge so it announces again next time they climb back.

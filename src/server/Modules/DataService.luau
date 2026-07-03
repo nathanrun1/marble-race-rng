@@ -36,6 +36,7 @@ local StatsService = require(SSS.Scripts.Modules.StatsService)
 local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local QuestService = require(SSS.Scripts.Modules.QuestService)
+local DailyRewardService = require(SSS.Scripts.Modules.DailyRewardService)
 
 local DataService = {}
 
@@ -138,6 +139,7 @@ export type PlayerBlob = {
 	playtime: PlaytimeBonusService.PlaytimeData?,
 	cosmetics: CosmeticService.CosmeticData?,
 	quests: QuestService.QuestData?,
+	dailyReward: DailyRewardService.DailyRewardData?,
 }
 
 -- Players whose load succeeded (so we may safely save them). A player who never
@@ -187,6 +189,7 @@ local function applyBlob(player: Player, blob: PlayerBlob?)
 	PlaytimeBonusService.ApplyData(player, blob and blob.playtime)
 	CosmeticService.ApplyData(player, blob and blob.cosmetics)
 	QuestService.ApplyData(player, blob and blob.quests)
+	DailyRewardService.ApplyData(player, blob and blob.dailyReward)
 end
 
 local function serializeBlob(player: Player): PlayerBlob
@@ -198,6 +201,7 @@ local function serializeBlob(player: Player): PlayerBlob
 		playtime = PlaytimeBonusService.SerializeData(player),
 		cosmetics = CosmeticService.SerializeData(player),
 		quests = QuestService.SerializeData(player),
+		dailyReward = DailyRewardService.SerializeData(player),
 	}
 end
 
@@ -476,6 +480,7 @@ local function onPlayerRemoving(player: Player)
 	PlaytimeBonusService.Clear(player)
 	CosmeticService.Clear(player)
 	QuestService.Clear(player)
+	DailyRewardService.Clear(player)
 end
 
 function DataService.Init()

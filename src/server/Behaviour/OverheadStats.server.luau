@@ -94,8 +94,10 @@ local function buildFor(player: Player, character: Model)
 		luck = makeLine(gui, 2, Color3.new(1, 1, 1)),
 		money = makeLine(gui, 3, MONEY_GREEN),
 	}
-	refresh(player)
+	-- Parent BEFORE the initial refresh: refresh() skips unparented guis, so the old
+	-- order left the labels blank until the first ball bank marked the player dirty.
 	gui.Parent = head -- lives (and dies) with the character
+	refresh(player)
 end
 
 local function onPlayer(player: Player)

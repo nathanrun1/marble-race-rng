@@ -11,16 +11,19 @@ local CollectionService = game:GetService("CollectionService")
 local RS = game:GetService("ReplicatedStorage")
 
 local Config = require(RS.Shared.Config)
+local StringUtils = require(RS.Shared.StringUtils)
 
 local DestroyTargetService = {}
 
 local MULTS = Config.DestroyTargets.Multipliers :: { [number]: any }
 local JACKPOT = Config.DestroyTargets.Jackpot
 
+-- Base (tier-0) display. Each client then overwrites the labels locally with its own
+-- Base-Bonus-boosted values (BoardMultiplierView); same "x" + FormatShort format.
 local function displayText(mult: any): string
 	-- Jackpot slots pay base × (1 + JackpotMultiplier); show that effective multiplier.
 	local n = if mult == JACKPOT then (1 + Config.Scoring.JackpotMultiplier) else mult
-	return ("x%g"):format(n)
+	return "x" .. StringUtils.FormatShort(n)
 end
 
 local function setLabel(part: Instance, text: string)

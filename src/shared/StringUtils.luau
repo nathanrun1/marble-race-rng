@@ -11,6 +11,7 @@ function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: num
     local SCI_AT = 1e15
     local FACTORS_ORD = {1e12, 1e9, 1e6, 1e3}
     local FACTORS = {
+        [1e15] = "Q",
         [1e12] = "T",
         [1e9]  = "B",
         [1e6]  = "M",
@@ -26,7 +27,6 @@ function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: num
         if floorRound then
             n = math.floor(n * 10 ^ precision) / (10 ^ precision)
         end
-        
     end 
 
     for _, f in ipairs(FACTORS_ORD) do
@@ -53,9 +53,6 @@ end
 -- Money string: comma-grouped below 1K (so small balances read exactly), short
 -- suffixed (K/M/B/T/Q) above. Always prefixed with "$".
 function StringUtils.FormatMoney(n: number, floorRound: boolean?, precision: number?): string
-    if n < 1000 then
-        return "$" .. StringUtils.Commas(n)
-    end
     return "$" .. StringUtils.FormatShort(n, floorRound, precision)
 end
 

@@ -25,9 +25,25 @@ local function tier(upgrades: Upgrades, track: string): number
 	return upgrades[track] or 0
 end
 
--- Effective max bet (cap for loadout.Bet). maxBet = StartMaxBet * PerTier^tier.
+-- Bet size at an arbitrary ladder tier (tier 0 = the free starting rung, no purchase
+-- needed). Pure — no upgrades/ownership dependency — so callers can preview a tier the
+-- player doesn't own yet (the client BetUI's "one rung ahead" locked preview, or the
+-- board-appearance view scaling off a selected-but-not-yet-launched tier).
+--   betSize(0)      = Economy.StartBetSize            (10)
+--   betSize(t >= 1) = Economy.StartMaxBet * PerTier^(t - 1)   (tier 1 = 40, the old tier 0)
+function ProfileStats.GetBetSizeAtTier(tier: number): number
+	if tier <= 0 then
+		return Config.Economy.StartBetSize
+	end
+	return Config.Economy.StartMaxBet * (Config.Upgrades.MaxBet.PerTier ^ (tier - 1))
+end
+
+-- Effective max bet: the bet size at the tier the player actually OWNS (cap for
+-- loadout.Bet, and the anchor VJack/Trickle scale off). Kept under this name so
+-- existing call sites (VJack, Trickle, BallLaunchService, ProfileService clamps, ...)
+-- don't need to change.
 function ProfileStats.GetMaxBet(upgrades: Upgrades): number
-	return Config.Economy.StartMaxBet * (Config.Upgrades.MaxBet.PerTier ^ tier(upgrades, "MaxBet"))
+	return ProfileStats.GetBetSizeAtTier(tier(upgrades, "MaxBet"))
 end
 
 -- V_JACK: value a single ball must carry to clear the jackpot gate (§1.3).
@@ -109,7 +125,7 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 	if track == "MaxBet" then
 		return StringUtils.FormatShort(ProfileStats.GetMaxBet(u))
 	elseif track == "FlatRate" then
-		return StringUtils.FormatMoney(ProfileStats.GetFlatPerBounce(u), true, 2)
+		return StringUtils.FormatMoney(ProfileStats.GetFlatPerBounce(u), false, 2)
 	elseif track == "BaseAdditive" then
 		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
 	elseif track == "Frequency" then

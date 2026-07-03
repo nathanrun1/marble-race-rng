@@ -45,6 +45,13 @@ Config.Tags = {
 	CameraZone = "CameraZone",           -- A trigger volume: while the local player stands in it, the board camera turns on (client CameraZone)
 	CosmeticsGui = "CosmeticsGui",       -- A SurfaceGui the cosmetics shop is built into (client CosmeticsShop)
 	CosmeticBallSample = "CosmeticBallSample", -- A part; a sample ball of the selected cosmetic floats above it (client CosmeticBallSample)
+	Teleport = "Teleport",               -- A pad that teleports a touching player to its Teleport attribute (Vector3; see TeleportPads)
+	CashBalance = "CashBalance",         -- A TextLabel (or a container holding one) kept in sync with the player's Cash balance (client BalanceUIController)
+	DiamondsBalance = "DiamondsBalance", -- A TextLabel (or a container holding one) kept in sync with the player's Diamonds balance (client BalanceUIController)
+	Board = "Board",                     -- Any part of the physical board whose look scales with bet tier (client BoardAppearanceView)
+	BoardFloor = "BoardFloor",           -- The floor parts marbles roll on (darker default; see Config.BoardAppearance)
+	BoardSide = "BoardSide",             -- The barrier/side parts (lighter default; see Config.BoardAppearance)
+	QuestUI = "QuestUI",                 -- A SurfaceGui the daily-quest panel is also built into (client QuestUI)
 }
 
 Config.Attributes = {
@@ -88,6 +95,31 @@ Config.Pegs = {
 	HotHeat = 1.0,
 	ColdHeat = -1.0,   -- TEMP: -1.0 for accurate EV testing; gameplay value was -1.1
 	NeutralHeat = 0.0,
+}
+
+-- Peg "heat sense" appearance, driven by the LOCAL player's PegHeat ("Heat Sense") upgrade
+-- tier — client PegHeatView. The shared/server truth (PegService) always paints hot/cold
+-- pegs the same purplish colors for everyone; this is a purely local repaint on top, so a
+-- tier-0 player sees hot and cold pegs as an undifferentiated dull gray (can't heat-sense
+-- yet), and each tier blends further toward the "true" hot/cold color, capped at MaxTier.
+-- Hot/Cold true colors lean toward actual red/blue (vs. PegService's magenta/violet
+-- gameplay colors) but deliberately don't go fully pure — a little of that identity stays.
+Config.PegHeatAppearance = {
+	MaxTier = 15,
+	DullColor = Color3.fromRGB(140, 140, 145), -- tier 0: hot and cold look identical
+	Hot = { Color = Color3.fromRGB(255, 55, 35) },  -- true hot at MaxTier: red-leaning, still a hint of warm magenta
+	Cold = { Color = Color3.fromRGB(45, 100, 255) }, -- true cold at MaxTier: blue-leaning, still a hint of violet
+	Particles = {
+		MinTier = 1,     -- no particles at all below this tier (tier 0 is fully plain)
+		HotSparkColor = Color3.fromRGB(255, 140, 40),  -- orange sparks
+		ColdAuraColor = Color3.fromRGB(150, 205, 255), -- pale-blue "cold" puff
+	},
+	-- PegService silently promotes some hot pegs to a hidden "double-hot" (3x heat, no
+	-- shared visual tell — see PegService.promoteDoubleHot). Below this tier a double-hot
+	-- peg is indistinguishable from an ordinary hot one; at/above it, PegHeatView reveals
+	-- the promotion locally with a Neon glow + Fire (fire is otherwise unused by peg
+	-- appearance — reserved for this reveal).
+	DoubleHotMinTier = 1,
 }
 
 -- Destroy-target (slot) payouts, keyed by the part's DestroyTargetID attribute.
@@ -134,7 +166,13 @@ Config.Coins = {
 	ShineTopFraction = 0.25,  -- coins in the top this fraction of the value range also get a light
 	RedTopFraction = 0.5,     -- coins in the top this fraction are tinted red (parts + decals)
 	RewardWarnLifetime = 2,   -- seconds the "+$X" WarnUI banner stays up
-	ValuePoissonMean = 6.8    -- Poisson lambda (steps above ValueMin)
+	ValuePoissonMean = 6.8,   -- Poisson lambda (steps above ValueMin)
+
+	-- Blue coins: rolled independently at spawn time, pay Diamonds (the cc cosmetics
+	-- currency) instead of cash. BiasExponent > 1 skews the roll toward Min via
+	-- random()^BiasExponent (1 = uniform, 2 = quadratic bias low, ...) — see CoinService.
+	BlueChance = 0.20,
+	BlueDiamonds = { Min = 1, Max = 10, BiasExponent = 2 },
 }
 
 -- Playtime reward ladder (see PlaytimeBonusService). Cumulative seconds played -> claimable
@@ -198,7 +236,8 @@ Config.Prestige = {
 }
 
 Config.Economy = {
-	StartMaxBet = 40,         -- guideline §4; base for the MaxBet track
+	StartMaxBet = 40,          -- guideline §4; anchor for the MaxBet ladder from tier 1 up (see MaxBet below)
+	StartBetSize = 10,         -- tier 0's bet size: the free starting rung, below StartMaxBet's old tier-0 value
 	TrickleFraction = 0.05,    -- × currentMaxBet, free per batch (§1.2)
 	VJackFraction = 0.55,     -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
 	BasePriceGrowth = 4.5,    -- default upgrade Cost.Growth (price multiplier per tier)
@@ -224,17 +263,28 @@ Config.Economy = {
 -- ahead of its doubling benefit (the anti-snowball lever). Tune in playtest.
 -- Caps/Widths lists also cap the tier; unlisted tracks are unbounded.
 Config.Upgrades = {
-	-- maxBet = Economy.StartMaxBet * (PerTier ^ tier)   [cap for loadout.Bet]
-	-- maxBet grows 1.5×/tier (was 4.05): ×4 per tier made income explode far past cost,
-	-- so bet-spam snowballed instantly. Cost grows 1.9× so tiers gate on time, not trivially.
+	-- Bet size is now a discrete ladder the player steps through with Raise/Lower (client
+	-- BetUI), not a continuous value up to a "ceiling" — but it's still stored/priced as an
+	-- ordinary upgrade track named MaxBet (kept as-is so nothing else needs renaming) and the
+	-- Name/Desc/Icon/Locked fields below are vestigial now that the physical shop kiosk for it
+	-- is gone from the map; the track itself (tier, cost curve) is still very much live.
+	--
+	-- betSize(0) = Economy.StartBetSize (10, free, no purchase needed)
+	-- betSize(tier>=1) = Economy.StartMaxBet * (PerTier ^ (tier - 1))   [see ProfileStats.GetMaxBet]
+	-- i.e. the whole old ladder shifted up one rung: new tier 1 (40) is the old tier 0. The
+	-- geometric cost curve (Base * Growth^tier) is untouched and now applies uniformly from
+	-- tier 0 (no more Cost.Initial override) — tier 0->1 costs Base*Growth^0 = Base = 250,
+	-- exactly a quarter of the old flat 1000 unlock, and every tier after that prices exactly
+	-- like it did before the shift.
 	MaxBet = {
 		PerTier = 1.5,
-		Cost = { Initial = 1000, Base = 250, Growth = 1.9 },
+		Cost = { Base = 250, Growth = 1.9 },
 		Name = "Max Bet", Short = "Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰",
-		-- Starts hidden behind a flat unlock (tier 0->1, still just Cost.Base — the
-		-- geometric curve is already flat at tier 0). UpgradeService/ShopUI/UpgradeShop
-		-- all key off this to show a "???" teaser instead of the real name/desc/values.
+		-- Starts hidden behind a flat unlock (tier 0->1, just Cost.Base — the geometric curve
+		-- is already flat at tier 0). UpgradeService/ShopUI/UpgradeShop all key off this to show
+		-- a "???" teaser instead of the real name/desc/values; the new BetUI's "UNLOCK" state
+		-- doesn't depend on this flag, it just reuses the same Purchase() call.
 		Locked = true,
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
@@ -253,10 +303,14 @@ Config.Upgrades = {
 	-- baseAdditive = Base + C1 * tier + C2 * tier^2 + C3 * tier^3
 	-- Flattened to linear +5%/tier (was cubic → ×26 at tier 12, which dwarfed every other
 	-- lever and exploded income). Now +60% at max: a real lever, not a runaway.
+	-- Applied as a MULTIPLIER boost: the player's effective slot multipliers (and the
+	-- jackpot multiplier) are scaled by (1 + rate) at banking (ScoreHandler), and the
+	-- board labels show each player their own boosted values (client BoardMultiplierView)
+	-- — not a separate additive line on the payout anymore.
 	BaseAdditive = {
 		Base = 0.0, C1 = 0.05, C2 = 0.0, C3 = 0.0,
 		Cost = { Base = 300, Growth = 1.7 },
-		Name = "Base Bonus", Short = "Base", Desc = "Boost your marble cash payout.",
+		Name = "Base Bonus", Short = "Base", Desc = "Boost the board's slot multipliers.",
 		Icon = "➕"
 	},
 	-- Minimum delay between launches. PerTier 0.67→0.82: gentler throughput ramp. Cost growth
@@ -496,6 +550,45 @@ Config.GoldenPegs = {
 	MaxPegs = 20,        -- per-player cap (the board only has so many pegs)
 }
 
+-- Board look scales with the LOCAL player's current bet tier (client BoardAppearanceView) —
+-- the board is shared, but each client repaints Config.Tags.Board/BoardFloor/BoardSide parts
+-- to reflect its own viewer's bet size, same "local view of shared state" pattern as
+-- GoldenPegView/BoardMultiplierView. Boring/plain at tier 0, maximally "leveled up" by
+-- MaxTier — tiers beyond MaxTier all render at the MaxTier look (no further escalation).
+--
+-- Floor/Side are each a list of keyframes (ascending Tier). Between two keyframes, Color
+-- lerps linearly by tier; Material has no in-between, so it holds the LOWER keyframe's
+-- Material until the tier reaches the next one. A tier past the last keyframe holds that
+-- keyframe's Color/Material. Keyframes are deliberately DENSE in the first ~10 tiers (every
+-- 2) so the very first few raises already read as a real hue change, not a grayscale
+-- flicker — spaced wider after that once the player has more time-per-tier to notice it.
+Config.BoardAppearance = {
+	MaxTier = 25,
+	Floor = { -- a real color journey, not just darker/lighter: drab -> copper -> steel ->
+		-- emerald -> violet -> crimson -> gold -> obsidian
+		{ Tier = 0,  Color = Color3.fromRGB(58, 58, 62),   Material = Enum.Material.Concrete },
+		{ Tier = 2,  Color = Color3.fromRGB(96, 62, 40),   Material = Enum.Material.SmoothPlastic },
+		{ Tier = 4,  Color = Color3.fromRGB(150, 96, 40),  Material = Enum.Material.Metal },
+		{ Tier = 6,  Color = Color3.fromRGB(40, 92, 150),  Material = Enum.Material.Marble },
+		{ Tier = 9,  Color = Color3.fromRGB(24, 130, 84),  Material = Enum.Material.Granite },
+		{ Tier = 12, Color = Color3.fromRGB(96, 32, 150),  Material = Enum.Material.Marble },
+		{ Tier = 16, Color = Color3.fromRGB(150, 20, 44),  Material = Enum.Material.Slate },
+		{ Tier = 20, Color = Color3.fromRGB(180, 140, 24), Material = Enum.Material.Metal },
+		{ Tier = 25, Color = Color3.fromRGB(14, 12, 18),   Material = Enum.Material.Neon },
+	},
+	Side = { -- lighter/brighter counterpart to each Floor stage, same journey
+		{ Tier = 0,  Color = Color3.fromRGB(235, 235, 235), Material = Enum.Material.SmoothPlastic },
+		{ Tier = 2,  Color = Color3.fromRGB(235, 195, 150), Material = Enum.Material.Plastic },
+		{ Tier = 4,  Color = Color3.fromRGB(255, 195, 110), Material = Enum.Material.Foil },
+		{ Tier = 6,  Color = Color3.fromRGB(140, 195, 245), Material = Enum.Material.Marble },
+		{ Tier = 9,  Color = Color3.fromRGB(130, 235, 185), Material = Enum.Material.Marble },
+		{ Tier = 12, Color = Color3.fromRGB(205, 150, 245), Material = Enum.Material.Marble },
+		{ Tier = 16, Color = Color3.fromRGB(255, 140, 165), Material = Enum.Material.Ice },
+		{ Tier = 20, Color = Color3.fromRGB(255, 220, 110), Material = Enum.Material.Foil },
+		{ Tier = 25, Color = Color3.fromRGB(255, 240, 200), Material = Enum.Material.Neon },
+	},
+}
+
 -- Daily quests (QuestService + client QuestUI). Each UTC day every player gets Count quests
 -- drawn (distinct) from Templates, with a random target snapped to Target.Step within
 -- [Target.Min, Target.Max]. Rewards pay CC (the cosmetics currency, see Config.Cosmetics) —
@@ -516,6 +609,44 @@ Config.Quests = {
 		CollectCoins = { Kind = "count", Text = "Collect %d coins",                Icon = "🪙", Target = { Min = 3, Max = 6, Step = 1 },     Reward = { Min = 8, Max = 18 } },
 		BuyUpgrades  = { Kind = "count", Text = "Buy %d upgrade tiers",            Icon = "🛒", Target = { Min = 3, Max = 8, Step = 1 },     Reward = { Min = 10, Max = 22 } },
 		Rebirth      = { Kind = "count", Text = "Rebirth %d time(s)",              Icon = "🔄", Target = { Min = 1, Max = 2, Step = 1 },     Reward = { Min = 25, Max = 50 } },
+	},
+}
+
+-- Daily login reward (server DailyRewardService + client DailyRewardUI): once per UTC day, a
+-- centered prompt offers a claim; claiming rolls a weighted prize from Pool and reveals it via
+-- a horizontal slot-style reel spin. Granting/rendering a reward Kind is a small registry in
+-- each of DailyRewardService (server, rolls+grants) and DailyRewardUI (client, cell/result
+-- display) — add a new Kind by extending Pool + both registries, nothing else changes.
+--   Diamonds : flat Min..Max Diamonds, boosted by the login-streak Luck Bonus (below).
+--   Cash     : Multiplier × the player's HIGHEST-OWNED MaxBet tier's bet size (NOT their
+--              currently selected bet) — scales with progression without its own tier/config.
+--   Skin     : a random ball skin (BallSkins) the player doesn't already own; the roll skips
+--              this Kind entirely if the player owns every skin.
+Config.DailyReward = {
+	Pool = {
+		{ Kind = "Diamonds", Weight = 5, Min = 5, Max = 15 },
+		{ Kind = "Diamonds", Weight = 3, Min = 15, Max = 30 },
+		{ Kind = "Diamonds", Weight = 1, Min = 40, Max = 60 },
+		{ Kind = "Cash", Weight = 5, Multiplier = 1 },
+		{ Kind = "Cash", Weight = 3, Multiplier = 3 },
+		{ Kind = "Cash", Weight = 1, Multiplier = 8 },
+		{ Kind = "Skin", Weight = 2 },
+	},
+	-- Diamonds-only streak bonus ("Luck Bonus" in the UI): +StreakBonusPerDay per consecutive
+	-- login day beyond the first, capped at MaxBonusDays (so it doesn't grow forever) — e.g.
+	-- day 4 -> +15% at the default 5%/day. Missing a day resets the streak to 1 (no bonus).
+	StreakBonusPerDay = 0.05,
+	MaxBonusDays = 20, -- caps the bonus at +100% (20 × 5%)
+	-- Slot-reel visuals (client DailyRewardUI): a horizontal strip of decorative filler cells
+	-- spins past and decelerates onto the true (server-rolled) result, which sits
+	-- CellsAfterResult cells before the strip's end (so it doesn't look like it just happened
+	-- to land on the very last one).
+	Reel = {
+		FillerCells = 24,
+		CellsAfterResult = 3,
+		CellSize = Vector2.new(140, 140),
+		CellPadding = 12,
+		SpinTime = 3.2,
 	},
 }
 
@@ -569,8 +700,8 @@ Config.GroupReward = {
 -- NightMinutes — so the two halves can last different real durations. Servers start at sunrise.
 Config.DayNight = {
 	Enabled      = true, -- Whether day/night cycle is enabled
-	DayMinutes   = 4,   -- real minutes for the day half (sunrise -> sunset)
-	NightMinutes = 9,   -- real minutes for the night half (sunset -> sunrise)
+	DayMinutes   = 9,   -- real minutes for the day half (sunrise -> sunset)
+	NightMinutes = 3,   -- real minutes for the night half (sunset -> sunrise)
 	SunriseTime  = 6,   -- ClockTime (hour, 0-24) the day starts at
 	SunsetTime   = 18,  -- ClockTime (hour, 0-24) the night starts at
 	StartTime    = 9.4, -- ClockTime the cycle begins at when the server starts
@@ -621,10 +752,14 @@ Config.Podium = {
 	},
 }
 
--- Tutorial sequence, played once on join (client TutorialService) until the player completes
--- or skips it. Each step shows a medium-large message in a box with Skip / Next buttons, and
--- can darken the screen except for a highlighted spot. Steps transition smoothly into one
--- another.
+-- Tutorial sequence, played once on join (client TutorialService) until every step's
+-- objective auto-completes — there is NO Skip/Next button; each step defines its own
+-- completion trigger and the client advances the instant it's satisfied. Three concerns are
+-- deliberately orthogonal, so any step can mix any combination:
+--   presentation (text/boxPosition/highlight/camera) — what's shown, unrelated to...
+--   arrow                                            — an optional physical world pointer, and...
+--   complete                                         — what finishes the step and advances.
+--
 --   text        : the message (string).
 --   boxPosition : UDim2 centre of the message box (Scale). Defaults to lower-centre.
 --   highlight   : optional { Position = UDim2 (centre of the spot), Size = UDim2 (spot size) }.
@@ -634,54 +769,58 @@ Config.Podium = {
 --                 to line up with AutoScaled UI elements (use the element's own UDim2 + size).
 --   camera      : optional { Position = Vector3, Orientation = Vector3 (deg), FieldOfView = number? }
 --                 scripted camera shot for the step (smoothly tweened); absent = default camera.
--- UI Positions/sizes are Scale-based (0..1 of the screen) so they're resolution-independent.
+--   arrow       : optional physical world-arrow target (client WorldArrow), floating near the
+--                 player's character and pointing at a live target position. Kinds:
+--                   { Kind = "UpgradeShopTrack", Track = string } -- the world kiosk for that
+--                                                                     upgrade track (matches the
+--                                                                     Track attribute UpgradeShop
+--                                                                     kiosks use)
+--                   { Kind = "NearestCoin" }                       -- the player's nearest active
+--                                                                     coin, force-spawning one if
+--                                                                     none are currently active
+--   complete    : REQUIRED — what finishes the step. Kinds:
+--                   { Kind = "LaunchBalls", Count = number } -- N of the player's own marbles launch
+--                   { Kind = "BuyUpgrade", Track = string }  -- that track's upgrade tier increases
+--                   { Kind = "CollectCoin" }                  -- the player claims any coin
+-- Adding a new arrow/complete Kind is one handler function + one registry entry in
+-- TutorialService — nothing else in the stepping/rendering logic changes.
+--
+-- NOTE: the "highlight" rect below for the launch controls is a placeholder (rough
+-- bottom-center guess) — the bet UI was reworked to LaunchBtn/RaiseBtn/LowerBtn/AutoBtn
+-- since this was last tuned; re-measure their actual Studio-authored Position/Size and
+-- update this rect (in 1080p offset pos/size, matching the element's own UDim2) once you can
+-- check it visually.
 Config.Tutorial = {
 	Steps = {
 		{
-			text = "Welcome to Marble Race! Let's run through the basics.",
-			boxPosition = UDim2.fromScale(0.5, 0.5),
+			text = "Launch 3 marbles.",
+			highlight = { Position = UDim2.fromOffset(960, 986), Size = UDim2.fromOffset(528,183) },
+			complete = { Kind = "LaunchBalls", Count = 3 },
+			boxPosition = UDim2.fromScale(0.5, 0.42)
 		},
 		{
-			text = "Click this button to launch marbles. You can automatically launch by enabling Auto Mode.",
-			boxPosition = UDim2.fromScale(0.5, 0.6),
-			highlight = { Position = UDim2.fromScale(0.5, 0.895), Size = UDim2.fromScale(0.294, 0.199) },
+			text = "Upgrade Base Bonus to increase profit.",
+			arrow = { Kind = "UpgradeShopTrack", Track = "BaseAdditive" },
+			complete = { Kind = "BuyUpgrade", Track = "BaseAdditive" },
 		},
 		{
-			text = "Land in the slots to bank cash. The bigger the slot multiplier, the better!",
-			camera = {
-				Position = Vector3.new(15.014, 47.023, -45.051),
-				Orientation = Vector3.new(-22.981, -179.694, -0),
-				FieldOfView = 70,
-			},
+			text = "Collect a coin!",
+			arrow = { Kind = "NearestCoin" },
+			complete = { Kind = "CollectCoin" },
 		},
-		{
-			text = "Adjust your bet size here. Bet big to make more money!",
-			boxPosition = UDim2.fromScale(0.3, 0.6),
-			highlight = { Position = UDim2.fromOffset(198, 971), Size = UDim2.fromOffset(376, 214)},
-		},
-		{
-			text = "Tune your marble here: its size, bounciness, and aim.",
-			boxPosition = UDim2.fromScale(0.3, 0.5),
-			highlight = { Position = UDim2.fromOffset(135, 825), Size = UDim2.fromOffset(250, 90) },
-		},
-		{
-			text = "Spend your cash on upgrades, then rebirth for permanent boosts.",
-			camera = {
-				Position = Vector3.new(-9.47156047821045, 145.8722381591797, -165.1833038330078),
-				Orientation = Vector3.new(-17.448, 117.043, 0),
-				FieldOfView = 70,
-			},
-		},
-		{
-			text = "If you run out of cash, complete these obbies to earn more. There are also coins available around the map to collect. Good luck!",
-			boxPosition = UDim2.fromScale(0.5, 0.8),
-			camera = {
-				Position = Vector3.new(13.617, 154, -135.484),
-				Orientation = Vector3.new(-14.94, -20.121, 0),
-				FieldOfView = 70,
-			},
-
-		}
+	},
+	-- Physical world-arrow look/feel (client WorldArrow) — tunable independent of any step. A
+	-- chain of BillboardGui chevrons floats between the player and the target, each screen-
+	-- rotated to point along the chain and fading from large/NearColor (by the player) to
+	-- small/FarColor (by the target) — a directional trail, not a single pointer.
+	Arrow = {
+		Spacing = 5,                                 -- studs between chevrons; the chain divides the distance evenly, so the count scales with it
+		MaxSegments = 40,                            -- hard cap on chevrons however far the target is
+		NearColor = Color3.fromRGB(255, 40, 90),     -- by the player: hot pink/red
+		FarColor = Color3.fromRGB(255, 160, 40),     -- by the target: orange
+		NearSize = 34,                               -- chevron pixel size by the player
+		FarSize = 14,                                -- chevron pixel size by the target
+		TargetHeightOffset = 3,                      -- studs above the target the chain ends at (it starts at the player's center)
 	},
 }
 

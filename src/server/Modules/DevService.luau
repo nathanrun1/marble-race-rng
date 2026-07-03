@@ -1001,7 +1001,7 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		local n = tonumber(a2)
 		if not n then return "usage: /cc <n>" end
 		CosmeticService.SetCC(player, n)
-		return string.format("CC -> %d", CosmeticService.GetCC(player))
+		return string.format("Diamonds -> %d", CosmeticService.GetCC(player))
 	elseif cmd == "avgball" then
 		local n = tonumber(a2)
 		if not n then return "usage: /avgball <n>" end

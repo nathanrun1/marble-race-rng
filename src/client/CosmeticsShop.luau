@@ -1,11 +1,12 @@
 --!strict
 -- Cosmetics shop, built into the world SurfaceGui tagged Config.Tags.CosmeticsGui. Lists every ball
--- skin (shared/BallSkins) as a selectable row showing name, rarity and CC price; shows the player's
--- CC balance (yellow) and a "earn CC by rebirthing" note; and a buy/equip button for the selected
--- skin. Buying spends CC (server-authoritative, CosmeticService); if the player can't afford it, the
--- button prompts the Robux fallback — one dev product per rarity (Config.Cosmetics.RarityProducts).
+-- skin (shared/BallSkins) as a selectable row showing name, rarity and Diamonds price; shows the
+-- player's Diamonds balance (yellow) and a "earn Diamonds by rebirthing" note; and a buy/equip
+-- button for the selected skin. Buying spends Diamonds (server-authoritative, CosmeticService — the
+-- "cc" field internally); if the player can't afford it, the button prompts the Robux fallback — one
+-- dev product per rarity (Config.Cosmetics.RarityProducts).
 --
--- Built locally into the shared surface, so each player sees their own CC/owned state.
+-- Built locally into the shared surface, so each player sees their own Diamonds/owned state.
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -19,7 +20,7 @@ local ProductService = require(RS.Shared.ProductService)
 
 local CosmeticsShop = {}
 
-local YELLOW      = Color3.fromRGB(255, 210, 60)   -- CC currency theme
+local YELLOW      = Color3.fromRGB(255, 210, 60)   -- Diamonds currency theme
 local PANEL_BG    = Color3.fromRGB(26, 28, 38)
 local ROW_BG      = Color3.fromRGB(40, 43, 56)
 local ROW_SELECT  = Color3.fromRGB(58, 63, 84)
@@ -106,9 +107,13 @@ local function makeLabel(parent: Instance, text: string, size: UDim2, pos: UDim2
 	return l
 end
 
--- Cell background for the current selected + hover state.
+-- Cell background for the current owned + selected + hover state.
 local function setCellBg(cell: TextButton, id: string)
 	local base = if info.selected == id then ROW_SELECT else ROW_BG
+	-- Owned skins read brighter, so the collection is scannable at a glance.
+	if info.owned[id] == true or info.equipped == id then
+		base = base:Lerp(Color3.new(1, 1, 1), 0.18)
+	end
 	if cell:GetAttribute("Hover") then
 		base = base:Lerp(Color3.new(1, 1, 1), 0.14)
 	end
@@ -195,7 +200,7 @@ local function refreshRow(id: string, skin: BallSkins.BallSkin)
 		priceL.Text = "OWNED"
 		priceL.TextColor3 = SUBTLE
 	else
-		priceL.Text = StringUtils.FormatShort(skin.price) .. " CC"
+		priceL.Text = StringUtils.FormatShort(skin.price) .. " Diamonds"
 		priceL.TextColor3 = YELLOW
 	end
 
@@ -208,7 +213,7 @@ end
 
 function refresh()
 	if ccLabel then
-		ccLabel.Text = StringUtils.FormatShort(info.cc) .. " CC"
+		ccLabel.Text = StringUtils.FormatShort(info.cc) .. " Diamonds"
 	end
 	for _, entry in orderedSkins do
 		refreshRow(entry.id, entry.skin)
@@ -229,7 +234,7 @@ function refresh()
 			buyButton.Text = "EQUIP"
 			buyButton.BackgroundColor3 = GREEN
 		else
-			local text = "BUY  •  " .. StringUtils.FormatShort(sel.price) .. " CC"
+			local text = "BUY  •  " .. StringUtils.FormatShort(sel.price) .. " Diamonds"
 			local robuxPrice = robuxPriceByRarity[sel.rarity]
 			if robuxPrice then
 				text ..= "  |  R$" .. robuxPrice
@@ -240,8 +245,8 @@ function refresh()
 	end
 end
 
--- Select a skin: tell the server (drives the sample ball + CC/selected state), and update locally
--- so the highlight is instant.
+-- Select a skin: tell the server (drives the sample ball + Diamonds/selected state), and update
+-- locally so the highlight is instant.
 function CosmeticsShop.select(id: string)
 	if not BallSkins.Get(id) then
 		return
@@ -255,7 +260,7 @@ function CosmeticsShop.purchase()
 	local id = info.selected
 	local result = purchaseRF:InvokeServer(id)
 	if type(result) == "table" and not result.ok and result.reason == "insufficient_cc" then
-		-- Can't afford with CC — offer the Robux fallback for this skin's rarity (it grants it).
+		-- Can't afford with Diamonds — offer the Robux fallback for this skin's rarity (it grants it).
 		local skin = BallSkins.Get(id)
 		local productStr = skin and Config.Cosmetics.RarityProducts[skin.rarity]
 		local productId = productStr and tonumber(productStr)
@@ -286,16 +291,16 @@ local function build(surface: SurfaceGui)
 	pad.PaddingRight = UDim.new(0.03, 0)
 	pad.Parent = root
 
-	-- Header: title + CC balance (yellow).
+	-- Header: title + Diamonds balance (yellow).
 	local title = makeLabel(root, "COSMETICS", UDim2.new(0.55, 0, 0.09, 0), UDim2.fromScale(0, 0), TEXT)
 	title.TextScaled = true
-	local cc = makeLabel(root, "0 CC", UDim2.new(0.42, 0, 0.09, 0), UDim2.new(0.58, 0, 0, 0), YELLOW)
+	local cc = makeLabel(root, "0 Diamonds", UDim2.new(0.42, 0, 0.09, 0), UDim2.new(0.58, 0, 0, 0), YELLOW)
 	cc.TextScaled = true
 	cc.TextXAlignment = Enum.TextXAlignment.Right
 	ccLabel = cc
 
-	-- Notes: earn CC by rebirthing (left), and any skin is also buyable with Robux (right).
-	local note = makeLabel(root, "✦ Earn CC by rebirthing!", UDim2.new(0.5, 0, 0.05, 0), UDim2.fromScale(0, 0.10), YELLOW)
+	-- Notes: earn Diamonds by rebirthing (left), and any skin is also buyable with Robux (right).
+	local note = makeLabel(root, "✦ Earn Diamonds by rebirthing!", UDim2.new(0.5, 0, 0.05, 0), UDim2.fromScale(0, 0.10), YELLOW)
 	note.TextScaled = true
 	note.TextTransparency = 0.15
 	local robuxNote = makeLabel(root, "💎 Or buy any skin with Robux", UDim2.new(0.5, 0, 0.05, 0), UDim2.fromScale(0.5, 0.10), Color3.fromRGB(70, 215, 130))

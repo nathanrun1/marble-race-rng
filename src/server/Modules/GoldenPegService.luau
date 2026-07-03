@@ -34,6 +34,10 @@ local pegs: { BasePart } = {}
 local goldenSets: { [number]: { [BasePart]: true } } = {}
 -- ball -> set of golden pegs this ball has already consumed (once per ball per peg).
 local consumed: { [BasePart]: { [BasePart]: true } } = {}
+-- ball -> true if this ball IS a golden-peg clone. A clone can still be doubled by a
+-- (different) golden peg, but must never chain into spawning ANOTHER clone — otherwise
+-- one lucky roll could snowball into an unbounded clone tree.
+local isCloneBall: { [BasePart]: true } = {}
 
 local changedRE: RemoteEvent? = nil
 
@@ -122,6 +126,9 @@ function GoldenPegService.TryConsume(ball: BasePart, peg: Instance, ownerUserId:
 		consumed[ball] = ballConsumed
 	end
 	ballConsumed[peg] = true
+	if isCloneBall[ball] then
+		return "double" -- a clone can't chain into spawning another clone
+	end
 	return if math.random() < Config.GoldenPegs.CloneChance then "clone" else "double"
 end
 
@@ -135,13 +142,14 @@ function GoldenPegService.SpawnClone(ball: BasePart, value: number, ownerUserId:
 	local angle = math.random() * 2 * math.pi
 	local sideways = Vector3.new(math.cos(angle), 0, math.sin(angle))
 	local jitter = sideways * (math.random() * CLONE_VELOCITY_JITTER)
-	BallService.Spawn(ball.Position + sideways * (ball.Size.X * 0.75 + 0.2), {
+	local clone = BallService.Spawn(ball.Position + sideways * (ball.Size.X * 0.75 + 0.2), {
 		ownerUserId = ownerUserId,
 		velocity = ball.AssemblyLinearVelocity + jitter,
 		initialValue = value,
 		weight = ball:GetAttribute(Config.Attributes.Weight) :: number?,
 		size = ball:GetAttribute(Config.Attributes.Size) :: number?,
 	})
+	isCloneBall[clone] = true
 	return true
 end
 
@@ -175,6 +183,7 @@ function GoldenPegService.Init()
 	end)
 	BallService.BallDespawned:Connect(function(ball: BasePart)
 		consumed[ball] = nil
+		isCloneBall[ball] = nil
 	end)
 end
 

@@ -60,6 +60,20 @@ local itemsBuilt = false
 local latestInfo: Info? = nil
 local triggerBtn: UIButton.Handle? = nil
 local defaultTriggerColor: Color3? = nil
+local leftBarRef: Instance? = nil
+local triggerHostRef: GuiObject? = nil
+
+-- reached[i] mirrors "reached and not claimed" (i.e. rungState == "claimable") for rung i as
+-- of the last onInfo call, so a fresh unlock (not-claimable -> claimable) can be told apart
+-- from "still sitting claimable, already saw it" — same edge-detection shape QuestUI uses for
+-- daily quests, just keyed by the rung's stable index instead of a quest key.
+local prevReached: { [number]: boolean } = {}
+local sawFirstInfo = false
+
+-- Forward-declared: onInfo (defined below, before buildItems exists) auto-opens the panel on
+-- a fresh unlock, but the real definition needs buildItems, defined further down — same
+-- forward-decl shape as QuestUI's openPanel/ProfileService's reclampLoadout.
+local openPlaytimePanel: () -> ()
 
 -- remotes (resolved in Init)
 local getInfoRF: RemoteFunction
@@ -367,11 +381,36 @@ local function updateTriggerGlow(info: Info?)
 	end
 end
 
+-- Updates prevReached from this info and reports whether any rung just crossed
+-- not-claimable -> claimable since the LAST call. Always false on the first call (a rung
+-- already sitting claimable from a previous session shouldn't auto-open on join).
+local function detectFreshlyReached(info: Info): boolean
+	local any = false
+	for i, rung in info.rungs do
+		local isNow = rung.reached and not rung.claimed
+		if sawFirstInfo and isNow and not prevReached[i] then
+			any = true
+		end
+		prevReached[i] = isNow
+	end
+	sawFirstInfo = true
+	return any
+end
+
 local function onInfo(info: Info)
+	local freshlyReached = detectFreshlyReached(info)
+
 	latestInfo = info
 	updateTriggerGlow(info)
 	if itemsBuilt then
 		refreshRows(info)
+	end
+
+	-- Auto-open on a fresh unlock (not on every refresh while it just sits claimable — the
+	-- trigger's persistent glow already carries "until claimed"). Don't fight the player if
+	-- it's already open.
+	if freshlyReached and not isOpen then
+		openPlaytimePanel()
 	end
 end
 
@@ -404,6 +443,41 @@ local function buildItems(panel: GuiObject)
 	itemsBuilt = true
 end
 
+-- Open the panel (lazily resolving it, binding its Close button, and building/refreshing rows
+-- the first time), reused by both the trigger button's onClick and onInfo's auto-open.
+function openPlaytimePanel()
+	local leftBar = leftBarRef
+	local triggerHost = triggerHostRef
+	if not leftBar or not triggerHost then
+		return
+	end
+	local panel = leftBar:FindFirstChild("Playtime") :: GuiObject?
+	if not panel then
+		warn("PlaytimeUI: LeftBar.Playtime not present yet — nothing to open")
+		return
+	end
+	if not closeBound then
+		local ignore = panel:FindFirstChild("UIListIgnore")
+		local closeBtn = ignore and ignore:FindFirstChild("CloseButton")
+		if closeBtn and closeBtn:IsA("GuiButton") then
+			closeBtn.Activated:Connect(function()
+				closeMenu(triggerHost, panel)
+			end)
+			closeBound = true
+		end
+	end
+	if not itemsBuilt then
+		buildItems(panel)
+	end
+	if latestInfo then
+		refreshRows(latestInfo)
+	end
+	if not isOpen then
+		panel.Visible = false -- clean closed state before the grow tween
+		openMenu(triggerHost, panel)
+	end
+end
+
 ----------------------------------------------------------------
 -- Init
 ----------------------------------------------------------------
@@ -428,40 +502,15 @@ function PlaytimeUI.Init()
 	local leftBar = mainGui:WaitForChild("LeftBar")
 	local triggerHost = leftBar:WaitForChild("PlaytimeTriggerHost") :: GuiObject
 	triggerHost.Visible = true
+	leftBarRef = leftBar
+	triggerHostRef = triggerHost
 
 	local tbtn = triggerButtonOf(triggerHost)
 	if tbtn then
 		defaultTriggerColor = tbtn.BackgroundColor3
 	end
 
-	triggerBtn = UIButton.bind(triggerHost, {
-		onClick = function()
-			-- Resolve the panel lazily (authored separately); no-op until it exists.
-			local panel = leftBar:FindFirstChild("Playtime") :: GuiObject?
-			if not panel then
-				warn("PlaytimeUI: LeftBar.Playtime not present yet — nothing to open")
-				return
-			end
-			if not closeBound then
-				local ignore = panel:FindFirstChild("UIListIgnore")
-				local closeBtn = ignore and ignore:FindFirstChild("CloseButton")
-				if closeBtn and closeBtn:IsA("GuiButton") then
-					closeBtn.Activated:Connect(function()
-						closeMenu(triggerHost, panel)
-					end)
-					closeBound = true
-				end
-			end
-			if not itemsBuilt then
-				buildItems(panel)
-			end
-			if latestInfo then
-				refreshRows(latestInfo)
-			end
-			panel.Visible = false -- clean closed state before the grow tween
-			openMenu(triggerHost, panel)
-		end,
-	})
+	triggerBtn = UIButton.bind(triggerHost, { onClick = openPlaytimePanel })
 
 	-- Live updates: the service pushes on load, on a rung becoming available, and on claim.
 	changedRE.OnClientEvent:Connect(function(info)

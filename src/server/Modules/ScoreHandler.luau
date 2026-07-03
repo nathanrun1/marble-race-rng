@@ -92,7 +92,13 @@ end
 local function buildScoreInfo(player: Player, state: BallState, base: number, multiplier: number?, targetName: string, destroyTargetId: number?): ScoreInfo
 	local upgrades = ProfileService.GetUpgrades(player)
 
-	local jackpot = if state.jackpotHit then base * Config.Scoring.JackpotMultiplier else 0
+	-- Base Bonus is folded into the multipliers rather than paid as a separate additive
+	-- line: handleDestroy boosts the slot PointMul, and the jackpot multiplier is boosted
+	-- here by the same rate. The board shows each player their own boosted values
+	-- (client BoardMultiplierView).
+	local jackpot = if state.jackpotHit
+		then base * Config.Scoring.JackpotMultiplier * (1 + ProfileStats.GetBaseAdditive(upgrades))
+		else 0
 	base += jackpot
 
 	local H = math.max(state.heat, MIN_HEAT_ACCUM)
@@ -103,8 +109,6 @@ local function buildScoreInfo(player: Player, state: BallState, base: number, mu
 	local comboBonus = if combo >= Config.Scoring.MinCombo then combo * ProfileStats.GetFlatPerBounce(upgrades) else 0
 	local banked = heatPayout + comboBonus
 
-	local baseAdditive = ProfileStats.GetBaseAdditive(upgrades) * banked
-	banked += baseAdditive
 	local trickle = ProfileStats.GetTrickle(upgrades)
 	banked += trickle
 
@@ -116,7 +120,7 @@ local function buildScoreInfo(player: Player, state: BallState, base: number, mu
 		base = base,
 		heatBonus = heatEffect,
 		comboBonus = comboBonus,
-		additiveBonus = baseAdditive,
+		additiveBonus = 0, -- folded into the boosted multipliers; kept for breakdown-shape compat
 		trickle = trickle,
 		combo = combo,
 		banked = banked,
@@ -153,9 +157,6 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	end
 	if info.comboBonus > 0 then
 		ScoreUI.PostMessage(player, "Combo! +" .. StringUtils.FormatMoney(info.comboBonus) .. " (" .. info.combo .. ")", Color3.fromRGB(255, 60, 60))
-	end
-	if info.additiveBonus > 0 then
-		ScoreUI.PostMessage(player, "Additive Bonus! +" .. StringUtils.FormatMoney(info.additiveBonus), Color3.fromRGB(98, 37, 209))
 	end
 	if info.jackpotHit then
 		ScoreUI.PostMessage(player, "JACKPOT! " .. StringUtils.FormatMoney(info.jackpot), Color3.fromRGB(255, 105, 180))
@@ -267,11 +268,18 @@ local function handleDestroy(ball: BasePart, player: Player, state: BallState, t
 		state.jackpotHit = true
 	end
 	local multiplier = target:GetAttribute(Config.Attributes.PointMul) :: number?
+	if multiplier then
+		-- Base Bonus: raises this player's effective slot multipliers (the board labels
+		-- show the boosted values locally — see client BoardMultiplierView).
+		multiplier *= 1 + ProfileStats.GetBaseAdditive(ProfileService.GetUpgrades(player))
+	end
 	local base = if multiplier then state.value * multiplier else state.value
 	if multiplier or state.jackpotHit then
-		local effMultiplier = multiplier
+		local effMultiplier = multiplier :: number
+		-- Jackpot FX keys off the RAW jackpot multiplier (ShowPointFX infers isJackpot by
+		-- equality with Config.Scoring.JackpotMultiplier), so it stays unboosted here.
 		if state.jackpotHit then effMultiplier = Config.Scoring.JackpotMultiplier end
-		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "×" .. tostring(effMultiplier))
+		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "×" .. StringUtils.FormatShort(effMultiplier))
 		BallEffects.DoClientEffect(player, "ShowPointFX", ball, ball.CFrame, effMultiplier)
 	end
 	local destroyTargetId = target:GetAttribute(Config.Attributes.DestroyTargetID) :: number?
