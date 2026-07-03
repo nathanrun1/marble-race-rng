@@ -17,6 +17,7 @@ local SSS = game:GetService("ServerScriptService")
 
 local Signal = require(RS.Shared.Signal)
 local Config = require(RS.Shared.Config)
+local BallAverage = require(RS.Shared.BallAverage)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 
 local StatsService = {}
@@ -27,8 +28,9 @@ export type Stats = {
 	ownsStarterPack: boolean,
 	lastGroupRewardClaim: number, -- os.time() of the last group-reward claim (0 = never)
 	completedTutorial: boolean,   -- whether the join tutorial has been finished/skipped
-	ballEarnings: number,         -- lifetime cash banked from balls (server-authoritative; NOT reset by prestige)
-	ballsBanked: number,          -- lifetime count of balls banked, paired with ballEarnings for an average
+	-- Oldest-first, newest last; capped at Config.BallAverage.Window entries (PrestigeService
+	-- empties this on rebirth). Feeds GetAvgMoneyPerBall via BallAverage.Compute.
+	recentBalls: { number },
 }
 
 -- stats[userId] = Stats
@@ -55,8 +57,7 @@ local function defaults(): Stats
 		ownsStarterPack = false,
 		lastGroupRewardClaim = 0,
 		completedTutorial = false,
-		ballEarnings = 0,
-		ballsBanked = 0,
+		recentBalls = {},
 	}
 end
 
@@ -110,16 +111,12 @@ function StatsService.HasCompletedTutorial(player: Player): boolean
 	return get(player.UserId).completedTutorial
 end
 
--- Server-authoritative lifetime average $/marble (ballEarnings / ballsBanked), 0 if no balls
--- banked yet. This is what feeds the global money/ball leaderboard — unlike the client's own
--- recency-windowed display average, it can't be spoofed since it's derived purely from banked
--- cash the server itself credited.
+-- Server-authoritative $/marble: an exponentially-weighted average over only the last
+-- Config.BallAverage.Window balls banked (see BallAverage/Config.BallAverage), 0 if none banked
+-- yet this run. This is what feeds the global money/ball leaderboard — it can't be spoofed
+-- since it's derived purely from banked cash the server itself credited.
 function StatsService.GetAvgMoneyPerBall(player: Player): number
-	local s = get(player.UserId)
-	if s.ballsBanked <= 0 then
-		return 0
-	end
-	return s.ballEarnings / s.ballsBanked
+	return BallAverage.Compute(get(player.UserId).recentBalls)
 end
 
 --------------------------------------------------------------------------------
@@ -171,21 +168,33 @@ function StatsService.SetCompletedTutorial(player: Player)
 	announce(player)
 end
 
--- Dev only (DevService /avgball): force the lifetime average $/marble by rewriting the
--- underlying pair (ballEarnings = avg × ballsBanked, count kept, floored at 1 so the
--- average is well-defined). Everything derives from that pair — GetAvgMoneyPerBall, the
--- GetStats remote, and the BallBanked consumers (leaderstat column, luck leaderstat,
--- overhead billboard, global leaderboard writer) — so firing BallBanked propagates the
--- forced value everywhere at once. Future real banks then keep averaging on top of it.
+-- Dev only (DevService /avgball): force $/marble by filling the whole window with `avg` — a
+-- weighted average of identical entries equals that entry regardless of weighting, so this
+-- reads back as exactly avg. Everything derives from recentBalls — GetAvgMoneyPerBall, the
+-- GetStats remote, and the BallBanked consumers (leaderstat column, luck leaderstat, overhead
+-- billboard, global leaderboard writer) — so firing BallBanked propagates the forced value
+-- everywhere at once. Future real banks then evict these forced entries one at a time.
 function StatsService.SetAvgMoneyPerBall(player: Player, avg: number)
 	local s = stats[player.UserId]
 	if not s then
 		return
 	end
 	avg = math.max(avg, 0)
-	s.ballsBanked = math.max(s.ballsBanked, 1)
-	s.ballEarnings = avg * s.ballsBanked
+	s.recentBalls = table.create(Config.BallAverage.Window, avg)
 	StatsService.BallBanked:Fire(player, avg)
+	announce(player)
+end
+
+-- Called by PrestigeService on a successful prestige: empties recentBalls so $/marble (the HUD
+-- readout, the leaderstat, the global leaderboard) reflects the new run immediately instead of
+-- carrying the old average forward.
+function StatsService.ResetBallAverage(player: Player)
+	local s = stats[player.UserId]
+	if not s then
+		return
+	end
+	table.clear(s.recentBalls)
+	StatsService.BallBanked:Fire(player, 0)
 	announce(player)
 end
 
@@ -220,11 +229,17 @@ function StatsService.ApplyData(player: Player, saved: Stats?)
 		if type(saved.completedTutorial) == "boolean" then
 			s.completedTutorial = saved.completedTutorial
 		end
-		if type(saved.ballEarnings) == "number" then
-			s.ballEarnings = saved.ballEarnings
-		end
-		if type(saved.ballsBanked) == "number" then
-			s.ballsBanked = saved.ballsBanked
+		if type(saved.recentBalls) == "table" then
+			for _, v in saved.recentBalls do
+				if type(v) == "number" then
+					table.insert(s.recentBalls, v)
+				end
+			end
+			-- Window may have shrunk since this was saved; trim from the front (oldest) so it
+			-- reads back as exactly the last Window balls, same as Push would produce live.
+			while #s.recentBalls > Config.BallAverage.Window do
+				table.remove(s.recentBalls, 1)
+			end
 		end
 	end
 	stats[player.UserId] = s
@@ -251,8 +266,8 @@ function StatsService.Init()
 	re.Name = "StatsChanged"
 	re.Parent = RS.Remote
 
-	-- Track lifetime ball earnings/count server-side (authoritative — CurrencyService only
-	-- fires this from server-side banking logic, so it can't be spoofed by a client remote).
+	-- Track recent ball earnings server-side (authoritative — CurrencyService only fires this
+	-- from server-side banking logic, so it can't be spoofed by a client remote).
 	CurrencyService.Changed:Connect(function(player: Player, _newBalance: number, delta: number, reason: any)
 		if not isBallBank(reason) or delta <= 0 then
 			return
@@ -261,9 +276,8 @@ function StatsService.Init()
 		if not s then
 			return
 		end
-		s.ballEarnings += delta
-		s.ballsBanked += 1
-		StatsService.BallBanked:Fire(player, s.ballEarnings / s.ballsBanked)
+		BallAverage.Push(s.recentBalls, delta)
+		StatsService.BallBanked:Fire(player, BallAverage.Compute(s.recentBalls))
 	end)
 	statsChangedRE = re
 

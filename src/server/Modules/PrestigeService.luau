@@ -228,6 +228,9 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	-- Wipe the run's balance too: prestige resets upgrades AND money back to the
 	-- configured starting balance.
 	CurrencyService.SetPoints(player, Config.Currency.StartingBalance, "Prestige reset")
+	-- $/marble (HUD, leaderstat, global leaderboard) also resets immediately — otherwise the
+	-- old run's average keeps showing/ranking until enough fresh balls dilute it back down.
+	StatsService.ResetBallAverage(player)
 
 	-- Starter pack perk: owners get a free tier on every track after each prestige, so
 	-- the reset doesn't start them from bare zero. Lazy-require UpgradeService to avoid

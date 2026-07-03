@@ -213,7 +213,7 @@ end
 
 function refresh()
 	if ccLabel then
-		ccLabel.Text = StringUtils.FormatShort(info.cc) .. " Diamonds"
+		ccLabel.Text = "Balance: " .. StringUtils.FormatShort(info.cc) .. " Diamonds"
 	end
 	for _, entry in orderedSkins do
 		refreshRow(entry.id, entry.skin)
@@ -234,7 +234,7 @@ function refresh()
 			buyButton.Text = "EQUIP"
 			buyButton.BackgroundColor3 = GREEN
 		else
-			local text = "BUY  •  " .. StringUtils.FormatShort(sel.price) .. " Diamonds"
+			local text = "BUY  •  💎" .. StringUtils.FormatShort(sel.price)
 			local robuxPrice = robuxPriceByRarity[sel.rarity]
 			if robuxPrice then
 				text ..= "  |  R$" .. robuxPrice
@@ -294,7 +294,7 @@ local function build(surface: SurfaceGui)
 	-- Header: title + Diamonds balance (yellow).
 	local title = makeLabel(root, "COSMETICS", UDim2.new(0.55, 0, 0.09, 0), UDim2.fromScale(0, 0), TEXT)
 	title.TextScaled = true
-	local cc = makeLabel(root, "0 Diamonds", UDim2.new(0.42, 0, 0.09, 0), UDim2.new(0.58, 0, 0, 0), YELLOW)
+	local cc = makeLabel(root, "Balance: 0 Diamonds", UDim2.new(0.42, 0, 0.09, 0), UDim2.new(0.58, 0, 0, 0), YELLOW)
 	cc.TextScaled = true
 	cc.TextXAlignment = Enum.TextXAlignment.Right
 	ccLabel = cc
@@ -303,7 +303,7 @@ local function build(surface: SurfaceGui)
 	local note = makeLabel(root, "✦ Earn Diamonds by rebirthing!", UDim2.new(0.5, 0, 0.05, 0), UDim2.fromScale(0, 0.10), YELLOW)
 	note.TextScaled = true
 	note.TextTransparency = 0.15
-	local robuxNote = makeLabel(root, "💎 Or buy any skin with Robux", UDim2.new(0.5, 0, 0.05, 0), UDim2.fromScale(0.5, 0.10), Color3.fromRGB(70, 215, 130))
+	local robuxNote = makeLabel(root, "💵 Or buy any skin with Robux", UDim2.new(0.5, 0, 0.05, 0), UDim2.fromScale(0.5, 0.10), Color3.fromRGB(70, 215, 130))
 	robuxNote.TextXAlignment = Enum.TextXAlignment.Right
 	robuxNote.TextScaled = true
 	robuxNote.TextTransparency = 0.15

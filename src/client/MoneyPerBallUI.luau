@@ -1,8 +1,9 @@
 --!strict
 -- Top-of-screen "average money per ball" readout (green, always visible). Shows the server-
--- authoritative lifetime average (StatsService.GetAvgMoneyPerBall: ballEarnings / ballsBanked) —
--- the same number the leaderstats column and the global leaderboard use — instead of a locally
--- computed figure, so the player never sees a different value here than everywhere else.
+-- authoritative average (StatsService.GetAvgMoneyPerBall, mirrored here via BallAverage.Compute
+-- on the same recentBalls list the server sends) — the same number the leaderstats column and
+-- the global leaderboard use — instead of a locally computed figure, so the player never sees a
+-- different value here than everywhere else.
 --
 -- Data source: BalanceChanged tells us a ball banked (reason starts with "Ball "), which
 -- schedules a throttled GetStats pull; the display then eases toward whatever that pull returns.
@@ -14,6 +15,7 @@ local RunService = game:GetService("RunService")
 local StringUtils = require(RS.Shared.StringUtils)
 local AutoScale = require(RS.Shared.AutoScale)
 local LuckRanks = require(RS.Shared.LuckRanks)
+local BallAverage = require(RS.Shared.BallAverage)
 
 local MoneyPerBallUI = {}
 
@@ -52,10 +54,9 @@ local function pullTarget()
 	if not ok or type(stats) ~= "table" then
 		return
 	end
-	local earnings = (stats :: any).ballEarnings
-	local banked = (stats :: any).ballsBanked
-	if type(earnings) == "number" and type(banked) == "number" and banked > 0 then
-		target = earnings / banked
+	local recentBalls = (stats :: any).recentBalls
+	if type(recentBalls) == "table" then
+		target = BallAverage.Compute(recentBalls)
 	end
 end
 

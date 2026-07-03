@@ -107,8 +107,13 @@ Config.Pegs = {
 Config.PegHeatAppearance = {
 	MaxTier = 15,
 	DullColor = Color3.fromRGB(140, 140, 145), -- tier 0: hot and cold look identical
-	Hot = { Color = Color3.fromRGB(255, 55, 35) },  -- true hot at MaxTier: red-leaning, still a hint of warm magenta
-	Cold = { Color = Color3.fromRGB(45, 100, 255) }, -- true cold at MaxTier: blue-leaning, still a hint of violet
+	Hot = { Color = Color3.fromRGB(255, 89, 89) },  -- true hot at MaxTier
+	Cold = { Color = Color3.fromRGB(98, 37, 209) }, -- true cold at MaxTier
+	-- Normal (neither hot nor cold) pegs are flat DullColor at bet tier 0, blending toward this
+	-- as the LOCAL viewer's selected bet tier rises to Config.BoardAppearance.MaxTier (same
+	-- tier scale BoardAppearanceView uses) — a visual reward for betting bigger, independent of
+	-- the PegHeat upgrade tier above.
+	NormalBetColor = Color3.fromRGB(180, 128, 255),
 	Particles = {
 		MinTier = 1,     -- no particles at all below this tier (tier 0 is fully plain)
 		HotSparkColor = Color3.fromRGB(255, 140, 40),  -- orange sparks
@@ -149,6 +154,17 @@ Config.Currency = {
 	-- sit ABOVE the core tracks (mid-game purchases), not below them.
 	StartingBalance = 1000,
 }
+
+-- The $/marble average (StatsService.GetAvgMoneyPerBall — HUD, leaderstat, global leaderboard):
+-- an exponentially-weighted average over only the most recent Window balls banked. A ball older
+-- than Window balls ago is dropped entirely (zero influence, not just decayed-small); within the
+-- window, Decay^age weights recent balls higher. Decay is derived so the OLDEST ball still in the
+-- window (age Window-1) carries ~1% of the newest ball's weight — Window alone can be retuned
+-- and Decay follows automatically.
+Config.BallAverage = {
+	Window = 50,
+}
+Config.BallAverage.Decay = 0.01 ^ (1 / (Config.BallAverage.Window - 1))
 
 -- Per-player collectible coins. Each workspace part tagged Config.Tags.Coin is a spawn
 -- LOCATION (shared geometry); the server (CoinService) owns which locations are "active" for

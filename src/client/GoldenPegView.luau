@@ -9,7 +9,15 @@
 
 local RS = game:GetService("ReplicatedStorage")
 
+local Signal = require(RS.Shared.Signal)
+
 local GoldenPegView = {}
+
+-- Other local views that paint the same pegs (PegHeatView) must yield to the golden
+-- override — two Color re-assert handlers fighting over one peg re-trigger each other
+-- forever and hard-freeze the client. They check IsGolden before touching a peg and
+-- listen on SetChanged to repaint when a peg enters/leaves the golden set.
+GoldenPegView.SetChanged = Signal.new()
 
 local GOLD = Color3.fromRGB(255, 200, 40)
 
@@ -32,6 +40,9 @@ local function markGolden(peg: BasePart)
 		originalColor = peg.Color,
 		originalMaterial = peg.Material,
 	}
+	-- Register BEFORE the first paint: the Color write below fires other views' re-assert
+	-- handlers (PegHeatView), which must already see IsGolden() == true and stand down.
+	applied[peg] = entry
 
 	peg.Color = GOLD
 	peg.Material = Enum.Material.Neon
@@ -49,8 +60,6 @@ local function markGolden(peg: BasePart)
 
 	entry.sparkles.SparkleColor = GOLD
 	entry.sparkles.Parent = peg
-
-	applied[peg] = entry
 end
 
 local function unmark(peg: BasePart)
@@ -68,6 +77,11 @@ local function unmark(peg: BasePart)
 	peg.Material = entry.originalMaterial
 end
 
+-- Whether a peg currently carries the local golden override (see SetChanged above).
+function GoldenPegView.IsGolden(peg: BasePart): boolean
+	return applied[peg] ~= nil
+end
+
 -- Replace the rendered set with the server's latest list.
 local function apply(pegList: { BasePart })
 	local keep: { [BasePart]: true } = {}
@@ -82,6 +96,7 @@ local function apply(pegList: { BasePart })
 			unmark(peg)
 		end
 	end
+	GoldenPegView.SetChanged:Fire()
 end
 
 function GoldenPegView.Init()

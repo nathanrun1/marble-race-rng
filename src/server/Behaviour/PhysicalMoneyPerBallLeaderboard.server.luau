@@ -2,10 +2,16 @@
 -- Global, persistent "Avg $/Marble" physical leaderboard. Same GUI structure/visual style as
 -- the ServerCoins board (PhysicalLeaderboards.server.luau) — Leaderboard.SurfaceGui.ScrollingFrame
 -- with a cloned Item per row, top-3 gradient — but global instead of per-server: each player's
--- server-authoritative lifetime $/marble average (StatsService.GetAvgMoneyPerBall — derived purely
--- from cash the server itself credited on ball banking, so it can't be spoofed) is written to an
+-- server-authoritative $/marble average (StatsService.GetAvgMoneyPerBall — derived purely from
+-- cash the server itself credited on ball banking, so it can't be spoofed) is written to an
 -- OrderedDataStore and the top N across every server are rendered here, same pattern as
 -- PhysicalRebirthsLeaderboard.
+--
+-- Tracks each player's ALL-TIME BEST average, not their current one: PrestigeService resets
+-- the live average back to 0 on every rebirth, so a plain "write whatever they report now"
+-- would erase a player's record the moment they prestige. Instead a value only ever overwrites
+-- the store when it beats what's already there — seeded at join from the store itself so a
+-- fresh session can't undercut a record set on a previous one.
 --
 -- Also reports each visible player's own global rank to their client via a RemoteEvent, so
 -- MoneyPerBallUI can show it under the $/marble readout. Ranks are only known for players inside
@@ -70,14 +76,17 @@ end
 
 -- Cloned rows currently shown (rebuilt each refresh).
 local rows: { GuiObject } = {}
--- Last value we successfully wrote per player, so repeated reports of an unchanged (rounded)
--- average don't spend a DataStore write.
+-- Each player's persisted all-time-best (rounded) average — the write gate: a report only
+-- overwrites the store when it beats this. Seeded from the store itself on join (see
+-- seedLastWritten below), then kept current as we successfully write new records.
 local lastWritten: { [number]: number } = {}
 -- Last time (os.clock()) we wrote for a player, throttling how often we spend a write.
 local lastWriteTime: { [number]: number } = {}
--- Latest reported average per connected player, keyed by userId. Used both for the Studio
--- fallback render and to flush a final write when a player leaves (bypassing the throttle).
-local lastReported: { [number]: number } = {}
+-- Highest average reported THIS SESSION per connected player, keyed by userId. Used for the
+-- Studio fallback render and to flush the session's best on leave (bypassing the throttle) —
+-- using the session best rather than merely the latest report means a post-prestige dip never
+-- masks a genuine record set earlier in the session.
+local bestReported: { [number]: number } = {}
 -- userId -> resolved username, so we don't re-hit GetNameFromUserIdAsync each refresh.
 local nameCache: { [number]: string } = {}
 -- Ranks from the most recent render, so a player who joins mid-session gets an immediate rank
@@ -140,11 +149,11 @@ local function renderEntries(entries: { Entry })
     end
 end
 
--- Studio (no OrderedDataStore): rank the players currently in this server by their live
--- self-reported average, so the board can be tested without API access.
+-- Studio (no OrderedDataStore): rank the players currently in this server by their best
+-- self-reported average this session, so the board can be tested without API access.
 local function localEntries(): { Entry }
     local entries: { Entry } = {}
-    for userId, value in lastReported do
+    for userId, value in bestReported do
         if value > 0 and not isHiddenInLocalView(userId) then
             table.insert(entries, { userId = userId, value = value })
         end
@@ -188,7 +197,8 @@ local function scheduleStudioRefresh()
 end
 
 -- Persist a player's average (rounded to the nearest dollar; OrderedDataStore values must be
--- integers), throttled so continuous reports don't spend a write every few seconds.
+-- integers) — but only when it's a new all-time best, throttled so continuous reports don't
+-- spend a write every few seconds.
 local function writeAverage(player: Player, value: number, force: boolean?)
     if not enabled or isExcluded(player.UserId) then
         return
@@ -197,8 +207,8 @@ local function writeAverage(player: Player, value: number, force: boolean?)
     if rounded <= 0 then
         return
     end
-    if lastWritten[player.UserId] == rounded then
-        return
+    if rounded <= (lastWritten[player.UserId] or 0) then
+        return -- not a new record (includes the post-prestige reset to 0) — never overwrite the board
     end
     local last = lastWriteTime[player.UserId]
     if not force and last and (os.clock() - last) < WRITE_INTERVAL then
@@ -213,15 +223,35 @@ local function writeAverage(player: Player, value: number, force: boolean?)
     end
 end
 
+-- Seed lastWritten from the store at join, so this session can't undercut a record set on a
+-- previous one before this session's own average has climbed back past it.
+local function seedLastWritten(player: Player)
+    if not enabled or isExcluded(player.UserId) then
+        return
+    end
+    task.spawn(function()
+        local existing = DataService.LeaderboardGet(BOARD, player.UserId)
+        if existing then
+            lastWritten[player.UserId] = existing
+        end
+    end)
+end
+
 local function init()
     -- Give a joining player their rank from the last render immediately, rather than making
     -- them wait for the next periodic refresh or their first ball banked this session.
     Players.PlayerAdded:Connect(function(player: Player)
         rankRE:FireClient(player, lastRanks[player.UserId])
+        seedLastWritten(player)
     end)
+    for _, player in Players:GetPlayers() do
+        seedLastWritten(player)
+    end
 
     StatsService.BallBanked:Connect(function(player: Player, avg: number)
-        lastReported[player.UserId] = avg
+        if avg > (bestReported[player.UserId] or 0) then
+            bestReported[player.UserId] = avg
+        end
         if enabled then
             writeAverage(player, avg)
         else
@@ -231,13 +261,14 @@ local function init()
 
     Players.PlayerRemoving:Connect(function(player: Player)
         if enabled then
-            -- Flush a final write covering any average reported since the last throttled write.
-            local value = lastReported[player.UserId]
+            -- Flush a final write covering the session's best, in case it beat the store but
+            -- hadn't cleared the throttle yet.
+            local value = bestReported[player.UserId]
             if value then
                 writeAverage(player, value, true)
             end
         end
-        lastReported[player.UserId] = nil
+        bestReported[player.UserId] = nil
         lastWritten[player.UserId] = nil
         lastWriteTime[player.UserId] = nil
         if not enabled then

@@ -396,6 +396,23 @@ function DataService.LeaderboardSet(board: string, userId: number, value: number
 	end))
 end
 
+-- A single player's current value on a named leaderboard, or nil if they've never been
+-- written to it (or on error). Lets a caller seed an in-memory high-water mark at join time
+-- without waiting for a full GetSortedAsync page.
+function DataService.LeaderboardGet(board: string, userId: number): number?
+	local s = leaderboardStore(board)
+	if not s then
+		return nil
+	end
+	local ok, value = withRetry(function()
+		return (s :: OrderedDataStore):GetAsync(tostring(userId))
+	end)
+	if not ok then
+		return nil
+	end
+	return tonumber(value)
+end
+
 -- Top `count` entries (descending) of a named leaderboard, or nil on error/unavailable.
 function DataService.LeaderboardTop(board: string, count: number): { LeaderboardEntry }?
 	local s = leaderboardStore(board)

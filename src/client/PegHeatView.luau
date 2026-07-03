@@ -5,6 +5,8 @@
 -- on hot, a pale-blue aura on cold), maxing out at Config.PegHeatAppearance.MaxTier. Also
 -- reveals PegService's hidden "double-hot" promotion (Neon + Fire) once the viewer's tier
 -- clears DoubleHotMinTier — otherwise a double-hot peg looks like an ordinary hot one.
+-- Normal (neither hot nor cold) pegs ignore the PegHeat tier entirely and instead blend
+-- toward NormalBetColor as the viewer's selected bet tier rises.
 --
 -- Same "local view of shared state" pattern as GoldenPegView/BoardAppearanceView: the pegs
 -- (and their Config.Attributes.PegHeat gameplay value) are server-shared, but the paint job
@@ -12,8 +14,16 @@
 -- override re-asserts itself via GetPropertyChangedSignal, same as GoldenPegView.
 
 local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 
 local Config = require(RS.Shared.Config)
+-- Golden pegs outrank the heat look: both views locally repaint the same pegs and both
+-- re-assert Color against server repaints, so exactly ONE of them may own any given peg —
+-- two re-assert handlers writing different colors re-trigger each other unboundedly and
+-- hard-freeze the client. Heat yields: golden pegs are skipped here (IsGolden) and repainted
+-- once they leave the golden set (SetChanged).
+local PlayerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts")
+local GoldenPegView = require(PlayerScripts:WaitForChild("GoldenPegView"))
 
 local PegHeatView = {}
 
@@ -46,6 +56,7 @@ type Entry = {
 }
 
 local tier = 0
+local betTier = 0
 local entries: { [BasePart]: Entry } = {}
 
 -- Hot/Cold/Normal from the raw heat attribute; also whether a "Hot" peg is actually the
@@ -63,9 +74,11 @@ end
 
 local function colorFor(category: Category): Color3
 	if category == "Normal" then
-		-- Neutral pegs carry no heat signal either way — always flat gray, independent of
-		-- PegHeat tier (unlike Hot/Cold, which blend toward their true color as tier rises).
-		return A.DullColor
+		-- Neutral pegs carry no heat signal either way, so they don't follow the PegHeat tier
+		-- (unlike Hot/Cold below) — instead they blend toward NormalBetColor as the LOCAL
+		-- viewer's selected bet tier rises, same tier scale BoardAppearanceView uses.
+		local betFrac = math.clamp(betTier / Config.BoardAppearance.MaxTier, 0, 1)
+		return A.DullColor:Lerp(A.NormalBetColor, betFrac)
 	end
 	local trueColor = if category == "Hot" then A.Hot.Color else A.Cold.Color
 	local frac = math.clamp(tier / A.MaxTier, 0, 1)
@@ -151,6 +164,23 @@ local function applyEntry(peg: BasePart, entry: Entry)
 	local category, isDoubleHot = readHeat(peg)
 	entry.category = category
 	entry.isDoubleHot = isDoubleHot
+
+	-- Hands off golden pegs entirely (color, material, particles): GoldenPegView owns their
+	-- look while they're golden. targetColor stays nil so our Color re-assert stands down too.
+	if GoldenPegView.IsGolden(peg) then
+		entry.targetColor = nil
+		if entry.hotSpark then
+			entry.hotSpark.Enabled = false
+		end
+		if entry.coldAura then
+			entry.coldAura.Enabled = false
+		end
+		if entry.doubleFire then
+			entry.doubleFire.Enabled = false
+		end
+		return
+	end
+
 	entry.targetColor = colorFor(category)
 	if entry.targetColor then
 		peg.Color = entry.targetColor
@@ -208,9 +238,11 @@ local function trackPeg(peg: BasePart)
 	}
 	entries[peg] = entry
 	-- PegService's repaint tween replicates a Color write every frame it steps; re-assert
-	-- our override the same way GoldenPegView does so it wins the tug-of-war.
+	-- our override the same way GoldenPegView does so it wins the tug-of-war. NEVER against
+	-- a golden peg though (checked live, not just via targetColor: the peg may turn golden
+	-- before our next applyEntry) — see the GoldenPegView require above.
 	entry.colorConn = peg:GetPropertyChangedSignal("Color"):Connect(function()
-		if entry.targetColor and peg.Color ~= entry.targetColor then
+		if entry.targetColor and peg.Color ~= entry.targetColor and not GoldenPegView.IsGolden(peg) then
 			peg.Color = entry.targetColor
 		end
 	end)
@@ -242,9 +274,18 @@ local function gatherPegs(): { BasePart }
 end
 
 local function setTierFromProfile(profile: any)
+	local changed = false
 	local t = if type(profile) == "table" and type(profile.upgrades) == "table" then profile.upgrades.PegHeat else nil
 	if type(t) == "number" and t ~= tier then
 		tier = t
+		changed = true
+	end
+	local bt = if type(profile) == "table" and type(profile.loadout) == "table" then profile.loadout.BetTier else nil
+	if type(bt) == "number" and bt ~= betTier then
+		betTier = bt
+		changed = true
+	end
+	if changed then
 		repaintAll()
 	end
 end
@@ -259,6 +300,9 @@ function PegHeatView.Init()
 	local profileChangedRE = Remote:WaitForChild("ProfileChanged") :: RemoteEvent
 
 	profileChangedRE.OnClientEvent:Connect(setTierFromProfile)
+	-- A peg entering the golden set gets skipped above; one leaving it needs its heat look
+	-- put back — repaint on every set change (rare: join load, prestige).
+	GoldenPegView.SetChanged:Connect(repaintAll)
 
 	local ok, profile = pcall(function()
 		return getProfileRF:InvokeServer()
