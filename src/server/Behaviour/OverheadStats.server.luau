@@ -18,7 +18,9 @@ local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 
 local REFRESH_INTERVAL = 2 -- seconds between dirty re-renders (banking can be many/sec)
 local MAX_DISTANCE = 120
-local STUDS_ABOVE_HEAD = 2.1 -- clears the default Roblox display name
+-- 2.1 cleared the default Roblox display name but the bottom line still overlapped
+-- usernames; +1.5 text lines (a line = 0.32 × the 2.4-stud gui ≈ 0.77 studs) on top.
+local STUDS_ABOVE_HEAD = 3.25
 
 local PRESTIGE_PURPLE = Color3.fromRGB(179, 136, 255) -- matches the rebirth banner/UI violet
 local MONEY_GREEN = Color3.fromRGB(96, 224, 120)      -- matches the HUD $/marble readout
@@ -38,7 +40,7 @@ local function makeLine(parent: Instance, order: number, color: Color3): TextLab
 	lbl.BackgroundTransparency = 1
 	lbl.Size = UDim2.new(1, 0, 0.32, 0)
 	lbl.LayoutOrder = order
-	lbl.Font = Enum.Font.GothamBold
+	lbl.Font = Enum.Font.FredokaOne
 	lbl.TextScaled = true
 	lbl.TextColor3 = color
 	lbl.TextStrokeColor3 = Color3.new(0, 0, 0)

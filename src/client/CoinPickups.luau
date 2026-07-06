@@ -22,6 +22,7 @@ local CoinPickups = {}
 CoinPickups.Claimed = Signal.new()
 
 local player = Players.LocalPlayer
+local CurrencyFlyUI = require(player:WaitForChild("PlayerScripts"):WaitForChild("CurrencyFlyUI"))
 
 local Remote = RS:WaitForChild("Remote")
 local activateRE = Remote:WaitForChild("CoinActivate") :: RemoteEvent
@@ -174,6 +175,10 @@ local function onTouched(cv: CoinVisual, obj: BasePart)
 		return
 	end
 	cv.pending = true
+	-- Same optimism as the hide below: celebrate at touch, before the server confirms. Read
+	-- isBlue BEFORE setActive, which resets it. Smaller burst than the claim-panel flows —
+	-- coins are picked up constantly during normal play.
+	CurrencyFlyUI.Play(if cv.isBlue then "Diamonds" else "Cash", math.random(4, 6))
 	setActive(cv, false) -- optimistic hide for snappy feedback
 	claimRE:FireServer(cv.coin)
 end

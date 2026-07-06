@@ -410,6 +410,7 @@ function BallEffects.AttachValueUI(ball: BasePart?): BasePart?
 	local ui = (RS.Assets:WaitForChild("ValueUI") :: BillboardGui):Clone()
 	ui.Parent = anchor
 	local label = ui:FindFirstChild("TextLabel") :: TextLabel
+	label.Font = Enum.Font.FredokaOne -- match the runtime popups (the Studio asset is authored in Gotham)
 
 	-- RenderStepped on the client (smoothest, pre-render); Heartbeat on the server.
 	local stepped = if RunService:IsClient() then RunService.RenderStepped else RunService.Heartbeat
@@ -460,7 +461,7 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 	text.TextStrokeColor3 = Color3.new(0, 0, 0)
 	text.TextStrokeTransparency = 0.4
 	text.TextScaled = true
-	text.Font = Enum.Font.GothamBold
+	text.Font = Enum.Font.FredokaOne
 	text.Parent = billboard
 
 	local stroke = Instance.new("UIStroke")
@@ -517,7 +518,7 @@ end
 
 function BallEffects.ShowHeatPopup(ball: BasePart?, heatDelta: number)
 	if heatDelta == 0 or not ball or not ball.Parent then return end
-	local label = string.format("+%.0f%%", heatDelta * 100)
+	local label = if heatDelta > 0 then string.format("+%.0f%%", heatDelta * 100) else string.format("%.0f%%", heatDelta * 100)
 	local color = if heatDelta > 0 then HEAT_COLOR_POS else HEAT_COLOR_NEG
 	BallEffects.ShowValuePopup(ball, ball.CFrame, label, color)
 end

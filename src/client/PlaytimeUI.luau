@@ -20,6 +20,7 @@ local Config = require(RS.Shared.Config)
 local PlaytimeUI = {}
 
 local player = Players.LocalPlayer
+local CurrencyFlyUI = require(player:WaitForChild("PlayerScripts"):WaitForChild("CurrencyFlyUI"))
 
 -- Mirrors PlaytimeBonusService.Info / RungInfo (server-computed).
 type RungInfo = { time: number, reward: number, reached: boolean, claimed: boolean }
@@ -417,6 +418,9 @@ end
 -- Claim one specific rung by index.
 local function claim(index: number)
 	local res = claimRF:InvokeServer(index)
+	if res and res.granted then
+		CurrencyFlyUI.Play("Cash") -- playtime rungs pay cash
+	end
 	if res and res.info then
 		onInfo(res.info)
 	end

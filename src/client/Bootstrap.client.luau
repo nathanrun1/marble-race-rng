@@ -23,6 +23,7 @@ local BallTuningPreview = require(PlayerScripts:WaitForChild("BallTuningPreview"
 local JackpotGateUI = require(PlayerScripts:WaitForChild("JackpotGateUI"))
 local GroupRewardUI = require(PlayerScripts:WaitForChild("GroupRewardUI"))
 local TutorialService = require(PlayerScripts:WaitForChild("TutorialService"))
+local CurrencyFlyUI = require(PlayerScripts:WaitForChild("CurrencyFlyUI"))
 local CoinPickups = require(PlayerScripts:WaitForChild("CoinPickups"))
 local PlaytimeUI = require(PlayerScripts:WaitForChild("PlaytimeUI"))
 local MoneyPerBallUI = require(PlayerScripts:WaitForChild("MoneyPerBallUI"));
@@ -57,6 +58,7 @@ BallTuningPreview.Init()
 JackpotGateUI.Init()
 GroupRewardUI.Init()
 TutorialService.Init()
+CurrencyFlyUI.Init() -- before its consumers (CoinPickups/QuestUI/PlaytimeUI/DailyRewardUI) can claim
 CoinPickups.Init()
 PlaytimeUI.Init()
 MoneyPerBallUI.Init()

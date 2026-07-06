@@ -1,13 +1,17 @@
 --!strict
--- Client join tutorial. Plays Config.Tutorial.Steps once per player (persisted via
--- StatsService), advancing AUTOMATICALLY as each step's own `complete` trigger fires
--- (LaunchBalls/BuyUpgrade/CollectCoin, ...) — no Next button — but a Skip button always lets
--- the player bail out of the whole sequence early. Steps may also, orthogonally, show a
--- physical world-arrow `arrow` target (WorldArrow) pointing the player somewhere. Both arrow
--- and completion are resolved through small per-Kind registries (ARROW_RESOLVERS /
--- COMPLETION_STARTERS) below, so adding a new Kind is one function + one registry entry —
--- nothing else in the stepping/rendering logic changes. See Config.Tutorial for the full
--- step-shape contract.
+-- Client tutorials. Runs TWO sequences through one shared box/highlight/arrow runner, each
+-- persisted separately so it plays once per player ever (StatsService):
+--   main     — Config.Tutorial.Steps, on first join.
+--   cosmetic — Config.Tutorial.Cosmetic.Steps, the first time the Diamonds balance reaches
+--              Config.Tutorial.Cosmetic.DiamondTrigger (never before main is over).
+-- Steps advance AUTOMATICALLY as each step's own `complete` trigger fires
+-- (LaunchBalls/BuyUpgrade/CollectCoin/BuySkin, ...) — no Next button — but a Skip button
+-- always lets the player bail out of the running sequence early. Steps may also,
+-- orthogonally, show a physical world-arrow `arrow` target (WorldArrow) pointing the player
+-- somewhere. Both arrow and completion are resolved through small per-Kind registries
+-- (ARROW_RESOLVERS / COMPLETION_STARTERS) below, so adding a new Kind is one function + one
+-- registry entry — nothing else in the stepping/rendering logic changes. See Config.Tutorial
+-- for the full step-shape contract.
 --
 -- Presentation is otherwise unchanged from the original text-box tutorial: a medium-large
 -- message in a box, optionally dimming the whole screen except a highlighted rect (a
@@ -29,13 +33,14 @@ local PlayerScripts = player:WaitForChild("PlayerScripts")
 local CameraService = require(PlayerScripts:WaitForChild("CameraService"));
 local WorldArrow = require(PlayerScripts:WaitForChild("WorldArrow"));
 local CoinPickups = require(PlayerScripts:WaitForChild("CoinPickups"));
+local BallTuningUI = require(PlayerScripts:WaitForChild("BallTuningUI"));
 
 -- Matches UpgradeShop.luau's own (bare, not-in-Config.Attributes) TRACK_ATTR local constant —
 -- the attribute a kiosk part stores its upgrade track under. Kept identical here so an
 -- "UpgradeShopTrack" arrow finds the exact kiosks UpgradeShop.luau opens on touch.
 local TRACK_ATTRIBUTE = "Track"
 
-type Highlight = { Position: UDim2, Size: UDim2 }
+type Highlight = { Position: UDim2, Size: UDim2, HighlightDim: number? } -- dim overrides Config.Tutorial.HighlightDim
 type Shot = { Position: Vector3, Orientation: Vector3, FieldOfView: number? }
 
 -- Both are open-ended tagged unions: { Kind = "SomeKind", ...Kind-specific fields }. Kept as
@@ -57,11 +62,21 @@ local TRANSITION = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirectio
 local HALF = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local HALF_TIME = 0.2
 
-local DIM = 0.45                              -- dark-panel BackgroundTransparency when dimming
+local DIM = Config.Tutorial.HighlightDim      -- dark-panel BackgroundTransparency when dimming
 local DEFAULT_BOX_POS = UDim2.fromScale(0.5, 0.72)
 local TEXT_STROKE = 0.4
 
 local steps: { Step } = (Config.Tutorial.Steps :: any) :: { Step }
+local cosmeticSteps: { Step } = (Config.Tutorial.Cosmetic.Steps :: any) :: { Step }
+local tuningSteps: { Step } = (Config.Tutorial.Tuning.Steps :: any) :: { Step }
+
+-- The sequence the runner is currently playing. finish() reports activeId to the server
+-- ("main" / "cosmetic" / "tuning") so the right completed-flag is persisted.
+local activeSteps: { Step } = steps
+local activeId = "main"
+-- True from startSequence until finish()'s teardown completes — the later tutorials'
+-- watchers queue behind it so two sequences never fight over the shared UI.
+local sequenceRunning = false
 
 -- UI handles (built in createUI).
 local screenGui: ScreenGui
@@ -127,6 +142,7 @@ local function createUI(playerGui: PlayerGui)
 	screenGui.Enabled = false
 	screenGui.Parent = playerGui
 
+	table.clear(maskFrames) -- rebuilt per run (the cosmetic sequence re-creates the whole UI)
 	for _, n in { "MaskTop", "MaskBottom", "MaskLeft", "MaskRight" } do
 		table.insert(maskFrames, makePanel(n))
 	end
@@ -154,7 +170,7 @@ local function createUI(playerGui: PlayerGui)
 	box.Name = "MessageBox"
 	box.AnchorPoint = Vector2.new(0.5, 0.5)
 	box.Position = DEFAULT_BOX_POS
-	box.Size = UDim2.fromOffset(720, 240)
+	box.Size = UDim2.fromOffset(480, 110)
 	box.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
 	box.BackgroundTransparency = 1
 	box.ZIndex = 5
@@ -169,9 +185,11 @@ local function createUI(playerGui: PlayerGui)
 
 	label = Instance.new("TextLabel")
 	label.Name = "Message"
-	label.AnchorPoint = Vector2.new(0.5, 0)
-	label.Position = UDim2.fromScale(0.5, 0.1)
-	label.Size = UDim2.new(1, -60, 0, 110)
+	-- Fills the whole box (minus edge padding) so there's no dead band under the text; the
+	-- UITextSizeConstraint below still caps how big TextScaled lets it get.
+	label.AnchorPoint = Vector2.new(0.5, 0.5)
+	label.Position = UDim2.fromScale(0.5, 0.5)
+	label.Size = UDim2.new(1, -60, 1, -36)
 	label.BackgroundTransparency = 1
 	label.Text = ""
 	label.TextColor3 = Color3.new(1, 1, 1)
@@ -184,7 +202,7 @@ local function createUI(playerGui: PlayerGui)
 	label.ZIndex = 6
 	label.Parent = box
 	local sizeConstraint = Instance.new("UITextSizeConstraint")
-	sizeConstraint.MaxTextSize = 40 -- medium-large
+	sizeConstraint.MaxTextSize = 26 -- proportioned to the compact box
 	sizeConstraint.Parent = label
 
 	-- Skip: bails out of the whole sequence early (no per-step Next — steps auto-advance —
@@ -193,8 +211,8 @@ local function createUI(playerGui: PlayerGui)
 	skipBtn = Instance.new("TextButton")
 	skipBtn.Name = "Skip"
 	skipBtn.AnchorPoint = Vector2.new(1, 0)
-	skipBtn.Position = UDim2.new(1, -14, 0, 10)
-	skipBtn.Size = UDim2.fromOffset(80, 32)
+	skipBtn.Position = UDim2.new(1, -10, 0, 8)
+	skipBtn.Size = UDim2.fromOffset(60, 24)
 	skipBtn.BackgroundColor3 = Color3.fromRGB(70, 74, 86)
 	skipBtn.AutoButtonColor = true
 	skipBtn.Text = "Skip"
@@ -269,9 +287,10 @@ end
 local function applyHighlight(h: Highlight?)
 	local stroke = ring:FindFirstChild("Stroke") :: UIStroke
 	if h then
+		local dim = h.HighlightDim or DIM -- per-step override (0 = fully black surround)
 		layoutMask(h, not dimVisible) -- snap geometry if we're fading in from nothing
 		for _, frame in maskFrames do
-			TweenService:Create(frame, TRANSITION, { BackgroundTransparency = DIM }):Play()
+			TweenService:Create(frame, TRANSITION, { BackgroundTransparency = dim }):Play()
 		end
 		TweenService:Create(stroke, TRANSITION, { Transparency = 0 }):Play()
 		dimVisible = true
@@ -323,9 +342,24 @@ local function resolveNearestCoin(_spec: ArrowSpec): () -> Vector3?
 	end
 end
 
+-- Points at the cosmetics shop: the part carrying a CosmeticsGui-tagged SurfaceGui (via its
+-- Adornee or parent part — the same tag CosmeticsShop.luau builds its storefront into).
+local function resolveCosmeticsShop(_spec: ArrowSpec): () -> Vector3?
+	return function(): Vector3?
+		for _, tagged in CollectionService:GetTagged(Config.Tags.CosmeticsGui) do
+			local part: Instance? = if tagged:IsA("SurfaceGui") then (tagged.Adornee or tagged.Parent) else tagged
+			if part and part:IsA("BasePart") then
+				return part.Position
+			end
+		end
+		return nil
+	end
+end
+
 local ARROW_RESOLVERS: { [string]: (ArrowSpec) -> () -> Vector3? } = {
 	UpgradeShopTrack = resolveUpgradeShopTrack,
 	NearestCoin = resolveNearestCoin,
+	CosmeticsShop = resolveCosmeticsShop,
 }
 
 --------------------------------------------------------------------------------
@@ -390,10 +424,85 @@ local function startCollectCoin(_spec: CompletionSpec, onComplete: () -> ()): ()
 	end
 end
 
+-- The ball-tuning menu being opened (BallTuningUI.MenuOpened); completes immediately —
+-- deferred, applyStep is still mid-setup — if it's already open when the step starts.
+local function startOpenTuningMenu(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	if BallTuningUI.IsMenuOpen() then
+		task.defer(onComplete)
+		return function() end
+	end
+	local conn = BallTuningUI.MenuOpened:Connect(onComplete)
+	return function()
+		conn:Disconnect()
+	end
+end
+
+-- Any skin being ADDED to the owned set (CosmeticChanged) — bought from the shop, or earned
+-- any other way (a daily-reward Skin roll counts too). Baselines the current owned count
+-- first so a pre-existing collection doesn't complete the step instantly.
+local function startBuySkin(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	local remote = RS:WaitForChild("Remote")
+	local changedRE = remote:WaitForChild("CosmeticChanged") :: RemoteEvent
+	local getInfoRF = remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
+
+	local function ownedCount(info: any): number
+		local n = 0
+		if type(info) == "table" and type(info.owned) == "table" then
+			for _ in info.owned do
+				n += 1
+			end
+		end
+		return n
+	end
+
+	-- math.huge until the snapshot resolves, so a racing CosmeticChanged can't complete
+	-- against a not-yet-seeded baseline.
+	local baseline = math.huge
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return getInfoRF:InvokeServer()
+		end)
+		baseline = if ok then ownedCount(info) else 1 -- 1 = the always-owned default skin
+	end)
+
+	local conn = changedRE.OnClientEvent:Connect(function(info: any)
+		if ownedCount(info) > baseline then
+			onComplete()
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
+-- N of the LOCAL player's own marbles banking ("scoring"). BalanceChanged carries the
+-- CurrencyService reason string, and every bank's reason starts with "Ball " ("Ball
+-- destroyed at target: ...", "Ball stuck (timeout): ...") — the same prefix match
+-- MoneyPerBallUI keys its $/marble pulls on; coins/quests/rewards never use it.
+local function startScoreBalls(spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	local need = (spec.Count :: number?) or 1
+	local count = 0
+	local balanceRE = RS:WaitForChild("Remote"):WaitForChild("BalanceChanged") :: RemoteEvent
+	local conn = balanceRE.OnClientEvent:Connect(function(_new: number, _amount: number, reason: any)
+		if typeof(reason) == "string" and string.match(reason, "^Ball ") then
+			count += 1
+			if count >= need then
+				onComplete()
+			end
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
 local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } = {
 	LaunchBalls = startLaunchBalls,
 	BuyUpgrade = startBuyUpgrade,
 	CollectCoin = startCollectCoin,
+	ScoreBalls = startScoreBalls,
+	BuySkin = startBuySkin,
+	OpenTuningMenu = startOpenTuningMenu,
 }
 
 --------------------------------------------------------------------------------
@@ -404,7 +513,7 @@ local function applyStep(index: number)
 	currentIndex = index
 	stepToken += 1
 	local myToken = stepToken
-	local step = steps[index]
+	local step = activeSteps[index]
 
 	-- Move the box (if the step repositions it) and cross-fade the text.
 	TweenService:Create(box, TRANSITION, { Position = step.boxPosition or DEFAULT_BOX_POS }):Play()
@@ -453,7 +562,9 @@ local function finish()
 		return
 	end
 	finished = true
-	markOver()
+	if activeId == "main" then
+		markOver() -- join-time popups (DailyRewardUI) gate on the MAIN tutorial only
+	end
 	stepToken += 1 -- cancel any pending text swap
 	WorldArrow.Hide()
 	if completionCleanup then
@@ -462,10 +573,10 @@ local function finish()
 	end
 	CameraService.SetTutorialView(nil) -- hand the camera back
 
-	-- Tell the server so it never replays.
+	-- Tell the server which tutorial finished/was skipped, so it never replays.
 	local re = RS:FindFirstChild("Remote") and RS.Remote:FindFirstChild("CompleteTutorial")
 	if re and re:IsA("RemoteEvent") then
-		re:FireServer()
+		re:FireServer(activeId)
 	end
 
 	-- Fade everything out, then tear down.
@@ -478,8 +589,12 @@ local function finish()
 	end
 	skipBtn.Active = false
 	TweenService:Create(skipBtn, TRANSITION, { BackgroundTransparency = 1, TextTransparency = 1 }):Play()
+	-- Captured, not read at fire time: a later sequence may have rebuilt screenGui by the
+	-- time this delay lands, and it must destroy THIS run's gui, not the new one.
+	local gui = screenGui
 	task.delay(TRANSITION.Time, function()
-		screenGui:Destroy()
+		gui:Destroy()
+		sequenceRunning = false -- teardown done; a queued sequence may now take the UI
 	end)
 end
 
@@ -487,7 +602,7 @@ advance = function()
 	if finished then
 		return
 	end
-	if currentIndex >= #steps then
+	if currentIndex >= #activeSteps then
 		finish()
 	else
 		applyStep(currentIndex + 1)
@@ -502,30 +617,123 @@ local function begin()
 	applyStep(1)
 end
 
-function TutorialService.Init()
-	if #steps == 0 then
-		markOver()
-		return
+-- Start the runner on a sequence. The whole UI is rebuilt per run — finish() tears it down.
+-- Yields while another sequence is still running/tearing down (only one may drive the
+-- shared UI); the wait-loop check and the flag set have no yield between them, so two
+-- queued watchers resume one at a time and can't both grab the slot.
+local function startSequence(playerGui: PlayerGui, id: string, seq: { Step })
+	while sequenceRunning do
+		task.wait(0.5)
 	end
+	sequenceRunning = true
+	activeId = id
+	activeSteps = seq
+	finished = false
+	createUI(playerGui)
+	skipBtn.Activated:Connect(finish)
+	begin()
+end
 
+function TutorialService.Init()
 	-- Gate yields (data load + stats), so run it off-thread to not stall the bootstrap.
 	task.spawn(function()
 		-- Wait for saved data to load before checking, so a returning player who already did
-		-- the tutorial doesn't see it again on a pre-load default. Skip if already completed.
+		-- a tutorial doesn't see it again on a pre-load default.
 		local remote = RS:WaitForChild("Remote")
 		local waitLoaded = remote:WaitForChild("WaitForDataLoaded") :: RemoteFunction
 		waitLoaded:InvokeServer()
 		local getStats = remote:WaitForChild("GetStats") :: RemoteFunction
 		local stats = getStats:InvokeServer()
-		if stats and stats.completedTutorial then
+		local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
+
+		if #steps == 0 or (stats and stats.completedTutorial) then
 			markOver()
-			return
+		else
+			startSequence(playerGui, "main", steps)
 		end
 
-		local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
-		createUI(playerGui)
-		skipBtn.Activated:Connect(finish)
-		begin()
+		-- Cosmetic tutorial: after the main one is over, the first time the Diamonds balance
+		-- reaches the trigger. Skipped forever once finished/skipped (persisted server-side).
+		task.spawn(function()
+			if #cosmeticSteps == 0 or (stats and stats.completedCosmeticTutorial) then
+				return
+			end
+			TutorialService.WaitUntilOver()
+
+			local changedRE = remote:WaitForChild("CosmeticChanged") :: RemoteEvent
+			local getInfoRF = remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
+			local triggered = false
+			local conn: RBXScriptConnection? = nil
+			local function maybeTrigger(info: any)
+				if triggered or type(info) ~= "table" or type(info.cc) ~= "number" then
+					return
+				end
+				if info.cc < Config.Tutorial.Cosmetic.DiamondTrigger then
+					return
+				end
+				triggered = true
+				if conn then
+					conn:Disconnect()
+				end
+				-- Own thread: startSequence yields while another sequence tears down.
+				task.spawn(startSequence, playerGui, "cosmetic", cosmeticSteps)
+			end
+			conn = changedRE.OnClientEvent:Connect(maybeTrigger)
+			-- Snapshot too: the balance may already be past the trigger when this binds.
+			local ok, info = pcall(function()
+				return getInfoRF:InvokeServer()
+			end)
+			if ok then
+				maybeTrigger(info)
+			end
+		end)
+
+		-- Tuning tutorial: after the main one is over, the first time ANY ball-tuning axis
+		-- (a Config.Axes track) gains a tier — points the player at the tuning menu and
+		-- waits for them to open it. Same run-once persistence as the others.
+		task.spawn(function()
+			if #tuningSteps == 0 or (stats and stats.completedTuningTutorial) then
+				return
+			end
+			TutorialService.WaitUntilOver()
+
+			local getProfileRF = remote:WaitForChild("GetProfile") :: RemoteFunction
+			local profileChangedRE = remote:WaitForChild("ProfileChanged") :: RemoteEvent
+
+			local function axisTiers(profile: any): { [string]: number }
+				local out: { [string]: number } = {}
+				for axis in (Config.Axes :: any) :: { [string]: any } do
+					local t = 0
+					if type(profile) == "table" and type(profile.upgrades) == "table" then
+						t = profile.upgrades[axis] or 0
+					end
+					out[axis] = t
+				end
+				return out
+			end
+
+			local ok, profile = pcall(function()
+				return getProfileRF:InvokeServer()
+			end)
+			local baseline = axisTiers(if ok then profile else nil)
+
+			local conn: RBXScriptConnection? = nil
+			conn = profileChangedRE.OnClientEvent:Connect(function(p: any)
+				local tiers = axisTiers(p)
+				for axis, t in tiers do
+					if t > baseline[axis] then
+						if conn then
+							conn:Disconnect()
+						end
+						task.spawn(startSequence, playerGui, "tuning", tuningSteps)
+						return
+					end
+				end
+				-- Adopt decreases (a prestige wipes upgrade tiers) so the NEXT axis buy
+				-- still reads as an increase instead of hiding below the stale baseline.
+				baseline = tiers
+			end)
+		end)
 	end)
 end
 

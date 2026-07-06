@@ -1,10 +1,12 @@
 --!strict
 -- Cosmetics shop, built into the world SurfaceGui tagged Config.Tags.CosmeticsGui. Lists every ball
 -- skin (shared/BallSkins) as a selectable row showing name, rarity and Diamonds price; shows the
--- player's Diamonds balance (yellow) and a "earn Diamonds by rebirthing" note; and a buy/equip
--- button for the selected skin. Buying spends Diamonds (server-authoritative, CosmeticService — the
--- "cc" field internally); if the player can't afford it, the button prompts the Robux fallback — one
--- dev product per rarity (Config.Cosmetics.RarityProducts).
+-- player's Diamonds balance (yellow) and a "earn Diamonds by rebirthing" note; and, for the
+-- selected skin, TWO separate buy buttons — blue for Diamonds, green for Robux — so picking Robux
+-- never first forces a Diamonds spend attempt. The Diamonds button is server-authoritative
+-- (CosmeticService — the "cc" field internally); the Robux button always prompts its rarity's
+-- dev product (Config.Cosmetics.RarityProducts) directly, regardless of Diamonds balance. Once
+-- owned/equipped, both collapse back into the single EQUIP/EQUIPPED button (Robux doesn't apply).
 --
 -- Built locally into the shared surface, so each player sees their own Diamonds/owned state.
 
@@ -27,6 +29,7 @@ local ROW_SELECT  = Color3.fromRGB(58, 63, 84)
 local TEXT        = Color3.fromRGB(235, 238, 248)
 local SUBTLE      = Color3.fromRGB(150, 156, 172)
 local GREEN       = Color3.fromRGB(96, 224, 120)
+local BLUE        = Color3.fromRGB(70, 130, 240)   -- Diamonds buy button (distinct from the Robux green)
 
 local Remote = RS:WaitForChild("Remote")
 local getInfoRF = Remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
@@ -57,6 +60,7 @@ local info: Info = { cc = 0, equipped = BallSkins.GetDefaultId(), selected = Bal
 local rows: { [string]: TextButton } = {}
 local ccLabel: TextLabel? = nil
 local buyButton: TextButton? = nil
+local buyRobuxButton: TextButton? = nil
 local selectedNameLabel: TextLabel? = nil
 
 -- Forward-declared: refresh() is defined further down, but fetchRobuxPrices (below) needs to
@@ -224,23 +228,44 @@ function refresh()
 		selectedNameLabel.Text = sel.name .. "  •  " .. BallSkins.RarityName(sel.rarity)
 		selectedNameLabel.TextColor3 = BallSkins.RarityColor(sel.rarity)
 	end
-	if buyButton and sel then
+	if buyButton and buyRobuxButton and sel then
 		local owned = info.owned[info.selected] == true
 		local equipped = info.equipped == info.selected
+		local FULL_SIZE = UDim2.fromScale(0.48, 0.7)
+		local FULL_POS = UDim2.fromScale(0.50, 0.15)
 		if equipped then
+			buyRobuxButton.Visible = false
+			buyButton.Size = FULL_SIZE
+			buyButton.Position = FULL_POS
 			buyButton.Text = "EQUIPPED"
 			buyButton.BackgroundColor3 = Color3.fromRGB(70, 76, 96)
 		elseif owned then
+			buyRobuxButton.Visible = false
+			buyButton.Size = FULL_SIZE
+			buyButton.Position = FULL_POS
 			buyButton.Text = "EQUIP"
 			buyButton.BackgroundColor3 = GREEN
 		else
-			local text = "BUY  •  💎" .. StringUtils.FormatShort(sel.price)
+			buyButton.Text = "BUY  •  💎" .. StringUtils.FormatShort(sel.price)
+			buyButton.BackgroundColor3 = BLUE
 			local robuxPrice = robuxPriceByRarity[sel.rarity]
 			if robuxPrice then
-				text ..= "  |  R$" .. robuxPrice
+				-- Side by side: neither purchase path is the "default" one, so a player who'd
+				-- rather keep their Diamonds can go straight for Robux.
+				buyButton.Size = UDim2.fromScale(0.235, 0.7)
+				buyButton.Position = UDim2.fromScale(0.50, 0.15)
+				buyRobuxButton.Text = "BUY R$" .. robuxPrice
+				buyRobuxButton.BackgroundColor3 = GREEN
+				buyRobuxButton.Size = UDim2.fromScale(0.235, 0.7)
+				buyRobuxButton.Position = UDim2.fromScale(0.745, 0.15)
+				buyRobuxButton.Visible = true
+			else
+				-- No Robux product resolved yet (or none configured for this rarity) — Diamonds
+				-- is the only option, so it takes the full width.
+				buyButton.Size = FULL_SIZE
+				buyButton.Position = FULL_POS
+				buyRobuxButton.Visible = false
 			end
-			buyButton.Text = text
-			buyButton.BackgroundColor3 = YELLOW
 		end
 	end
 end
@@ -269,6 +294,17 @@ function CosmeticsShop.purchase()
 		end
 	end
 	-- Server pushes CosmeticChanged on success; nothing else to do here.
+end
+
+-- The dedicated Robux button: always prompts the purchase directly, never touching Diamonds
+-- (unlike purchase() above, which spends Diamonds first if the player can afford it).
+function CosmeticsShop.purchaseWithRobux()
+	local skin = BallSkins.Get(info.selected)
+	local productStr = skin and Config.Cosmetics.RarityProducts[skin.rarity]
+	local productId = productStr and tonumber(productStr)
+	if productId and productId ~= 0 then
+		ProductService.Prompt(productId)
+	end
 end
 
 local function build(surface: SurfaceGui)
@@ -340,25 +376,35 @@ local function build(surface: SurfaceGui)
 	selectedNameLabel = makeLabel(footer, "", UDim2.new(0.5, 0, 0.5, 0), UDim2.fromScale(0, 0.25), TEXT)
 	selectedNameLabel.TextScaled = true
 
-	local buy = Instance.new("TextButton")
-	buy.Size = UDim2.fromScale(0.48, 0.7)
-	buy.Position = UDim2.fromScale(0.50, 0.15)
-	buy.BackgroundColor3 = YELLOW
-	buy.Text = "BUY"
-	buy.TextColor3 = Color3.fromRGB(30, 28, 10)
-	buy.Font = Enum.Font.GothamBold
-	buy.TextScaled = true
-	buy.AutoButtonColor = true
-	buy.Parent = footer
-	corner(buy, 10)
-	local buyPad = Instance.new("UIPadding")
-	buyPad.PaddingTop = UDim.new(0.18, 0)
-	buyPad.PaddingBottom = UDim.new(0.18, 0)
-	buyPad.PaddingLeft = UDim.new(0.05, 0)
-	buyPad.PaddingRight = UDim.new(0.05, 0)
-	buyPad.Parent = buy
+	-- Both buy buttons share the same shape/padding; refresh() drives their actual
+	-- size/position/color/text per selection state (side-by-side vs. full-width EQUIP).
+	local function makeFooterButton(): TextButton
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.fromScale(0.48, 0.7)
+		btn.Position = UDim2.fromScale(0.50, 0.15)
+		btn.Text = ""
+		btn.TextColor3 = Color3.new(1, 1, 1)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextScaled = true
+		btn.AutoButtonColor = true
+		btn.Parent = footer
+		corner(btn, 10)
+		local pad = Instance.new("UIPadding")
+		pad.PaddingTop = UDim.new(0.18, 0)
+		pad.PaddingBottom = UDim.new(0.18, 0)
+		pad.PaddingLeft = UDim.new(0.05, 0)
+		pad.PaddingRight = UDim.new(0.05, 0)
+		pad.Parent = btn
+		return btn
+	end
+
+	local buy = makeFooterButton()
 	buy.Activated:Connect(CosmeticsShop.purchase)
 	buyButton = buy
+
+	local robuxBuy = makeFooterButton()
+	robuxBuy.Activated:Connect(CosmeticsShop.purchaseWithRobux)
+	buyRobuxButton = robuxBuy
 
 	refresh()
 end

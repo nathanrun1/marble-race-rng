@@ -164,7 +164,7 @@ local function onClaim(player: Player, coin: Instance)
 		CurrencyService.AddPoints(player, entry.value, "Coin pickup")
 		WarnUI.Warn(player, "+$" .. StringUtils.FormatShort(entry.value), REWARD_COLOR, Config.Coins.RewardWarnLifetime)
 	end
-	SoundService.PlayForClient(player, { soundId = Config.Sounds.Collect1 })
+	SoundService.PlayForClient(player, { soundId = Config.Sounds.Collect3 })
 	deactivateRE:FireClient(player, coin)
 end
 

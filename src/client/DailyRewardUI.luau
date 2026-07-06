@@ -2,10 +2,12 @@
 -- Daily login reward: once per UTC day, a centered prompt offers a claim (Streak + Luck
 -- Bonus preview); claiming rolls a server-authoritative prize (Config.DailyReward.Pool) and
 -- reveals it via a horizontal slot-style reel spin (a strip of decorative filler cells that
--- spins past and decelerates onto the true result). Reward-cell/result rendering is a small
--- Kind -> renderer registry (CELL_RENDERERS / RESULT_TEXT below), mirroring the server's
--- Kind -> roller registry (DailyRewardService) — add a new reward Kind by extending
--- Config.DailyReward.Pool + both registries, nothing else changes.
+-- spins past and decelerates onto the true result). The landed cell sits under the pointer
+-- for a beat, then the UI closes itself and fires the currency-fly celebration — no
+-- confirm/"NICE!" press. Reward-cell rendering is a small Kind -> renderer registry
+-- (CELL_RENDERERS below), mirroring the server's Kind -> roller registry
+-- (DailyRewardService) — add a new reward Kind by extending Config.DailyReward.Pool + the
+-- registries, nothing else changes.
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -16,11 +18,13 @@ local StringUtils = require(RS.Shared.StringUtils)
 local BallSkins = require(RS.Shared.BallSkins)
 local UIButton = require(RS.Shared.UIButton)
 local SoundService = require(RS.Shared.SoundService)
+local WarnUI = require(RS.Shared.WarnUI)
 
 local DailyRewardUI = {}
 
 local player = Players.LocalPlayer
 local TutorialService = require(player:WaitForChild("PlayerScripts"):WaitForChild("TutorialService"))
+local CurrencyFlyUI = require(player:WaitForChild("PlayerScripts"):WaitForChild("CurrencyFlyUI"))
 
 export type RewardResult =
 	{ Kind: "Diamonds", Amount: number }
@@ -47,16 +51,11 @@ local claimHandle: UIButton.Handle
 local reelViewport: Frame
 local reelContent: Frame
 local reelViewportWidth = 0
-local resultFrame: Frame
-local resultIcon: TextLabel
-local resultText: TextLabel
-local continueHandle: UIButton.Handle
 
 -- Forward-declared: bound to buttons inside createUI, defined for real further down (same
 -- forward-decl shape used elsewhere in this codebase — ProfileService.reclampLoadout,
 -- QuestUI.openPanel, PlaytimeUI.openPlaytimePanel, TutorialService.advance).
 local onClaimClicked: () -> ()
-local onContinueClicked: () -> ()
 
 ----------------------------------------------------------------
 -- Reward cell / result rendering: Kind -> populate a cell or produce (icon, text).
@@ -109,19 +108,6 @@ local FILLER_RENDERERS: { [string]: (Frame, any) -> () } = {
 		local id, name = randomSkinNameAndId()
 		local skin = BallSkins.Get(id)
 		setCell(cell, "🎨", name, if skin then skin.data.color:Lerp(CELL_BG, 0.5) else nil)
-	end,
-}
-
--- Final reveal (icon, headline text), keyed by RewardResult.Kind.
-local RESULT_TEXT: { [string]: (any) -> (string, string) } = {
-	Diamonds = function(r)
-		return "💎", "+" .. StringUtils.FormatShort(r.Amount) .. " Diamonds!"
-	end,
-	Cash = function(r)
-		return "💰", "+" .. StringUtils.FormatMoney(r.Amount) .. "!"
-	end,
-	Skin = function(r)
-		return "🎨", "New Skin: " .. r.SkinName .. "!"
 	end,
 }
 
@@ -338,47 +324,6 @@ local function createUI(playerGui: PlayerGui)
 	reelLayout.Padding = UDim.new(0, R.CellPadding)
 	reelLayout.Parent = reelContent
 
-	----- Result reveal, hidden until the spin lands -----
-	resultFrame = Instance.new("Frame")
-	resultFrame.Name = "Result"
-	resultFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-	resultFrame.Position = UDim2.fromScale(0.5, 0.5)
-	resultFrame.Size = UDim2.fromOffset(460, 280)
-	resultFrame.BackgroundColor3 = BG
-	resultFrame.BorderSizePixel = 0
-	resultFrame.Visible = false
-	resultFrame.ZIndex = 2
-	resultFrame.Parent = screenGui
-	corner(resultFrame, 18)
-	local rfs = Instance.new("UIStroke")
-	rfs.Color = GOLD
-	rfs.Thickness = 2
-	rfs.Parent = resultFrame
-
-	resultIcon = Instance.new("TextLabel")
-	resultIcon.BackgroundTransparency = 1
-	resultIcon.Position = UDim2.fromScale(0, 0.08)
-	resultIcon.Size = UDim2.new(1, 0, 0.4, 0)
-	resultIcon.Font = Enum.Font.FredokaOne
-	resultIcon.TextScaled = true
-	resultIcon.Text = ""
-	resultIcon.Parent = resultFrame
-
-	resultText = Instance.new("TextLabel")
-	resultText.BackgroundTransparency = 1
-	resultText.AnchorPoint = Vector2.new(0.5, 0)
-	resultText.Position = UDim2.new(0.5, 0, 0.48, 0)
-	resultText.Size = UDim2.new(1, -20, 0.2, 0)
-	resultText.Font = Enum.Font.FredokaOne
-	resultText.TextScaled = true
-	resultText.TextColor3 = GOLD
-	resultText.TextWrapped = true
-	resultText.Text = ""
-	resultText.Parent = resultFrame
-
-	continueHandle = makeButton(resultFrame, UDim2.new(0.5, 0, 1, -28), UDim2.fromOffset(200, 52), "NICE!", function()
-		onContinueClicked()
-	end)
 end
 
 ----------------------------------------------------------------
@@ -403,21 +348,41 @@ local function spinTargetX(): number
 	return -(cellCenterX - reelViewportWidth / 2)
 end
 
-function onContinueClicked()
-	resultFrame.Visible = false
-	screenGui.Enabled = false
-end
+local RESULT_LINGER = 1.0 -- seconds the landed cell sits under the pointer before the UI closes
+local WARN_LIFETIME = 3   -- seconds the post-spin reward banner stays up
 
-local function showResultAndFinish(result: RewardResult)
+-- Post-spin banner text (WarnUI), keyed by RewardResult.Kind — the lasting record of what
+-- was won now that there's no confirm screen to read at leisure.
+local WARN_TEXT: { [string]: (any) -> string } = {
+	Diamonds = function(r)
+		return "+" .. StringUtils.FormatShort(r.Amount) .. " Diamonds!"
+	end,
+	Cash = function(r)
+		return "+" .. StringUtils.FormatMoney(r.Amount) .. "!"
+	end,
+	Skin = function(r)
+		return "New Skin: " .. r.SkinName .. "!"
+	end,
+}
+
+-- The spin has landed: ding, let the winning cell sit visibly for a beat, then close the
+-- whole UI, banner the reward, and fire the currency-fly celebration (the grant itself
+-- already happened server-side at claim time). No confirm press. Yields; runs on the
+-- tween's Completed thread.
+local function finishSpin(result: RewardResult)
+	-- Muted for now (no daily-reward SFX at spin start or land) — restore if it earns a sound.
+	-- SoundService.Play({ soundId = Config.Sounds.Jackpot })
+	task.wait(RESULT_LINGER)
 	reelViewport.Visible = false
-	local textFn = RESULT_TEXT[result.Kind]
+	screenGui.Enabled = false
+	local textFn = WARN_TEXT[result.Kind]
 	if textFn then
-		local icon, text = textFn(result)
-		resultIcon.Text = icon
-		resultText.Text = text
+		WarnUI.WarnLocal(textFn(result), GOLD, WARN_LIFETIME)
 	end
-	resultFrame.Visible = true
-	SoundService.Play({ soundId = Config.Sounds.Jackpot })
+	-- Skins have no balance icon to fly into; only the two currencies celebrate this way.
+	if result.Kind == "Cash" or result.Kind == "Diamonds" then
+		CurrencyFlyUI.Play(result.Kind)
+	end
 end
 
 local function startSpin(result: RewardResult)
@@ -453,8 +418,7 @@ local function startSpin(result: RewardResult)
 	)
 	tween.Completed:Connect(function(state: Enum.PlaybackState)
 		if state == Enum.PlaybackState.Completed then
-			task.wait(0.3)
-			showResultAndFinish(result)
+			finishSpin(result)
 		end
 	end)
 	tween:Play()

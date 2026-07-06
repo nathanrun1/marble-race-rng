@@ -6,6 +6,7 @@ Config.Sounds = {
 	Upgrade = "rbxassetid://106356556379520",
 	Collect1 = "rbxassetid://104023881731125",
 	Collect2 = "rbxassetid://83285744063515",
+	Collect3 = "rbxassetid://100610043368485",
 	Jackpot = "rbxassetid://84581872132549",
 	Launch = "rbxassetid://87587182495338",
 	Combo = "rbxassetid://112485190367588",
@@ -220,6 +221,16 @@ Config.Groups = {
 -- Admin UserIds: granted dev commands (DevService) and hidden from every leaderboard.
 Config.Admins = { 89831196 }
 
+-- Custom day-by-day analytics (MetricsService): DAU, new players, sessions, playtime, and
+-- D1/D7/D30 retention — the Roblox-dashboard numbers, minus the players below, because
+-- dev/tester sessions distort a small game's stats and the official dashboard can't filter
+-- them. Config.Admins are ALWAYS excluded on top of this list. Only live servers record;
+-- print anywhere with /metrics [days] (needs API access enabled in Studio).
+Config.Metrics = {
+	ExcludedUserIds = { 338455474, 110797589, 1244172772, 245715627, 1244172772 },  -- extra user ids to exclude besides the admins
+	ReportDays = 14,       -- default day rows /metrics prints
+}
+
 Config.Prestige = {
 	Scale      = 18820, -- denominator in PP formula (earnedPP = (creditedBanked/Scale)^Exponent).
 	                       -- Divided ×10^3 from 18820000 to make rebirths easier: since required cash
@@ -233,13 +244,14 @@ Config.Prestige = {
 	                    -- (assumes the gate is cleared early, i.e. VJackFraction ≈ 0.55).
 	-- Per-level cost growth. Constant time-to-prestige requires CostGrowth = MultPer^Exponent
 	-- (because the LB needed for prestige N grows as CostGrowth^(N/Exponent) while the global
-	-- multiplier only offsets it as MultPer^N). Break-even here is 1.25^0.35 ≈ 1.08. The old 2.0
+	-- multiplier only offsets it as MultPer^N). Break-even here is 1.25^0.35 ≈ 1.081. The old 2.0
 	-- was WAY above it: requirement grew 7.25^N vs a 1.25^N multiplier, so late prestiges took
 	-- exponentially longer AND the targeting build (which banks super-linearly in time) pulled
-	-- ahead of combo. Sitting just above break-even keeps every run a near self-similar copy of
-	-- run 0 — so whatever build balance holds at prestige 0 holds forever — with a gentle (~6%/level)
-	-- lengthening so later prestiges still feel like a step up.
-	CostGrowth = 1.15,
+	-- ahead of combo. Current value targets the CASH requirement growing exactly 1.2× faster
+	-- per level than the multiplier offsets it: CostGrowth = (1.2 × MultPer)^Exponent =
+	-- 1.5^0.35 ≈ 1.1525, i.e. each prestige takes ~20% longer in real time than the previous
+	-- one — every run stays a near-copy of run 0, with later prestiges a clear step up.
+	CostGrowth = 1.1525,
 	MultPer    = 1.25,  -- global banked multiplier per prestige (multiplicative)
 	-- Anti-hoard: available PP is an earn/spend currency. Banking stops crediting PP once you hold
 	-- this many × the next prestige's cost, so you can buffer at most ~one extra prestige and can't
@@ -281,9 +293,8 @@ Config.Economy = {
 Config.Upgrades = {
 	-- Bet size is now a discrete ladder the player steps through with Raise/Lower (client
 	-- BetUI), not a continuous value up to a "ceiling" — but it's still stored/priced as an
-	-- ordinary upgrade track named MaxBet (kept as-is so nothing else needs renaming) and the
-	-- Name/Desc/Icon/Locked fields below are vestigial now that the physical shop kiosk for it
-	-- is gone from the map; the track itself (tier, cost curve) is still very much live.
+	-- ordinary upgrade track named MaxBet (kept as-is so nothing else needs renaming), reintroduced
+	-- as a purchasable upgrade-shop kiosk track alongside BetUI's own raise/lower flow.
 	--
 	-- betSize(0) = Economy.StartBetSize (10, free, no purchase needed)
 	-- betSize(tier>=1) = Economy.StartMaxBet * (PerTier ^ (tier - 1))   [see ProfileStats.GetMaxBet]
@@ -297,11 +308,11 @@ Config.Upgrades = {
 		Cost = { Base = 250, Growth = 1.9 },
 		Name = "Max Bet", Short = "Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰",
-		-- Starts hidden behind a flat unlock (tier 0->1, just Cost.Base — the geometric curve
-		-- is already flat at tier 0). UpgradeService/ShopUI/UpgradeShop all key off this to show
-		-- a "???" teaser instead of the real name/desc/values; the new BetUI's "UNLOCK" state
-		-- doesn't depend on this flag, it just reuses the same Purchase() call.
-		Locked = true,
+		-- Not locked: bet sizing already works from tier 0 (free) via BetUI's raise/lower, so
+		-- hiding the shop kiosk's name/desc/price behind a "???" teaser until the first tier is
+		-- bought would misrepresent it as a gated feature. UpgradeService/ShopUI/UpgradeShop key
+		-- off this the same as any other track — it's just never true for MaxBet anymore.
+		Locked = false,
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	-- Combo bonus is an ABSOLUTE point add (combo × this), free of the bet — the low-bet/high-
@@ -534,6 +545,11 @@ Config.Products = {
 	BallDropMaxBet = "3607663509",
 }
 
+-- Minimum seconds between auto-prompts of the UpgradeBoost (3×) purchase dialog when a player
+-- clicks Buy and can't afford the upgrade (ShopUI's promptBoost, BallLaunchUI's attemptUnlock) —
+-- otherwise repeatedly clicking Buy while broke would pop the Robux dialog every single click.
+Config.UpgradeBoostPromptCooldown = 600
+
 -- Robux game passes (permanent, one-time ownership — distinct from consumable dev
 -- products above). Granted via ownership, not ProcessReceipt (see ProductService).
 Config.GamePasses = {
@@ -554,16 +570,19 @@ Config.BallDrop = {
 	Count = 30,
 }
 
--- Golden pegs (prestige perk): every rebirth marks one more peg on the board as "golden"
+-- Golden pegs (prestige perk): rebirths mark pegs on the board as "golden" on an escalating
+-- schedule — peg k at prestige k(k+1)/2, i.e. 1, 3, 6, 10, ... (see GoldenPegService) —
 -- FOR THAT PLAYER — the board is shared, so the set is per-player and only that player's
 -- balls trigger it (their golden pegs are highlighted client-side by GoldenPegView). When
 -- one of your balls hits one of your golden pegs (at most once per ball per peg), it rolls:
 -- CloneChance → the ball is cloned into a second free ball of the same value; otherwise the
--- ball's live value is doubled. See GoldenPegService (set + clone) / ScoreHandler (trigger).
+-- ball's live value is multiplied by BoostMult. See GoldenPegService (set + clone) /
+-- ScoreHandler (trigger).
 Config.GoldenPegs = {
-	DoubleChance = 0.90, -- probability a golden hit doubles the ball's value
+	DoubleChance = 0.90, -- probability a golden hit boosts the ball's value (by BoostMult)
 	CloneChance = 0.10,  -- probability a golden hit clones the ball instead
-	MaxPegs = 20,        -- per-player cap (the board only has so many pegs)
+	BoostMult = 1.1,     -- value multiplier on a boost hit (was ×2 — nerfed, it dominated)
+	MaxPegs = 10,        -- hard per-player cap; the unlock schedule stops here
 }
 
 -- Board look scales with the LOCAL player's current bet tier (client BoardAppearanceView) —
@@ -639,14 +658,19 @@ Config.Quests = {
 --   Skin     : a random ball skin (BallSkins) the player doesn't already own; the roll skips
 --              this Kind entirely if the player owns every skin.
 Config.DailyReward = {
+	-- Ordered worst -> best; Weight falls as the prize's value rises, so probability actually
+	-- tracks how good a roll is (10 > 8 > 5 > 4 > 2 > 1.5 > 1). The rare/top Diamonds tier is
+	-- the "lucky end": ~10 Diamonds max, deliberately modest next to a free Skin (BallSkins
+	-- prices run 50-2800 CC) or the big Cash multiplier — Diamonds/day is meant to trickle,
+	-- not race a player to a skin purchase (rebirthing is the intended main CC source).
 	Pool = {
-		{ Kind = "Diamonds", Weight = 5, Min = 5, Max = 15 },
-		{ Kind = "Diamonds", Weight = 3, Min = 15, Max = 30 },
-		{ Kind = "Diamonds", Weight = 1, Min = 40, Max = 60 },
-		{ Kind = "Cash", Weight = 5, Multiplier = 1 },
-		{ Kind = "Cash", Weight = 3, Multiplier = 3 },
-		{ Kind = "Cash", Weight = 1, Multiplier = 8 },
-		{ Kind = "Skin", Weight = 2 },
+		{ Kind = "Diamonds", Weight = 10, Min = 2, Max = 4 },
+		{ Kind = "Cash", Weight = 8, Multiplier = 1 },
+		{ Kind = "Diamonds", Weight = 5, Min = 4, Max = 7 },
+		{ Kind = "Cash", Weight = 4, Multiplier = 3 },
+		{ Kind = "Diamonds", Weight = 2, Min = 7, Max = 10 },
+		{ Kind = "Cash", Weight = 1.5, Multiplier = 8 },
+		{ Kind = "Skin", Weight = 1 },
 	},
 	-- Diamonds-only streak bonus ("Luck Bonus" in the UI): +StreakBonusPerDay per consecutive
 	-- login day beyond the first, capped at MaxBonusDays (so it doesn't grow forever) — e.g.
@@ -794,10 +818,15 @@ Config.Podium = {
 --                   { Kind = "NearestCoin" }                       -- the player's nearest active
 --                                                                     coin, force-spawning one if
 --                                                                     none are currently active
+--                   { Kind = "CosmeticsShop" }                     -- the part carrying the
+--                                                                     CosmeticsGui-tagged storefront
 --   complete    : REQUIRED — what finishes the step. Kinds:
 --                   { Kind = "LaunchBalls", Count = number } -- N of the player's own marbles launch
 --                   { Kind = "BuyUpgrade", Track = string }  -- that track's upgrade tier increases
 --                   { Kind = "CollectCoin" }                  -- the player claims any coin
+--                   { Kind = "ScoreBalls", Count = number? } -- N of the player's own marbles bank/score (default 1)
+--                   { Kind = "BuySkin" }                      -- any skin gets ADDED to the owned set (bought or otherwise earned)
+--                   { Kind = "OpenTuningMenu" }               -- the ball-tuning menu gets opened
 -- Adding a new arrow/complete Kind is one handler function + one registry entry in
 -- TutorialService — nothing else in the stepping/rendering logic changes.
 --
@@ -809,20 +838,67 @@ Config.Podium = {
 Config.Tutorial = {
 	Steps = {
 		{
-			text = "Launch 3 marbles.",
-			highlight = { Position = UDim2.fromOffset(960, 986), Size = UDim2.fromOffset(528,183) },
-			complete = { Kind = "LaunchBalls", Count = 3 },
-			boxPosition = UDim2.fromScale(0.5, 0.42)
+			text = "Launch a marble for cash!",
+			highlight = { Position = UDim2.fromOffset(960, 986), Size = UDim2.fromOffset(528,183), HighlightDim = 0.9 },
+			complete = { Kind = "LaunchBalls", Count = 1 },
+			boxPosition = UDim2.fromScale(0.5, 0.62)
 		},
 		{
-			text = "Upgrade Base Bonus to increase profit.",
+			text = "Watch where the marble drops...",
+			complete = { Kind = "ScoreBalls", Count = 1 },
+			boxPosition = UDim2.fromScale(0.75, 0.80)
+		},
+		{
+			text = "Upgrade Base Bonus to increase multipliers.",
 			arrow = { Kind = "UpgradeShopTrack", Track = "BaseAdditive" },
 			complete = { Kind = "BuyUpgrade", Track = "BaseAdditive" },
+			boxPosition = UDim2.fromScale(0.75, 0.80)
 		},
 		{
-			text = "Collect a coin!",
-			arrow = { Kind = "NearestCoin" },
-			complete = { Kind = "CollectCoin" },
+			text = "Upgrade your bet size to make more cash!",
+			arrow = { Kind = "UpgradeShopTrack", Track = "MaxBet" },
+			complete = { Kind = "BuyUpgrade", Track = "MaxBet" },
+			boxPosition = UDim2.fromScale(0.75, 0.80)
+		},
+		{
+			text = "Launch two more marbles.",
+			highlight = { Position = UDim2.fromOffset(960, 986), Size = UDim2.fromOffset(528,183), HighlightDim = 0.9 },
+			complete = { Kind = "LaunchBalls", Count = 2 },
+			boxPosition = UDim2.fromScale(0.5, 0.62)
+		}
+	},
+	-- How dark the screen goes around a step's highlighted rect: the BackgroundTransparency of
+	-- the four mask panels while a highlight is up (0 = fully black, 1 = no dim at all). A
+	-- highlight table can override this per step (highlight.HighlightDim).
+	HighlightDim = 0.45,
+	-- Second, later tutorial: starts once the player's Diamonds balance reaches
+	-- DiamondTrigger (never before the join tutorial is over), pointing them at the
+	-- cosmetics shop. Same step shape as Steps above, same Skip button; finishing or
+	-- skipping persists separately (Stats.completedCosmeticTutorial) so it runs once ever.
+	Cosmetic = {
+		DiamondTrigger = 50,
+		Steps = {
+			{
+				text = "You've earned 50 diamonds! Buy a skin from the cosmetics shop.",
+				boxPosition = UDim2.fromScale(0.75, 0.80), -- same lower-right spot as the upgrade steps
+				arrow = { Kind = "CosmeticsShop" },
+				complete = { Kind = "BuySkin" },
+			},
+		},
+	},
+	-- Fourth tutorial: fires the first time ANY ball-tuning axis (a Config.Axes track: Arc,
+	-- Angle, Size, Elasticity) gains a tier — highlights the ball-tuning menu trigger and
+	-- waits for the player to open it. Run-once (Stats.completedTuningTutorial).
+	Tuning = {
+		Steps = {
+			{
+				text = "You've upgraded a tuning axis! Open the ball tuning menu to use it.",
+				boxPosition = UDim2.fromScale(0.75, 0.80),
+				-- PLACEHOLDER rect (rough guess at the left bar's TuneTriggerHost) — re-measure
+				-- its real 1080p-authored position/size and update.
+				highlight = { Position = UDim2.fromOffset(131, 886), Size = UDim2.fromOffset(247, 90) },
+				complete = { Kind = "OpenTuningMenu" },
+			},
 		},
 	},
 	-- Physical world-arrow look/feel (client WorldArrow) — tunable independent of any step. A
@@ -830,12 +906,12 @@ Config.Tutorial = {
 	-- rotated to point along the chain and fading from large/NearColor (by the player) to
 	-- small/FarColor (by the target) — a directional trail, not a single pointer.
 	Arrow = {
-		Spacing = 5,                                 -- studs between chevrons; the chain divides the distance evenly, so the count scales with it
-		MaxSegments = 40,                            -- hard cap on chevrons however far the target is
+		Spacing = 3,                                 -- studs between chevrons; the chain divides the distance evenly, so the count scales with it
+		MaxSegments = 65,                            -- hard cap on chevrons however far the target is (raised with the tighter Spacing so long trails keep their reach)
 		NearColor = Color3.fromRGB(255, 40, 90),     -- by the player: hot pink/red
 		FarColor = Color3.fromRGB(255, 160, 40),     -- by the target: orange
-		NearSize = 34,                               -- chevron pixel size by the player
-		FarSize = 14,                                -- chevron pixel size by the target
+		NearSize = 52,                               -- chevron pixel size by the player
+		FarSize = 24,                                -- chevron pixel size by the target
 		TargetHeightOffset = 3,                      -- studs above the target the chain ends at (it starts at the player's center)
 	},
 }

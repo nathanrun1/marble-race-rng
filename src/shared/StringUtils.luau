@@ -38,16 +38,23 @@ function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: num
     end
 
     if floorRound then
-        print(n)
         n = math.floor(n * 10 ^ precision) / (10 ^ precision)
-        print(n)
     end
 
     if sciFactor > 0 then
-        return string.format("%."..precision.."fe%d", n, sciFactor) 
-    else
+        return string.format("%."..precision.."fe%d", n, sciFactor)
+    elseif factor ~= "" then
         return string.format("%."..precision.."f%s", n, factor)
     end
+
+    -- No suffix or scientific notation to justify padded decimals: drop a purely-.00 tail
+    -- (a x2 multiplier reads as "2", not "2.00"), but keep a genuine fraction (x1.35 stays as-is).
+    local plain = string.format("%."..precision.."f", n)
+    local whole, frac = plain:match("^(%-?%d+)%.(%d+)$")
+    if frac and tonumber(frac) == 0 then
+        return whole
+    end
+    return plain
 end
 
 -- Money string: comma-grouped below 1K (so small balances read exactly), short

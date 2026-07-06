@@ -153,6 +153,26 @@ if RunService:IsClient() then
 		MarketplaceService:PromptProductPurchase(localPlayer, productId)
 	end
 
+	-- lastPromptAt[productId] = os.clock() of the last PromptThrottled call that actually
+	-- opened the dialog for it (keyed per product, so e.g. the shared UpgradeBoost product
+	-- gets ONE cooldown no matter which track/UI triggered it).
+	local lastPromptAt: { [number]: number } = {}
+
+	-- Like Prompt, but skips (and returns false) if this productId was already prompted
+	-- within `interval` seconds — for "offer a purchase" flows that can otherwise re-fire on
+	-- every click (e.g. clicking Buy repeatedly while unable to afford an upgrade). Returns
+	-- whether it actually opened the dialog.
+	function ProductService.PromptThrottled(productId: number, interval: number): boolean
+		local now = os.clock()
+		local last = lastPromptAt[productId]
+		if last and (now - last) < interval then
+			return false
+		end
+		lastPromptAt[productId] = now
+		ProductService.Prompt(productId)
+		return true
+	end
+
 	-- Open the Roblox purchase dialog for a game pass. Fulfilment is server-side via
 	-- the registered game-pass handler (and an ownership check on load).
 	function ProductService.PromptGamePass(gamePassId: number)

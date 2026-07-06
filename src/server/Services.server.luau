@@ -30,6 +30,7 @@ local DevService = require(SSS.Scripts.Modules.DevService)
 local QuestService = require(SSS.Scripts.Modules.QuestService)
 local GoldenPegService = require(SSS.Scripts.Modules.GoldenPegService)
 local DailyRewardService = require(SSS.Scripts.Modules.DailyRewardService)
+local MetricsService = require(SSS.Scripts.Modules.MetricsService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
 CurrencyService.Init()
@@ -103,3 +104,6 @@ GroupRewardService.Init()
 -- CoinService after Currency/WarnUI/Sound: owns per-player collectible-coin availability and
 -- claiming (grants through Currency, announces via WarnUI, plays a collect SFX).
 CoinService.Init()
+-- MetricsService is standalone (own DataStore, PlayerAdded/Removing hooks only); order-
+-- independent, so it goes last. Records on live servers; /metrics prints the report.
+MetricsService.Init()

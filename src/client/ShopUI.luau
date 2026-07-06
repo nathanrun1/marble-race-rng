@@ -7,6 +7,7 @@ local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local ProfileStats = require(RS.Shared.ProfileStats)
+local UpgradeInfo = require(RS.Shared.UpgradeInfo)
 local StringUtils = require(RS.Shared.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
 local ProductService = require(RS.Shared.ProductService)
@@ -36,7 +37,6 @@ local TWEEN_INFO = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirecti
 local activeTween: Tween? = nil
 
 local BalanceChangedRE: RemoteEvent = RS.Remote.BalanceChanged
-local GetUpgradeInfoRF: RemoteFunction = RS.Remote.GetUpgradeInfo
 local PurchaseUpgradeRF: RemoteFunction = RS.Remote.PurchaseUpgrade
 local RequestUpgradeBoostRF: RemoteFunction = RS.Remote:WaitForChild("RequestUpgradeBoost")
 
@@ -60,23 +60,22 @@ local UI = {
     closeBtn = ShopGui.ShopFrame.UIListIgnore.CloseButton
 }
 
--- Types copied from UpgradeService
-export type Info = {
-	track: string,
-	name: string,
-	desc: string,
-	icon: string,
-	tier: number,
-	maxTier: number?, -- nil = unbounded
-	maxed: boolean,
-	price: number?,   -- nil if maxed
-	canAfford: boolean,
-	locked: boolean,
-}
+export type Info = UpgradeInfo.Info
 export type PurchaseResult = {
 	ok: boolean,
 	reason: string?,               -- "invalid_track" | "maxed" | "cannot_afford"
+	upgrades: { [string]: Info }?, -- fresh authoritative snapshot from the server
 }
+
+-- LOCAL source of truth for rendering: the server already pushes tiers (ProfileChanged)
+-- and cash (BalanceChanged) to this client, and pricing is pure Config math (shared
+-- UpgradeInfo). So the shop renders synchronously from these caches — no InvokeServer
+-- per render, which is what used to make the open shop flicker between two kiosks
+-- (overlapping in-flight loads racing to repaint). Purchases stay server-authoritative.
+local cachedUpgrades: { [string]: number } = {}
+local cachedBalance = 0
+local seededUpgrades = false -- pushes beat the initial pull; don't let the pull regress them
+local seededBalance = false
 
 export type Upgrades = { [string]: number }
 
@@ -102,6 +101,10 @@ local ORIGINAL_TIER_STROKE = UI.tierStroke and UI.tierStroke.Color
 local ORIGINAL_WORD = UI.word.Text
 
 local loadedTrack: string? = nil
+-- The Info the shop is currently rendering (kept fresh by the BalanceChanged/ProfileChanged
+-- reloads below). Drives the optimistic buy in onBuyPressed: its canAfford is the client's
+-- best guess at whether the purchase will succeed.
+local loadedInfo: Info? = nil
 
 -- The 3× boost grants 3 tiers, so it's only offered when at least 3 tiers remain.
 -- `boostButton` is bound at the bottom; loadShop captures it as a forward ref.
@@ -277,11 +280,11 @@ local function applyLockChrome(locked: boolean)
 	ShopFrame.Size = UDim2.new(size.X.Scale, size.X.Offset, 0, targetY)
 end
 
--- Loads ShopGui contents with the given track. Returns the loaded upgrade info.
+-- Loads ShopGui contents with the given track, synchronously, from the local caches.
+-- Returns the loaded upgrade info.
 function loadShop(track: string): Info
-	local allUpgradeInfo: { [string]: Info } = GetUpgradeInfoRF:InvokeServer()
-	local upgradeInfo: Info = allUpgradeInfo[track]
-	assert(upgradeInfo)
+	local upgradeInfo = UpgradeInfo.Build(track, cachedUpgrades[track] or 0, cachedBalance) :: Info
+	assert(upgradeInfo, "unknown upgrade track: " .. track)
 
 	UI.name.Text = upgradeInfo.name
 	applyLockChrome(upgradeInfo.locked)
@@ -342,38 +345,88 @@ function loadShop(track: string): Info
     end
 
     loadedTrack = track
+    loadedInfo = upgradeInfo
     return upgradeInfo
+end
+
+-- Render just the tier-advance bits (tier badge, pips, current/next effect values) as if a
+-- purchase of `info`'s next tier already succeeded. Deliberately partial: price/afford/boost
+-- state need server truth, and the loadShop that follows the purchase response re-renders
+-- everything from it either way.
+local function applyPredictedTier(track: string, info: Info)
+	local newTier = info.tier + 1
+	if info.maxTier ~= nil then
+		UI.tiers.Text = newTier .. " / " .. info.maxTier
+	else
+		UI.tiers.Text = tostring(newTier)
+	end
+	local maxedNow = info.maxTier ~= nil and newTier >= info.maxTier
+	UI.curValue.Text = ProfileStats.GetDisplayString(track, newTier)
+	UI.nextValue.Text = if maxedNow then "—" else ProfileStats.GetDisplayString(track, newTier + 1)
+	createPips(UI.track, info.maxTier, newTier)
 end
 
 -- Ask the server to start the instant-tiers (3×) purchase for a track, then prompt
 -- the dev product. The server records which track to grant and hands back the id;
--- fulfilment happens in UpgradeService's ProcessReceipt handler.
+-- fulfilment happens in UpgradeService's ProcessReceipt handler. Throttled so mashing
+-- Buy while unaffordable doesn't reopen the Robux dialog on every click.
 local function promptBoost(track: string?)
     if track == nil then
         return
     end
     local productId: number? = RequestUpgradeBoostRF:InvokeServer(track)
     if productId then
-        ProductService.Prompt(productId)
+        ProductService.PromptThrottled(productId, Config.UpgradeBoostPromptCooldown)
     end
 end
 
--- Invoked when purchase button pressed
+-- Invoked when purchase button pressed. OPTIMISTIC: when the last-rendered Info says the
+-- purchase should succeed, the success presentation (tier text/pips/values, pop, flare,
+-- sound) plays immediately instead of waiting out the server round trip; the response then
+-- re-renders from server truth either way, so a wrong guess (balance changed since the
+-- last render) simply snaps back rather than staying granted.
 function onBuyPressed()
-    if loadedTrack == nil then
+    local track = loadedTrack
+    if track == nil then
         return
     end
 
-	local purchaseResult: PurchaseResult = PurchaseUpgradeRF:InvokeServer(loadedTrack)
-    if purchaseResult.ok then
-		SoundService.Play({ soundId = Config.Sounds.Upgrade })
-        local upgradeInfo = loadShop(loadedTrack :: string)
+    local info = loadedInfo
+    local predicted = info ~= nil and info.canAfford and not info.locked and not info.maxed
+    if predicted then
+        -- Cleared until the response reconciles, so mashing Buy mid-flight falls back to
+        -- the non-optimistic path instead of re-predicting from the same stale tier.
+        loadedInfo = nil
+        SoundService.Play({ soundId = Config.Sounds.Upgrade })
+        applyPredictedTier(track, info :: Info)
         punch()
-        playFlare("Tier " .. upgradeInfo.tier)
-    elseif purchaseResult.reason == "cannot_afford" and boostAvailable then
-        -- Can't afford with cash → offer the instant-tiers dev product instead
-        -- (only when the boost is actually available, i.e. ≥3 tiers remain).
-        promptBoost(loadedTrack)
+        playFlare("Tier " .. ((info :: Info).tier + 1))
+    end
+
+	local purchaseResult: PurchaseResult = PurchaseUpgradeRF:InvokeServer(track)
+    -- Adopt the authoritative tiers the server returned (the ProfileChanged push usually
+    -- landed already, but this makes the re-render below correct regardless of ordering).
+    if purchaseResult.upgrades then
+        for t, i in purchaseResult.upgrades :: { [string]: Info } do
+            cachedUpgrades[t] = i.tier
+        end
+    end
+    if purchaseResult.ok then
+        local upgradeInfo = loadShop(track)
+        if not predicted then
+            SoundService.Play({ soundId = Config.Sounds.Upgrade })
+            punch()
+            playFlare("Tier " .. upgradeInfo.tier)
+        end
+    else
+        if predicted then
+            loadShop(track) -- prediction was wrong: revert to server truth
+        end
+        if purchaseResult.reason == "cannot_afford" and boostAvailable then
+            -- Can't afford with cash → offer the instant-tiers dev product instead
+            -- (only when the boost is actually available, i.e. ≥3 tiers remain).
+            promptBoost(track)
+        end
     end
 end
 
@@ -414,11 +467,21 @@ end
 
 -- Loads the given track
 function ShopUI.LoadTrack(track: string)
+	if track == loadedTrack and ShopGui.Enabled then
+		return -- already showing it; balance/tier refreshes re-render via the pushes below
+	end
 	loadShop(track)
 end
 
+-- Whole-shop snapshot computed from the local caches — same shape the server's
+-- GetUpgradeInfo returns. UpgradeShop renders its pad billboards from this.
+function ShopUI.GetAllInfoLocal(): { [string]: Info }
+	return UpgradeInfo.BuildAll(cachedUpgrades, cachedBalance)
+end
 
-BalanceChangedRE.OnClientEvent:Connect(function()
+BalanceChangedRE.OnClientEvent:Connect(function(newBalance: number)
+    cachedBalance = newBalance
+    seededBalance = true
     if ShopGui.Enabled and loadedTrack then
         loadShop(loadedTrack)
     end
@@ -427,7 +490,32 @@ end)
 -- Tier changes (e.g. the 3× boost granting instant tiers) push ProfileChanged rather
 -- than BalanceChanged, so refresh the open shop on that too.
 local ProfileChangedRE: RemoteEvent = RS.Remote:WaitForChild("ProfileChanged")
-ProfileChangedRE.OnClientEvent:Connect(function()
+ProfileChangedRE.OnClientEvent:Connect(function(profile: any)
+    cachedUpgrades = (profile and profile.upgrades) or {}
+    seededUpgrades = true
+    if ShopGui.Enabled and loadedTrack then
+        loadShop(loadedTrack)
+    end
+end)
+
+-- Seed the caches once on startup (the pushes above only arrive on CHANGES, and the shop
+-- can be opened before the first one). A push that lands before the pull returns wins.
+task.spawn(function()
+    local GetProfileRF = RS.Remote:WaitForChild("GetProfile") :: RemoteFunction
+    local GetBalanceRF = RS.Remote:WaitForChild("GetBalance") :: RemoteFunction
+    local okP, profile = pcall(function()
+        return GetProfileRF:InvokeServer()
+    end)
+    if okP and not seededUpgrades and type(profile) == "table" and type(profile.upgrades) == "table" then
+        cachedUpgrades = profile.upgrades
+    end
+    local okB, balance = pcall(function()
+        return GetBalanceRF:InvokeServer()
+    end)
+    if okB and not seededBalance and type(balance) == "number" then
+        cachedBalance = balance
+    end
+    -- If the shop somehow opened before the seed finished, repaint it with real numbers.
     if ShopGui.Enabled and loadedTrack then
         loadShop(loadedTrack)
     end

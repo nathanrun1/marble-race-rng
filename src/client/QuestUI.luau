@@ -26,6 +26,7 @@ local Config = require(RS.Shared.Config)
 local QuestUI = {}
 
 local player = Players.LocalPlayer
+local CurrencyFlyUI = require(player:WaitForChild("PlayerScripts"):WaitForChild("CurrencyFlyUI"))
 
 -- Mirrors QuestService.Info / QuestInfo (server-computed).
 type QuestInfo = {
@@ -388,6 +389,9 @@ end
 
 local function claim(index: number)
 	local res = claimRF:InvokeServer(index)
+	if res and res.granted then
+		CurrencyFlyUI.Play("Diamonds") -- quest rewards pay Diamonds
+	end
 	if res and res.info then
 		QuestUI.onInfo(res.info :: Info)
 	end

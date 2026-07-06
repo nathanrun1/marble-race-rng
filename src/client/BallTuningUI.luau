@@ -29,6 +29,7 @@ local RS               = game:GetService("ReplicatedStorage")
 local Config       = require(RS.Shared.Config)
 local ProfileStats = require(RS.Shared.ProfileStats)
 local UIButton     = require(RS.Shared.UIButton)
+local Signal       = require(RS.Shared.Signal)
 local CameraService = require(script.Parent:WaitForChild("CameraService"))
 local BallTuningPreview = require(script.Parent:WaitForChild("BallTuningPreview"))
 
@@ -367,6 +368,14 @@ local tuningOpen = false
 local tuningTween: Tween? = nil
 local tuningRestScale = 1   -- resting Scale captured at open (AutoScale-driven, or 1)
 
+-- Fires () each time the tuning menu opens. TutorialService's OpenTuningMenu completion
+-- waits on it (with IsMenuOpen covering "already open when the step started").
+Controller.MenuOpened = Signal.new()
+
+function Controller.IsMenuOpen(): boolean
+	return tuningOpen
+end
+
 -- The panel's UIScale — reuse AutoScale's if present, else make one. We animate this
 -- on open rather than the panel's Size so the list layout reflows with the growth.
 local function tuningScale(): UIScale
@@ -388,6 +397,7 @@ local function openTuning(triggerHost: GuiObject)
 	Controller.root.Visible = true
 	CameraService.SetTuningView(true) -- swing to the ball-tuning camera while open
 	BallTuningPreview.SetVisible(true) -- aim lines + preview ball
+	Controller.MenuOpened:Fire()
 
 	local scale = tuningScale()
 	tuningRestScale = scale.Scale   -- whatever it normally rests at (AutoScale or 1)

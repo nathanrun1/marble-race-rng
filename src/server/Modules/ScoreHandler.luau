@@ -243,12 +243,25 @@ local GOLD = Color3.fromRGB(255, 200, 40)
 local function handleGoldenPeg(ball: BasePart, player: Player, state: BallState, target: Instance)
 	local effect = GoldenPegService.TryConsume(ball, target, state.ownerUserId)
 	if effect == "double" then
-		state.value *= 2
-		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "GOLD ×2!", GOLD)
+		local mult = Config.GoldenPegs.BoostMult
+		local gained = state.value * (mult - 1)
+		state.value *= mult
+		BallEffects.DoClientEffect(
+			player,
+			"ShowValuePopup",
+			ball,
+			ball.CFrame,
+			"GOLD ×" .. tostring(mult) .. "! (+" .. StringUtils.FormatMoney(gained) .. ")",
+			GOLD
+		)
 		SoundService.PlayForClient(player, { soundId = Config.Sounds.Collect2 })
 	elseif effect == "clone" then
-		GoldenPegService.SpawnClone(ball, state.value, player.UserId)
-		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, "GOLD CLONE!", GOLD)
+		-- Only advertise the clone's value if it actually spawned (skipped at the ball cap).
+		local spawned = GoldenPegService.SpawnClone(ball, state.value, player.UserId)
+		local label = if spawned
+			then "GOLD CLONE! (+" .. StringUtils.FormatMoney(state.value) .. ")"
+			else "GOLD CLONE!"
+		BallEffects.DoClientEffect(player, "ShowValuePopup", ball, ball.CFrame, label, GOLD)
 		SoundService.PlayForClient(player, { soundId = Config.Sounds.Jackpot })
 	end
 end

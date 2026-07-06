@@ -1,8 +1,9 @@
 --!strict
 -- Luck ranks: named tiers for a player's lifetime average $/marble (the same server-
 -- authoritative figure StatsService.GetAvgMoneyPerBall / the $/marble leaderboard use).
--- Thresholds run on a roughly logarithmic scale ending at $1B/marble, which only very
--- late prestiges ever approach — the top ranks are long-tail chase goals.
+-- Thresholds run on a roughly logarithmic scale (a decade per rank from Grandmaster up)
+-- ending at $100T/marble, which only very late prestiges ever approach — the top ranks
+-- are long-tail chase goals.
 --
 -- Shared: the client HUD (MoneyPerBallUI) shows the local player's rank live, and the
 -- server (LeaderboardService) mirrors it into a leaderstats column so everyone's rank
@@ -18,8 +19,8 @@ export type Rank = {
 }
 
 -- Ascending by Threshold; RankFor walks it back-to-front. The first entry is the floor
--- (everyone qualifies), so RankFor never returns nil. The last four ranks carry a text
--- gradient; Godly is a full rainbow.
+-- (everyone qualifies), so RankFor never returns nil. Grandmaster and up carry a text
+-- gradient; Godly is a full rainbow, and the ranks past it escalate the cosmic theme.
 LuckRanks.Ranks = {
 	{ Threshold = 0,     Name = "Noob",        Color = Color3.fromRGB(150, 150, 150) },
 	{ Threshold = 25,    Name = "Rookie",      Color = Color3.fromRGB(200, 200, 200) },
@@ -57,6 +58,52 @@ LuckRanks.Ranks = {
 			ColorSequenceKeypoint.new(0.50, Color3.fromRGB(90, 255, 130)),
 			ColorSequenceKeypoint.new(0.75, Color3.fromRGB(80, 180, 255)),
 			ColorSequenceKeypoint.new(1.00, Color3.fromRGB(215, 110, 255)),
+		}),
+	},
+	{
+		Threshold = 10e9,
+		Name = "Mythic",
+		Color = Color3.fromRGB(200, 80, 255),
+		Gradient = ColorSequence.new(Color3.fromRGB(235, 150, 255), Color3.fromRGB(140, 30, 230)),
+	},
+	{
+		Threshold = 100e9,
+		Name = "Celestial",
+		Color = Color3.fromRGB(140, 190, 255),
+		Gradient = ColorSequence.new({
+			ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(0.50, Color3.fromRGB(140, 190, 255)),
+			ColorSequenceKeypoint.new(1.00, Color3.fromRGB(70, 80, 220)),
+		}),
+	},
+	{
+		Threshold = 1e12,
+		Name = "Cosmic",
+		Color = Color3.fromRGB(255, 120, 220),
+		Gradient = ColorSequence.new({ -- nebula: magenta -> violet -> deep blue
+			ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 110, 200)),
+			ColorSequenceKeypoint.new(0.45, Color3.fromRGB(170, 90, 255)),
+			ColorSequenceKeypoint.new(1.00, Color3.fromRGB(60, 120, 255)),
+		}),
+	},
+	{
+		Threshold = 10e12,
+		Name = "Transcendent",
+		Color = Color3.fromRGB(255, 235, 170),
+		Gradient = ColorSequence.new({ -- radiant white-gold
+			ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 250, 230)),
+			ColorSequenceKeypoint.new(0.50, Color3.fromRGB(255, 215, 110)),
+			ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 250, 230)),
+		}),
+	},
+	{
+		Threshold = 100e12,
+		Name = "Omega",
+		Color = Color3.fromRGB(255, 70, 70),
+		Gradient = ColorSequence.new({ -- crimson -> white-hot core -> crimson
+			ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 60, 60)),
+			ColorSequenceKeypoint.new(0.50, Color3.fromRGB(255, 245, 245)),
+			ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 60, 60)),
 		}),
 	},
 } :: { Rank }

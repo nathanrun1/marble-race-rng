@@ -1,6 +1,7 @@
 --!strict
--- Golden pegs (prestige perk, Config.GoldenPegs): every rebirth marks one more peg on the
--- board as "golden" for that player. The board is shared, so the set is PER-PLAYER: only
+-- Golden pegs (prestige perk, Config.GoldenPegs): rebirths mark pegs on the board as
+-- "golden" for that player, on an escalating schedule (peg k at prestige k(k+1)/2 — see
+-- pegsEarned). The board is shared, so the set is PER-PLAYER: only
 -- the owner's balls trigger their golden pegs, and only the owner sees them highlighted
 -- (client GoldenPegView, fed by the GoldenPegsChanged remote + GetGoldenPegs snapshot).
 --
@@ -15,6 +16,7 @@ local SSS = game:GetService("ServerScriptService")
 local Players = game:GetService("Players")
 
 local Config = require(RS.Shared.Config)
+local GoldenPegSchedule = require(RS.Shared.GoldenPegSchedule)
 local BallService = require(SSS.Scripts.Modules.BallService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 
@@ -69,11 +71,13 @@ local function pushToClient(player: Player)
 	end
 end
 
--- Grow (or rebuild) the player's golden set to match their prestige count. Growth keeps
--- the existing pegs and adds random new ones, so the set is stable within a session; a
--- count DECREASE (dev reset) rebuilds from scratch.
+-- Grow (or rebuild) the player's golden set to match their prestige count. The escalating
+-- unlock schedule (peg k at prestige k(k+1)/2, capped at MaxPegs) lives in the shared
+-- GoldenPegSchedule so PrestigeUI shows the same numbers. Growth keeps the existing pegs
+-- and adds random new ones, so the set is stable within a session; a count DECREASE (dev
+-- reset) rebuilds from scratch.
 local function syncSet(player: Player, prestigeCount: number)
-	local want = math.min(prestigeCount, Config.GoldenPegs.MaxPegs, #pegs)
+	local want = math.min(GoldenPegSchedule.PegsEarned(prestigeCount), #pegs)
 	local set = goldenSets[player.UserId]
 	if not set then
 		set = {}

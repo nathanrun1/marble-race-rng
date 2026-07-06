@@ -106,11 +106,22 @@ export type PrestigeInfo = {
 	nextCost: number,         -- PP cost to reach count+1
 	canPrestige: boolean,
 	multiplier: number,
+	-- The rebirth requirement expressed in CASH (what the player actually banks), for the UI:
+	-- total credited banking needed for the next rebirth, and how much of it is banked so far
+	-- (== moneyRequired when ready). PP is the real gate; these invert the PP curve so the UI
+	-- can say "bank $X more" instead of the abstract RP number. Server-computed because the
+	-- inversion needs ppSpent/creditedBanked, which aren't in this payload.
+	moneyRequired: number,
+	moneyProgress: number,
 }
 
 local function buildInfo(d: PrestigeData): PrestigeInfo
 	local pp = availablePP(d)
 	local nextCost = computeCost(d.count + 1)
+	-- Credited banking at which available PP reaches nextCost (inverts earnedPP; +0.5 for the
+	-- same floor-landing reason as creditedCapFor). Held as "required vs progress" so the UI's
+	-- money bar/text can't drift from the true PP gate.
+	local creditedNeeded = Config.Prestige.Scale * (d.ppSpent + nextCost + 0.5) ^ (1 / Config.Prestige.Exponent)
 	return {
 		count = d.count,
 		lifetimeBanked = d.lifetimeBanked,
@@ -118,6 +129,8 @@ local function buildInfo(d: PrestigeData): PrestigeInfo
 		nextCost = nextCost,
 		canPrestige = pp >= nextCost,
 		multiplier = Config.Prestige.MultPer ^ d.count,
+		moneyRequired = creditedNeeded,
+		moneyProgress = math.min(d.creditedBanked, creditedNeeded),
 	}
 end
 

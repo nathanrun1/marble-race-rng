@@ -35,7 +35,7 @@ local function renderCash(label: TextLabel)
 end
 
 local function renderDiamonds(label: TextLabel)
-	label.Text = StringUtils.FormatShort(diamonds, false, 0)
+	label.Text = StringUtils.FormatShort(diamonds, true, 2)
 end
 
 local function renderAllCash()

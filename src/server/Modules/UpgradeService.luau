@@ -14,6 +14,7 @@ local RS = game:GetService("ReplicatedStorage")
 local SSS = game:GetService("ServerScriptService")
 
 local Config = require(RS.Shared.Config)
+local UpgradeInfo = require(RS.Shared.UpgradeInfo)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
@@ -27,103 +28,29 @@ local UpgradeService = {}
 local BOOST_TIERS = 3
 local BOOST_PRODUCT_ID = tonumber(Config.Products.UpgradeBoost)
 
--- Loose indexer view of Config.Upgrades for dynamic (track-name) access. The
--- precise struct stays available to ProfileStats; here we only read the fields
--- relevant to pricing, caps, and display.
-type UpgradeDef = {
-	Cost: { Initial: number?, Base: number, Growth: number },
-	Name: string?,
-	Desc: string?,
-	Icon: string?,
-	Caps: { number }?,                         -- Frequency: tier cap = #Caps - 1
-	Widths: { number }?,                       -- Arc: tier cap = #Widths - 1
-	Ranges: { { Min: number, Max: number } }?, -- continuous axes: cap = #Ranges - 1
-	MaxTier: number?,
-	Locked: boolean?, -- starts hidden behind a flat unlock; see Info.locked
-}
+-- Defs, pricing, caps, and the Info shape all live in shared/UpgradeInfo — the SAME pure
+-- math the client renders from (ShopUI/UpgradeShop compute their displays locally). This
+-- module stays the authority on actual purchases: it feeds UpgradeInfo the authoritative
+-- tier/balance and does the atomic deduct+increment.
+type UpgradeDef = UpgradeInfo.UpgradeDef
+local UpgradeDefs = UpgradeInfo.Defs
 
--- Everything purchasable: the idle/scoring tracks (Config.Upgrades) AND the
--- continuous axes (Config.Axes), whose tier unlocks a wider range. Tiers for both
--- already live together in ProfileService's upgrades table, so they sell the same
--- way. A listed entry must have a Cost.
-local UpgradeDefs: { [string]: UpgradeDef } = {}
-for name, def in (Config.Upgrades :: any) do
-	UpgradeDefs[name] = def
-end
-for name, def in (Config.Axes :: any) do
-	UpgradeDefs[name] = def
-end
-
-export type Info = {
-	track: string,
-	name: string,
-	desc: string,
-	icon: string,
-	tier: number,
-	maxTier: number?, -- nil = unbounded
-	maxed: boolean,
-	price: number?,   -- nil if maxed
-	canAfford: boolean,
-	-- True for a Locked track still at tier 0: the shop UI shows a "???" teaser (name only)
-	-- with a flat unlock price instead of the real desc/icon/tier/values. Buying tier 0->1 is
-	-- otherwise an ordinary purchase — same price, same Purchase() call — just re-skinned as
-	-- "Unlock". Once tier >= 1 it behaves exactly like any other upgrade forever after.
-	locked: boolean,
-}
+export type Info = UpgradeInfo.Info
 export type PurchaseResult = {
 	ok: boolean,
 	reason: string?,               -- "invalid_track" | "maxed" | "cannot_afford"
 	upgrades: { [string]: Info }?, -- fresh snapshot for the UI to re-render
 }
 
--- List-based tracks (Caps/Widths/Ranges) cap at their list length; others are
--- unbounded.
-local function maxTierOf(def: UpgradeDef): number?
-	if def.Caps then
-		return #def.Caps - 1
-	elseif def.Widths then
-		return #def.Widths - 1
-	elseif def.Ranges then
-		return #def.Ranges - 1
-	elseif def.MaxTier then
-		return def.MaxTier
-	end
-	return nil
-end
-
--- Cost to buy currentTier -> currentTier+1, or nil if already maxed. Geometric:
--- first tier costs Base, each further tier multiplies by Growth.
-local function priceAt(track: string, currentTier: number): number?
-	local def = UpgradeDefs[track]
-	if currentTier == 0 and def.Cost.Initial then
-		return def.Cost.Initial
-	end
-	local maxTier = maxTierOf(def)
-	if maxTier and currentTier >= maxTier then
-		return nil
-	end
-	return math.floor(def.Cost.Base * (def.Cost.Growth ^ currentTier))
-end
+local maxTierOf = UpgradeInfo.MaxTierOf
+local priceAt = UpgradeInfo.PriceAt
 
 function UpgradeService.GetInfo(player: Player, track: string): Info?
-	local def = UpgradeDefs[track]
-	if not def then
-		return nil
-	end
-	local tier = ProfileService.GetUpgradeTier(player, track)
-	local price = priceAt(track, tier)
-	return {
-		track = track,
-		name = def.Name or track,
-		desc = def.Desc or "",
-		icon = def.Icon or "",
-		tier = tier,
-		maxTier = maxTierOf(def),
-		maxed = price == nil,
-		price = price,
-		canAfford = price ~= nil and CurrencyService.GetPoints(player) >= price,
-		locked = def.Locked == true and tier == 0,
-	}
+	return UpgradeInfo.Build(
+		track,
+		ProfileService.GetUpgradeTier(player, track),
+		CurrencyService.GetPoints(player)
+	)
 end
 
 -- Whole-shop snapshot: one Info per track. What the shop UI renders from.
@@ -163,6 +90,14 @@ function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	CurrencyService.AddPoints(player, -price, "Upgrade: " .. track)
 	ProfileService.SetUpgradeTier(player, track, tier + 1)
 	StatsService.AddUpgradesPurchased(player, 1)
+	-- MaxBet raises the ceiling of the bet ladder; jump the player's SELECTED bet tier to the
+	-- rung they just bought too (matching the "just click max after upgrading" habit from
+	-- before the raise/lower system existed), regardless of which UI bought it — the shop's
+	-- buy button or BallLaunchUI's own unlock flow (which also does this locally, redundantly
+	-- but harmlessly, since SetBetTier is idempotent at the same tier).
+	if track == "MaxBet" then
+		ProfileService.SetBetTier(player, tier + 1)
+	end
 	return { ok = true, upgrades = UpgradeService.GetAllInfo(player) }
 end
 

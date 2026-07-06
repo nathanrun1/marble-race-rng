@@ -64,7 +64,7 @@ if RunService:IsClient() then
 		label.TextStrokeColor3 = Color3.new(0, 0, 0)
 		label.TextStrokeTransparency = 0.3
 		label.TextScaled = true
-		label.Font = Enum.Font.GothamBold
+		label.Font = Enum.Font.FredokaOne
 		label.Parent = host
 
 		-- Constrain TextScaled — smaller than AnnounceUI's 80.
@@ -126,6 +126,13 @@ if RunService:IsClient() then
 		AutoScale.Apply(host)
 
 		bannerHost = host
+	end
+
+	-- Client-side counterpart of the server's Warn: show a banner locally without a server
+	-- round trip (e.g. DailyRewardUI announcing the just-revealed reward).
+	function WarnUI.WarnLocal(text: string, color: Color3?, lifetime: number?)
+		table.insert(messageQueue, { text = text, color = color, lifetime = lifetime })
+		processQueue()
 	end
 
 	function WarnUI.Init()

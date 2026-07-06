@@ -134,7 +134,7 @@ local function createUI(playerGui: PlayerGui)
 	lbl.TextStrokeTransparency = 0.4
 	lbl.TextScaled = false
 	lbl.TextSize = 40
-	lbl.Font = Enum.Font.GothamBold
+	lbl.Font = Enum.Font.FredokaOne
 	lbl.Active = false      -- never sink input: clicks (incl. world SurfaceGuis behind it) pass through
 	lbl.Interactable = false
 	lbl.Parent = container
@@ -152,7 +152,7 @@ local function createUI(playerGui: PlayerGui)
 	luckLbl.TextStrokeTransparency = 0.4
 	luckLbl.TextScaled = false
 	luckLbl.TextSize = 26
-	luckLbl.Font = Enum.Font.GothamBold
+	luckLbl.Font = Enum.Font.FredokaOne
 	luckLbl.Active = false
 	luckLbl.Interactable = false
 	luckLbl.Parent = container
@@ -170,7 +170,7 @@ local function createUI(playerGui: PlayerGui)
 	rankLbl.TextStrokeTransparency = 0.4
 	rankLbl.TextScaled = false
 	rankLbl.TextSize = 24
-	rankLbl.Font = Enum.Font.GothamBold
+	rankLbl.Font = Enum.Font.FredokaOne
 	rankLbl.Active = false
 	rankLbl.Interactable = false
 	rankLbl.Parent = container

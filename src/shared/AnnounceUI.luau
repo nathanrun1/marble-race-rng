@@ -63,7 +63,7 @@ if RunService:IsClient() then
 		label.TextStrokeColor3 = Color3.new(0, 0, 0)
 		label.TextStrokeTransparency = 0.2
 		label.TextScaled = true
-		label.Font = Enum.Font.GothamBlack
+		label.Font = Enum.Font.FredokaOne
 		label.Parent = host
 
 		-- Constrain TextScaled so it fills big without going absurd on wide screens.

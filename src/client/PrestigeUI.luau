@@ -11,7 +11,7 @@
 --       .UIListIgnore.CloseButton             -- close button
 --       .Frame  (TextButton face + base Frame)-- the candy "PRESTIGE" button
 --       .HeroGroup.Frame.{Now,Next}           -- ×now → ×next multiplier
---       .Prog.{Pts, Frame.Fill}               -- PP "x / cost" + progress fill
+--       .Prog.{Pts, Frame.Fill}               -- "$banked / $required" + progress fill (cash, not RP)
 --       .Stats.<3 chips>.Val                  -- lifetime / next cost / prestige #
 
 local PrestigeUI = {}
@@ -21,9 +21,11 @@ local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local Config = require(RS.Shared.Config)
+local GoldenPegSchedule = require(RS.Shared.GoldenPegSchedule)
 local StringUtils = require(RS.Shared.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
 local UIButton = require(RS.Shared.UIButton)
+local CurrencyFlyUI = require(script.Parent:WaitForChild("CurrencyFlyUI"))
 
 local player: Player = Players.LocalPlayer :: Player
 local PlayerGui: PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
@@ -41,6 +43,8 @@ type PrestigeInfo = {
 	nextCost: number,
 	canPrestige: boolean,
 	multiplier: number,
+	moneyRequired: number, -- rebirth requirement in cash (see PrestigeService.buildInfo)
+	moneyProgress: number, -- how much of moneyRequired is banked so far
 }
 
 -- The per-prestige multiplier step; next-mult = current × MULT_PER.
@@ -83,6 +87,12 @@ local trigMult: any = trigMeta and trigMeta:FindFirstChild("Mult")
 
 -- Stat chips share the default name "Frame"; resolve them by LayoutOrder. Each
 -- chip holds a "Val" label. Order matches GenUI: lifetime, next cost, prestige #.
+-- Golden-obstacle footer labels (runtime-built in Init — the panel is Studio-authored, so
+-- the row is appended to its UIListLayout and the panel grows to fit). Filled by render.
+local GOLD_TEXT = Color3.fromRGB(191, 138, 16)
+local pegCountLabel: TextLabel? = nil
+local pegNextLabel: TextLabel? = nil
+
 local function resolveStatVals(stats: Instance): (any, any, any)
 	local chips = {}
 	for _, c in stats:GetChildren() do
@@ -191,21 +201,23 @@ local lastCan: boolean? = nil
 local function render(info: PrestigeInfo)
 	local now = info.multiplier
 	local nxt = info.multiplier * MULT_PER
-	local pp = info.prestigePoints
-	local cost = info.nextCost
 	local can = info.canPrestige
 
-	-- Multipliers keep decimals (×1.25) but abbreviate once large (×1.2K); PP / costs
-	-- abbreviate like money but without the "$" (see StringUtils.FormatCompact).
+	-- Multipliers keep decimals (×1.25) but abbreviate once large (×1.2K). The requirement
+	-- rows show CASH (what the player actually banks), not the underlying RP numbers —
+	-- server-inverted from the PP curve (info.moneyRequired/moneyProgress), so "how do I
+	-- rebirth" reads as a money target instead of an abstract currency.
+	local moneyRequired = info.moneyRequired or 0
+	local moneyProgress = info.moneyProgress or 0
 	trigMult.Text = "×" .. StringUtils.FormatShort(now)
 	heroNow.Text  = "×" .. StringUtils.FormatShort(now)
 	heroNext.Text = "×" .. StringUtils.FormatShort(nxt)
-	ptsVal.Text   = StringUtils.FormatCompact(pp) .. " / " .. StringUtils.FormatCompact(cost)
+	ptsVal.Text   = StringUtils.FormatMoney(moneyProgress) .. " / " .. StringUtils.FormatMoney(moneyRequired)
 	statLife.Text = StringUtils.FormatMoney(info.lifetimeBanked)
-	statCost.Text = StringUtils.FormatCompact(cost) .. " RP"
+	statCost.Text = StringUtils.FormatMoney(moneyRequired)
 	statNum.Text  = info.count .. " → " .. (info.count + 1)
 
-	local frac = math.clamp(cost > 0 and pp / cost or 0, 0, 1)
+	local frac = math.clamp(moneyRequired > 0 and moneyProgress / moneyRequired or 0, 0, 1)
 	TweenService:Create(pgFill, TweenInfo.new(0.4, Enum.EasingStyle.Quad), { Size = UDim2.new(frac, 0, 1, 0) }):Play()
 
 	-- Only (re)start the glow / recolour when affordability flips, so frequent balance
@@ -225,9 +237,23 @@ local function render(info: PrestigeInfo)
 			g.Color = if can then ColorSequence.new(VIOLET_LT, VIOLET) else ColorSequence.new(LOCK_FACE, LOCK_BASE)
 		end
 	end
-	goLabel.Text = if can then "REBIRTH" else ("NEED " .. StringUtils.FormatCompact(cost - pp) .. " MORE RP")
+	goLabel.Text = if can then "REBIRTH" else ("BANK " .. StringUtils.FormatMoney(moneyRequired - moneyProgress) .. " MORE")
 	goLabel.TextSize = if can then 32 else 23
 	goFace.Active = can
+
+	-- Golden obstacle progress — same schedule the server sizes the set with
+	-- (shared GoldenPegSchedule: peg k at prestige k(k+1)/2, capped at MaxPegs).
+	if pegCountLabel and pegNextLabel then
+		local have = GoldenPegSchedule.PegsEarned(info.count)
+		pegCountLabel.Text = have .. " Golden Obstacle" .. (if have == 1 then "" else "s")
+		local nextAt = GoldenPegSchedule.NextPegAt(info.count)
+		if nextAt then
+			local remaining = nextAt - info.count
+			pegNextLabel.Text = remaining .. " Rebirth" .. (if remaining == 1 then "" else "s") .. " until next Golden Obstacle"
+		else
+			pegNextLabel.Text = "Golden Obstacles maxed!"
+		end
+	end
 end
 
 local function refresh()
@@ -259,6 +285,9 @@ local function onPrestigePressed()
 		punch()
 		playFlare("REBIRTH Lv " .. result.info.count .. "!")
 		SoundService.Play({ soundId = Config.Sounds.Prestige })
+		-- Rebirth's currency payout is Diamonds (PrestigeService's RebirthCCRatio cut) —
+		-- cash just resets, so that's the balance worth celebrating.
+		CurrencyFlyUI.Play("Diamonds")
 	end
 end
 
@@ -279,6 +308,43 @@ end
 
 function PrestigeUI.Init()
 	overlay.Visible = false
+
+	-- Golden-obstacle footer: one slim row appended below the PRESTIGE button (the
+	-- panel's UIListLayout runs on LayoutOrder; the button row is order 9). The panel
+	-- has a fixed authored height, so grow it by the row's height + list padding.
+	local ROW_HEIGHT = 44
+	local row = f("Frame", {
+		Name = "GoldenPegs",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
+		LayoutOrder = 10,
+	}, panel)
+	f("UIListLayout", {
+		FillDirection = Enum.FillDirection.Vertical,
+		HorizontalAlignment = Enum.HorizontalAlignment.Center,
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		Padding = UDim.new(0, 2),
+	}, row)
+	pegCountLabel = f("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 22),
+		Font = Enum.Font.FredokaOne,
+		TextSize = 19,
+		TextColor3 = GOLD_TEXT,
+		Text = "",
+		LayoutOrder = 1,
+	}, row)
+	pegNextLabel = f("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 18),
+		Font = Enum.Font.FredokaOne,
+		TextSize = 15,
+		TextColor3 = GOLD_TEXT,
+		TextTransparency = 0.25,
+		Text = "",
+		LayoutOrder = 2,
+	}, row)
+	panel.Size += UDim2.fromOffset(0, ROW_HEIGHT + 5)
 
 	-- Trigger uses UIButton (press feel + the availability glow); the rest keep their
 	-- bespoke FX.

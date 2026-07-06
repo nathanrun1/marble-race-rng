@@ -19,6 +19,7 @@ local StringUtils = require(RS.Shared.StringUtils)
 local UIButton = require(RS.Shared.UIButton)
 local ProductService = require(RS.Shared.ProductService)
 local Config = require(RS.Shared.Config)
+local WarnUI = require(RS.Shared.WarnUI)
 
 local player = Players.LocalPlayer
 
@@ -69,12 +70,15 @@ local lowerHost = BottomBar:WaitForChild("LowerBtn")
 -- sibling) can't reach it. Both are painted manually instead, in lockstep.
 local autoHost = BottomBar:WaitForChild("AutoBtn")
 local autoButton = autoHost:WaitForChild("Button") :: GuiButton
-local autoShadow = autoButton:WaitForChild("UIListIgnore"):WaitForChild("Shadow") :: GuiObject
+local autoShadow = autoHost:WaitForChild("Shadow") :: GuiObject
 
 -- ownedTier: the player's purchased MaxBet tier (server truth). selectedTier: the
 -- currently displayed/selected rung, 0 .. ownedTier + 1 (the "+1" is the locked preview).
 local ownedTier = 0
 local selectedTier = 0
+-- The latest profile.upgrades pushed by the server (ProfileChanged / the Init pull) —
+-- lets launch clicks compute their countdown locally instead of a GetProfile round trip.
+local latestUpgrades: any = {}
 
 -- Bound inside Controller.Init (assigned before render()/onRaise()/onLower() can ever
 -- actually run — they're only reachable via button clicks or the heartbeat, both wired
@@ -137,6 +141,7 @@ end
 -- selectedTier from loadout.BetTier (never above ownedTier — the locked preview only
 -- ever exists client-side, so the server never reports it).
 local function onProfileChanged(profile: any)
+	latestUpgrades = profile.upgrades or {}
 	ownedTier = (profile.upgrades and profile.upgrades.MaxBet) or 0
 	selectedTier = (profile.loadout and profile.loadout.BetTier) or ownedTier
 	if ownedTier ~= lastPricedTier then
@@ -153,15 +158,30 @@ local function refreshFromProfile()
 	end
 end
 
--- Move to `tier`. An owned rung round-trips through the server (the single source of
--- truth for loadout.Bet); the one-rung-ahead locked preview is local-only.
+-- Move to `tier`. Client-authored, like ShopUI's optimistic buy: the client knows the
+-- clamp rule (0 .. ownedTier, +1 as the local-only locked preview), so the selection
+-- renders immediately and the SetBetTier round trip reconciles in the background —
+-- re-rendering only if the server clamps to something else (ownedTier changed under us).
+local selectToken = 0
 local function selectTier(tier: number)
+	selectToken += 1
+	local myToken = selectToken
 	if tier <= ownedTier then
-		selectedTier = SetBetTierRF:InvokeServer(tier)
+		selectedTier = math.max(tier, 0)
+		render()
+		task.spawn(function()
+			local confirmed = SetBetTierRF:InvokeServer(tier)
+			-- Only the LATEST selection reconciles; a stale (out-of-order) response
+			-- rubber-banding an already-superseded rung would look like a glitch.
+			if myToken == selectToken and type(confirmed) == "number" and confirmed ~= selectedTier then
+				selectedTier = confirmed
+				render()
+			end
+		end)
 	else
 		selectedTier = math.min(tier, ownedTier + 1)
+		render()
 	end
-	render()
 end
 
 -- No manual "already at the edge" guard needed here — RaiseBtn/LowerBtn are actually
@@ -189,12 +209,15 @@ local function attemptUnlock()
 		local info = result.upgrades and result.upgrades.MaxBet
 		local newOwnedTier = if info then info.tier else ownedTier + 1
 		ownedTier = newOwnedTier
-		selectedTier = SetBetTierRF:InvokeServer(newOwnedTier)
+		selectTier(newOwnedTier) -- optimistic render + background SetBetTier reconcile
 		refreshPrice() -- also renders; the newly-unlocked tier needs its OWN next price cached
 	elseif result.reason == "cannot_afford" then
 		local productId = RequestUpgradeBoostRF:InvokeServer("MaxBet")
 		if productId then
-			ProductService.Prompt(productId)
+			-- Throttled (shared cooldown with ShopUI's promptBoost, keyed by productId) so
+			-- clicking LAUNCH/UNLOCK repeatedly while broke doesn't reopen the Robux dialog
+			-- on every click.
+			ProductService.PromptThrottled(productId, Config.UpgradeBoostPromptCooldown)
 		end
 	end
 end
@@ -214,8 +237,9 @@ local function onLaunchClicked()
 	end
 	RequestLaunchRE:FireServer()
 
-	local upgrades = GetProfileRF:InvokeServer().upgrades
-	local delay = ProfileStats.GetLaunchDelay(upgrades)
+	-- Client-authored countdown: the delay derives from the cached upgrades (kept fresh by
+	-- ProfileChanged) instead of blocking on a GetProfile round trip every single launch.
+	local delay = ProfileStats.GetLaunchDelay(latestUpgrades)
 	local start = os.clock()
 	while os.clock() - start < delay do
 		launchWordLabel.Text = string.format("%.1f", delay - (os.clock() - start))
@@ -228,9 +252,23 @@ end
 
 -- Auto-launch only fires real launches — never spam Unlock purchase attempts every
 -- heartbeat if the player parks the selection on the locked preview rung with auto on.
+-- Parked there, say WHY nothing is launching instead of silently idling (throttled —
+-- this runs every heartbeat, and WarnUI queues).
+local LOCKED_WARN_INTERVAL = 3
+local lastLockedWarn = 0
+
 local function onHeartbeat()
-	if doAutoLaunch and selectedTier <= ownedTier then
+	if not doAutoLaunch then
+		return
+	end
+	if selectedTier <= ownedTier then
 		onLaunchClicked()
+	else
+		local now = os.clock()
+		if now - lastLockedWarn >= LOCKED_WARN_INTERVAL then
+			lastLockedWarn = now
+			WarnUI.WarnLocal("Bet size locked!")
+		end
 	end
 end
 

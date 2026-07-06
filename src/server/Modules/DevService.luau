@@ -45,6 +45,7 @@ local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
+local MetricsService = require(SSS.Scripts.Modules.MetricsService)
 
 local DevService = {}
 
@@ -964,7 +965,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, cc, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium"
+		return "commands: tier, maxall, bet, axis, money, cc, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -1103,6 +1104,13 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		local userId = tonumber(a2)
 		ev:Fire(if userId then userId else player.UserId)
 		return "loaded your character onto all 3 podium spots"
+	elseif cmd == "metrics" then
+		-- Day-by-day analytics report (MetricsService) — yields on DataStore reads, so it
+		-- runs off the chat thread and prints to the server console when done.
+		local days = tonumber(a2)
+		task.spawn(MetricsService.PrintReport, days)
+		return string.format("printing metrics report (last %d days) to server console",
+			math.clamp(math.floor(days or Config.Metrics.ReportDays), 1, 90))
 	elseif cmd == "attempt_prestige" then
 		local ok, reason = PrestigeService.Prestige(player)
 		if ok then

@@ -8,8 +8,9 @@
 -- showing the track's short name, current level, and next price — coloured green when you
 -- can afford it, red when you can't — plus a sparkle particle off the touch pad while it's
 -- affordable. This lets players see what's worth buying without walking onto every pad and
--- opening the shop. Affordability/tier/price all come from GetUpgradeInfo (server-computed),
--- refreshed on balance and profile changes.
+-- opening the shop. Affordability/tier/price are computed locally (shared UpgradeInfo math
+-- over the tiers/balance the server pushes — see ShopUI.GetAllInfoLocal), refreshed on
+-- balance and profile changes.
 
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
@@ -25,7 +26,6 @@ local PlayerScripts = player:WaitForChild("PlayerScripts")
 local ShopUI = require(PlayerScripts:WaitForChild("ShopUI"))
 
 local Remote = RS:WaitForChild("Remote")
-local GetUpgradeInfoRF = Remote:WaitForChild("GetUpgradeInfo") :: RemoteFunction
 local BalanceChangedRE = Remote:WaitForChild("BalanceChanged") :: RemoteEvent
 local ProfileChangedRE = Remote:WaitForChild("ProfileChanged") :: RemoteEvent
 
@@ -250,16 +250,15 @@ local function applyInfo(d: Display, info: any)
 end
 
 ----------------------------------------------------------------------------------
--- Refresh (coalesced): one GetUpgradeInfo snapshot updates every display.
+-- Refresh (coalesced): one locally-computed snapshot updates every display.
 ----------------------------------------------------------------------------------
 local refreshScheduled = false
 
 local function refreshAll()
 	if #displays == 0 then return end
-	local ok, snapshot = pcall(function()
-		return GetUpgradeInfoRF:InvokeServer()
-	end)
-	if not ok or type(snapshot) ~= "table" then return end
+	-- Computed client-side from the tiers/balance the server pushes (ShopUI's caches) —
+	-- no round trip, same numbers the server would price.
+	local snapshot = ShopUI.GetAllInfoLocal()
 	for _, d in displays do
 		local info = (snapshot :: any)[d.track]
 		if info then
@@ -269,7 +268,7 @@ local function refreshAll()
 end
 
 -- BalanceChanged can fire many times a second (every bank), so batch bursts into one
--- round-trip every ~0.4s rather than invoking the remote per event.
+-- repaint every ~0.4s rather than re-styling every billboard per event.
 local function requestRefresh()
 	if refreshScheduled then return end
 	refreshScheduled = true
@@ -329,6 +328,13 @@ local function buildDisplay(inst: BasePart, track: string)
 	requestRefresh()
 end
 
+-- Per-pad touch debounce: a single step-on fires Touched once per limb, which re-entered
+-- OpenShop/LoadTrack back-to-back and double-played the open tween. Keyed by pad (not one
+-- shared timer) so stepping straight from one kiosk onto another still switches tracks
+-- immediately.
+local TOUCH_DEBOUNCE = 0.5
+local lastTouch: { [Instance]: number } = {}
+
 local function setupShopAt(inst: Instance)
 	if not inst:IsA("BasePart") or seen[inst] then
 		return
@@ -341,6 +347,9 @@ local function setupShopAt(inst: Instance)
 
 	inst.Touched:Connect(function(obj: Instance)
 		if not obj:IsDescendantOf(player.Character) then return end
+		local now = os.clock()
+		if now - (lastTouch[inst] or 0) < TOUCH_DEBOUNCE then return end
+		lastTouch[inst] = now
 		if ShopUI.IsOpen() then
 			ShopUI.LoadTrack(track)
 			return
@@ -357,6 +366,7 @@ local function teardownShopAt(inst: Instance)
 	if not inst:IsA("BasePart") then return end
 	seen[inst] = nil
 	defaultColors[inst] = nil
+	lastTouch[inst] = nil
 	local d = displaysByPart[inst]
 	if not d then return end
 	displaysByPart[inst] = nil

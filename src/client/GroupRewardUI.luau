@@ -13,6 +13,7 @@ local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 
 local Config = require(RS.Shared.Config)
+local CurrencyFlyUI = require(script.Parent:WaitForChild("CurrencyFlyUI"))
 
 local GroupRewardUI = {}
 
@@ -28,6 +29,7 @@ local Remote = RS:WaitForChild("Remote")
 local GetStatsRF = Remote:WaitForChild("GetStats") :: RemoteFunction
 local StatsChangedRE = Remote:WaitForChild("StatsChanged") :: RemoteEvent
 local PromptJoinRE = Remote:WaitForChild("PromptGroupJoin") :: RemoteEvent
+local ClaimedRE = Remote:WaitForChild("GroupRewardClaimed") :: RemoteEvent
 
 local labels: { [Instance]: TextLabel } = {}
 local lastClaim = 0
@@ -99,6 +101,11 @@ function GroupRewardUI.Init()
 			lastClaim = s.lastGroupRewardClaim
 		end
 		render()
+	end)
+
+	-- Server confirmed a successful claim (the grant is a cash cut of the balance): celebrate.
+	ClaimedRE.OnClientEvent:Connect(function()
+		CurrencyFlyUI.Play("Cash")
 	end)
 
 	-- Server tells us a non-member touched a pad: open the Roblox join-group dialog. Debounced

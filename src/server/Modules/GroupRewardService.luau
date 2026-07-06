@@ -38,6 +38,7 @@ local busy: { [number]: boolean } = {}
 local connections: { [Instance]: RBXScriptConnection } = {}
 
 local promptJoinRE: RemoteEvent? = nil
+local claimedRE: RemoteEvent? = nil -- fired at the claimer on a successful grant (client FX)
 
 local function attemptClaim(player: Player)
 	local id = player.UserId
@@ -67,8 +68,19 @@ local function attemptClaim(player: Player)
 	local reward = math.floor(CurrencyService.GetPoints(player) * FRACTION)
 	StatsService.SetGroupRewardClaimedNow(player) -- stamp first so a re-touch is gated
 	CurrencyService.AddPoints(player, reward, "Group Reward")
-	AnnounceUI.Announce(player, "Claimed +15%!", Config.GroupReward.LabelColor)
+	local percent = math.floor(FRACTION * 100 + 0.5)
+	AnnounceUI.Announce(
+		player,
+		("Claimed %s (%d%%)!"):format(StringUtils.FormatMoney(reward), percent),
+		Config.GroupReward.LabelColor
+	)
 	ScoreUI.PostMessage(player, "Group Reward: " .. StringUtils.FormatMoney(reward), Config.GroupReward.MsgColor)
+	-- Tell the claimer's client the grant landed, so it can run its celebration FX — pushed
+	-- from here (not inferred from the persisted claim timestamp replicating) so a rejoin
+	-- shortly after a claim can't look like a fresh one.
+	if claimedRE then
+		claimedRE:FireClient(player, reward)
+	end
 end
 
 local function addPad(inst: Instance)
@@ -100,6 +112,11 @@ function GroupRewardService.Init()
 	re.Name = "PromptGroupJoin"
 	re.Parent = RS.Remote
 	promptJoinRE = re
+
+	local claimed = Instance.new("RemoteEvent")
+	claimed.Name = "GroupRewardClaimed"
+	claimed.Parent = RS.Remote
+	claimedRE = claimed
 
 	for _, inst in CollectionService:GetTagged(Config.Tags.GroupReward) do
 		addPad(inst)

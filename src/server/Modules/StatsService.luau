@@ -28,6 +28,8 @@ export type Stats = {
 	ownsStarterPack: boolean,
 	lastGroupRewardClaim: number, -- os.time() of the last group-reward claim (0 = never)
 	completedTutorial: boolean,   -- whether the join tutorial has been finished/skipped
+	completedCosmeticTutorial: boolean, -- the later 50-Diamonds cosmetics-shop tutorial
+	completedTuningTutorial: boolean,   -- the first-axis-upgrade ball-tuning tutorial
 	-- Oldest-first, newest last; capped at Config.BallAverage.Window entries (PrestigeService
 	-- empties this on rebirth). Feeds GetAvgMoneyPerBall via BallAverage.Compute.
 	recentBalls: { number },
@@ -57,6 +59,8 @@ local function defaults(): Stats
 		ownsStarterPack = false,
 		lastGroupRewardClaim = 0,
 		completedTutorial = false,
+		completedCosmeticTutorial = false,
+		completedTuningTutorial = false,
 		recentBalls = {},
 	}
 end
@@ -168,6 +172,26 @@ function StatsService.SetCompletedTutorial(player: Player)
 	announce(player)
 end
 
+-- Same for the later cosmetics-shop tutorial (fires at 50 Diamonds). Idempotent.
+function StatsService.SetCompletedCosmeticTutorial(player: Player)
+	local s = stats[player.UserId]
+	if not s or s.completedCosmeticTutorial then
+		return
+	end
+	s.completedCosmeticTutorial = true
+	announce(player)
+end
+
+-- Same for the ball-tuning tutorial (fires on the first axis-tier upgrade). Idempotent.
+function StatsService.SetCompletedTuningTutorial(player: Player)
+	local s = stats[player.UserId]
+	if not s or s.completedTuningTutorial then
+		return
+	end
+	s.completedTuningTutorial = true
+	announce(player)
+end
+
 -- Dev only (DevService /avgball): force $/marble by filling the whole window with `avg` — a
 -- weighted average of identical entries equals that entry regardless of weighting, so this
 -- reads back as exactly avg. Everything derives from recentBalls — GetAvgMoneyPerBall, the
@@ -229,6 +253,12 @@ function StatsService.ApplyData(player: Player, saved: Stats?)
 		if type(saved.completedTutorial) == "boolean" then
 			s.completedTutorial = saved.completedTutorial
 		end
+		if type(saved.completedCosmeticTutorial) == "boolean" then
+			s.completedCosmeticTutorial = saved.completedCosmeticTutorial
+		end
+		if type(saved.completedTuningTutorial) == "boolean" then
+			s.completedTuningTutorial = saved.completedTuningTutorial
+		end
 		if type(saved.recentBalls) == "table" then
 			for _, v in saved.recentBalls do
 				if type(v) == "number" then
@@ -288,12 +318,20 @@ function StatsService.Init()
 		return StatsService.GetStats(player)
 	end
 
-	-- Client tells us once the join tutorial is finished or skipped, so it never replays.
+	-- Client tells us once a tutorial is finished or skipped, so it never replays. `which`
+	-- picks the flag: "cosmetic" for the 50-Diamonds tutorial, "tuning" for the ball-tuning
+	-- one, anything else (incl. the old no-arg call) for the join tutorial.
 	local tutorialRE = Instance.new("RemoteEvent")
 	tutorialRE.Name = "CompleteTutorial"
 	tutorialRE.Parent = RS.Remote
-	tutorialRE.OnServerEvent:Connect(function(player: Player)
-		StatsService.SetCompletedTutorial(player)
+	tutorialRE.OnServerEvent:Connect(function(player: Player, which: any)
+		if which == "cosmetic" then
+			StatsService.SetCompletedCosmeticTutorial(player)
+		elseif which == "tuning" then
+			StatsService.SetCompletedTuningTutorial(player)
+		else
+			StatsService.SetCompletedTutorial(player)
+		end
 	end)
 end
 
