@@ -65,17 +65,34 @@ export type HighlightData = {
 	depthMode: Enum.HighlightDepthMode?, -- default Occluded (hidden behind walls, not X-rayed)
 }
 
+-- A cosmetic part FIXED to the ball at an offset/orientation (vs. orbits, which revolve).
+-- Purely visual: anchored, non-colliding, massless, positioned per-frame by each client —
+-- the ball's physics/hitbox are untouched, so a "skin" can stop looking like a ball
+-- entirely (crowns, wings, saucers...) while playing identically.
+export type ShapeData = {
+	shape: Enum.PartType?,     -- Ball / Block / Cylinder / Wedge / CornerWedge (default Block)
+	size: Vector3?,            -- default (0.8, 0.8, 0.8)
+	offset: Vector3?,          -- from the ball centre, studs (default (0, 1.2, 0))
+	orientation: Vector3?,     -- degrees (default (0, 0, 0))
+	color: Color3?,
+	material: Enum.Material?,  -- default Neon
+	transparency: number?,     -- default 0
+	followRotation: boolean?,  -- true = inherits the ball's spin (tumbles with it);
+	                           -- default false (stays upright while the marble rolls)
+}
+
 export type SkinData = {
 	color: Color3,                -- ball base colour (BallEffects brightens this with heat)
 	particles: { ParticleData }?, -- ambient emitters (layered); nil = none
 	bounce: ParticleData?,        -- short burst Emit()'d on each bounce / showcased on the sample
 	orbits: { OrbitData }?,       -- cosmetic parts that revolve around the ball (nil = none)
+	shapes: { ShapeData }?,       -- cosmetic parts fixed to the ball (nil = none)
 	highlight: HighlightData?,    -- glow; rarity >= 3 auto-gets one (base colour) unless set here
 }
 
 export type BallSkin = {
 	name: string,
-	rarity: number,            -- 1 (common) .. 5 (rarest)
+	rarity: number,            -- 1 (common) .. 9 (Transcendent, rarest)
 	price: number,             -- CC cost (0 = free / owned by default)
 	data: SkinData,
 }
@@ -88,9 +105,14 @@ local RARITY_COLORS: { [number]: Color3 } = {
 	[3] = Color3.fromRGB(80, 160, 255),  -- Rare
 	[4] = Color3.fromRGB(180, 110, 245), -- Epic
 	[5] = Color3.fromRGB(255, 180, 60),  -- Legendary
+	[6] = Color3.fromRGB(255, 80, 90),   -- Mythic (crimson)
+	[7] = Color3.fromRGB(110, 225, 255), -- Celestial (ice cyan)
+	[8] = Color3.fromRGB(255, 240, 150), -- Divine (radiant gold-white)
+	[9] = Color3.fromRGB(255, 90, 230),  -- Transcendent (hyper magenta)
 }
 local RARITY_NAMES: { [number]: string } = {
 	[1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary",
+	[6] = "Mythic", [7] = "Celestial", [8] = "Divine", [9] = "Transcendent",
 }
 
 -- A size sequence that swells then shrinks (a soft pulse).
@@ -659,6 +681,362 @@ local Skins: { [string]: BallSkin } = {
 				orbit(2.2, 2.4, 4.188, Color3.fromRGB(120, 140, 255), 0.55, Enum.PartType.Block),
 			},
 		},
+	},
+	----------------------------------------------------------------------------
+	-- Rarity 6+ (Gold Box exclusives): shape-built skins — these stop looking like
+	-- balls entirely (the hitbox is still just the marble; shapes never collide).
+	----------------------------------------------------------------------------
+	crown = {
+		name = "Royal Crown", rarity = 6, price = 5000,
+		data = {
+			color = Color3.fromRGB(255, 200, 60),
+			shapes = {
+				-- band
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.28, 1.5, 1.5), offset = Vector3.new(0, 1.05, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 200, 60), material = Enum.Material.Metal },
+				-- prongs
+				{ size = Vector3.new(0.2, 0.6, 0.2), offset = Vector3.new(0.55, 1.5, 0), color = Color3.fromRGB(255, 210, 80) },
+				{ size = Vector3.new(0.2, 0.6, 0.2), offset = Vector3.new(-0.55, 1.5, 0), color = Color3.fromRGB(255, 210, 80) },
+				{ size = Vector3.new(0.2, 0.6, 0.2), offset = Vector3.new(0, 1.5, 0.55), color = Color3.fromRGB(255, 210, 80) },
+				{ size = Vector3.new(0.2, 0.6, 0.2), offset = Vector3.new(0, 1.5, -0.55), color = Color3.fromRGB(255, 210, 80) },
+				-- ruby
+				{ shape = Enum.PartType.Ball, size = Vector3.new(0.45, 0.45, 0.45), offset = Vector3.new(0, 1.95, 0), color = Color3.fromRGB(255, 60, 80) },
+			},
+			bounce = burst(cseq({ 0, 255, 220, 120 }, { 1, 255, 80, 90 }), 22, 0.45),
+		},
+	},
+	demoncore = {
+		name = "Demon Core", rarity = 6, price = 5000,
+		data = {
+			color = Color3.fromRGB(30, 8, 10),
+			shapes = {
+				-- horns
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.9, 0.5), offset = Vector3.new(0.55, 1.15, 0), orientation = Vector3.new(0, 0, -24), color = Color3.fromRGB(255, 70, 70), material = Enum.Material.Metal },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.9, 0.5), offset = Vector3.new(-0.55, 1.15, 0), orientation = Vector3.new(0, 180, 24), color = Color3.fromRGB(255, 70, 70), material = Enum.Material.Metal },
+			},
+			particles = {
+				{
+					texture = SMOKE, color = cseq({ 0, 255, 60, 60 }, { 1, 40, 0, 0 }),
+					rate = 26, lifetime = NumberRange.new(0.7, 1.3), speed = NumberRange.new(0.8, 2),
+					size = pulse(1.2), transparency = NumberSequence.new(0.3, 1),
+					rotSpeed = NumberRange.new(-120, 120), lightEmission = 0.9, brightness = 3,
+				},
+			},
+			bounce = burst(cseq({ 0, 255, 90, 60 }, { 1, 120, 0, 0 }), 26, 0.5),
+		},
+	},
+	saturn = {
+		name = "Saturn", rarity = 7, price = 8000,
+		data = {
+			color = Color3.fromRGB(120, 200, 235),
+			shapes = {
+				-- tilted ice ring around the marble itself
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.1, 3.1, 3.1), offset = Vector3.zero, orientation = Vector3.new(18, 0, 90), color = Color3.fromRGB(160, 230, 255), transparency = 0.35 },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.06, 3.7, 3.7), offset = Vector3.zero, orientation = Vector3.new(18, 0, 90), color = Color3.fromRGB(110, 200, 255), transparency = 0.6 },
+			},
+			bounce = burst(cseq({ 0, 200, 245, 255 }, { 1, 110, 200, 255 }), 24, 0.45),
+		},
+	},
+	seraph = {
+		name = "Seraph", rarity = 7, price = 8000,
+		data = {
+			color = Color3.fromRGB(250, 250, 255),
+			shapes = {
+				-- wings
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.18, 1.1, 1.7), offset = Vector3.new(0.95, 0.55, 0), orientation = Vector3.new(0, 90, 30), color = Color3.fromRGB(255, 255, 255), transparency = 0.15 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.18, 1.1, 1.7), offset = Vector3.new(-0.95, 0.55, 0), orientation = Vector3.new(0, -90, 30), color = Color3.fromRGB(255, 255, 255), transparency = 0.15 },
+				-- halo
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.09, 1.35, 1.35), offset = Vector3.new(0, 1.7, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 230, 120), transparency = 0.1 },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 255, 230, 120 }), 24, 0.45),
+		},
+	},
+	ufo = {
+		name = "UFO", rarity = 8, price = 15000,
+		data = {
+			color = Color3.fromRGB(140, 255, 170),
+			shapes = {
+				-- saucer disc under the "dome" (the marble)
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.35, 3.0, 3.0), offset = Vector3.new(0, -0.35, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(170, 180, 200), material = Enum.Material.Metal },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.18, 1.7, 1.7), offset = Vector3.new(0, -0.62, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(120, 130, 150), material = Enum.Material.Metal },
+			},
+			orbits = {
+				-- rim running-lights
+				orbit(1.45, 5, 0, Color3.fromRGB(140, 255, 170), 0.22),
+				orbit(1.45, 5, 2.094, Color3.fromRGB(255, 240, 120), 0.22),
+				orbit(1.45, 5, 4.188, Color3.fromRGB(120, 200, 255), 0.22),
+			},
+			bounce = burst(cseq({ 0, 140, 255, 170 }, { 1, 120, 200, 255 }), 26, 0.5),
+		},
+	},
+	monolith = {
+		name = "Monolith", rarity = 8, price = 15000,
+		data = {
+			color = Color3.fromRGB(255, 240, 150),
+			shapes = {
+				-- glowing octahedron-ish shell the marble floats inside
+				{ size = Vector3.new(1.9, 1.9, 1.9), offset = Vector3.zero, orientation = Vector3.new(45, 45, 0), color = Color3.fromRGB(255, 240, 150), transparency = 0.55 },
+				{ size = Vector3.new(1.4, 1.4, 1.4), offset = Vector3.zero, orientation = Vector3.new(0, 22, 45), color = Color3.fromRGB(255, 255, 255), transparency = 0.7 },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 255, 240, 150 }), 28, 0.5),
+		},
+	},
+	singularity = {
+		name = "Singularity", rarity = 9, price = 25000,
+		data = {
+			color = Color3.fromRGB(10, 6, 16),
+			shapes = {
+				-- accretion disc
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.08, 3.4, 3.4), offset = Vector3.zero, orientation = Vector3.new(24, 0, 90), color = Color3.fromRGB(255, 90, 230), transparency = 0.25 },
+			},
+			particles = {
+				{
+					texture = SPARKLES, color = cseq({ 0, 255, 90, 230 }, { 1, 90, 60, 255 }),
+					rate = 60, lifetime = NumberRange.new(0.5, 1.1), speed = NumberRange.new(1, 3),
+					size = pulse(0.5), transparency = NumberSequence.new(0, 1),
+					spreadAngle = Vector2.new(180, 180), rotSpeed = NumberRange.new(-360, 360),
+					lightEmission = 1, brightness = 6,
+				},
+			},
+			orbits = {
+				orbit(2.0, 6, 0, Color3.fromRGB(255, 90, 230), 0.3),
+				orbit(2.4, 4.2, 3.14, Color3.fromRGB(160, 90, 255), 0.3),
+			},
+			bounce = burst(cseq({ 0, 255, 90, 230 }, { 1, 40, 0, 80 }), 32, 0.55),
+		},
+	},
+	marblegod = {
+		name = "Marble God", rarity = 9, price = 25000,
+		data = {
+			color = Color3.fromRGB(255, 255, 255),
+			shapes = {
+				-- crown
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.24, 1.4, 1.4), offset = Vector3.new(0, 1.1, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 210, 80), material = Enum.Material.Metal },
+				{ shape = Enum.PartType.Ball, size = Vector3.new(0.4, 0.4, 0.4), offset = Vector3.new(0, 1.6, 0), color = Color3.fromRGB(255, 90, 230) },
+				-- wings
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.16, 1.3, 2.0), offset = Vector3.new(1.05, 0.6, 0), orientation = Vector3.new(0, 90, 32), color = Color3.fromRGB(255, 245, 200), transparency = 0.1 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.16, 1.3, 2.0), offset = Vector3.new(-1.05, 0.6, 0), orientation = Vector3.new(0, -90, 32), color = Color3.fromRGB(255, 245, 200), transparency = 0.1 },
+			},
+			orbits = {
+				orbit(2.3, 3, 0, Color3.fromRGB(255, 210, 80), 0.35),
+				orbit(2.3, 3, 3.14, Color3.fromRGB(255, 90, 230), 0.35),
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 0.5, 255, 210, 80 }, { 1, 255, 90, 230 }), 34, 0.6),
+		},
+	},
+	----------------------------------------------------------------------------
+	-- Shape pack: 25 skins built purely from fixed shapes. Variants of one style sit
+	-- at the same rarity. followRotation = true makes the shell TUMBLE with the
+	-- rolling marble (great for cubes/spikes/rings); omitted = stays upright.
+	----------------------------------------------------------------------------
+	-- Cubes (Rare)
+	cube = {
+		name = "Cube", rarity = 3, price = 350,
+		data = { color = Color3.fromRGB(160, 170, 190), shapes = {
+			{ size = Vector3.new(1.5, 1.5, 1.5), offset = Vector3.zero, color = Color3.fromRGB(180, 190, 210), transparency = 0.35, followRotation = true },
+		} },
+	},
+	twincube = {
+		name = "Twin Cubes", rarity = 3, price = 350,
+		data = { color = Color3.fromRGB(120, 190, 230), shapes = {
+			{ size = Vector3.new(0.7, 0.7, 0.7), offset = Vector3.new(0, 1.0, 0), color = Color3.fromRGB(120, 190, 230), followRotation = true },
+			{ size = Vector3.new(0.7, 0.7, 0.7), offset = Vector3.new(0, -1.0, 0), color = Color3.fromRGB(230, 190, 120), followRotation = true },
+		} },
+	},
+	cubecluster = {
+		name = "Cube Cluster", rarity = 3, price = 350,
+		data = { color = Color3.fromRGB(190, 140, 230), shapes = {
+			{ size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(0.8, 0.8, 0.8), color = Color3.fromRGB(190, 140, 230), followRotation = true },
+			{ size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(-0.8, 0.8, -0.8), color = Color3.fromRGB(140, 230, 190), followRotation = true },
+			{ size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(-0.8, -0.8, 0.8), color = Color3.fromRGB(230, 190, 140), followRotation = true },
+			{ size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(0.8, -0.8, -0.8), color = Color3.fromRGB(140, 190, 230), followRotation = true },
+		} },
+	},
+	dice = {
+		name = "Dice", rarity = 3, price = 400,
+		data = { color = Color3.fromRGB(245, 245, 245), shapes = {
+			{ size = Vector3.new(1.5, 1.5, 1.5), offset = Vector3.zero, color = Color3.fromRGB(250, 250, 250), material = Enum.Material.SmoothPlastic, transparency = 0.25, followRotation = true },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.3, 0.3, 0.3), offset = Vector3.new(0, 0, -0.78), color = Color3.fromRGB(20, 20, 20), material = Enum.Material.SmoothPlastic, followRotation = true },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.3, 0.3, 0.3), offset = Vector3.new(0.35, 0.78, 0.35), color = Color3.fromRGB(20, 20, 20), material = Enum.Material.SmoothPlastic, followRotation = true },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.3, 0.3, 0.3), offset = Vector3.new(-0.35, 0.78, -0.35), color = Color3.fromRGB(20, 20, 20), material = Enum.Material.SmoothPlastic, followRotation = true },
+		} },
+	},
+	bolt = {
+		name = "Bolt", rarity = 3, price = 400,
+		data = { color = Color3.fromRGB(255, 230, 90), shapes = {
+			{ size = Vector3.new(0.35, 0.9, 0.35), offset = Vector3.new(0, 1.25, 0), orientation = Vector3.new(0, 0, 18), color = Color3.fromRGB(255, 230, 90) },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.35, 0.5, 0.5), offset = Vector3.new(0.2, 1.85, 0), orientation = Vector3.new(0, 0, 198), color = Color3.fromRGB(255, 230, 90) },
+		} },
+	},
+	-- Spikes (Epic)
+	spikeball = {
+		name = "Spikeball", rarity = 4, price = 900,
+		data = { color = Color3.fromRGB(90, 95, 110), shapes = {
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.7, 0.4), offset = Vector3.new(0, 1.05, 0), color = Color3.fromRGB(200, 205, 220), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.7, 0.4), offset = Vector3.new(0, -1.05, 0), orientation = Vector3.new(180, 0, 0), color = Color3.fromRGB(200, 205, 220), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.7, 0.4), offset = Vector3.new(1.05, 0, 0), orientation = Vector3.new(0, 0, -90), color = Color3.fromRGB(200, 205, 220), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.7, 0.4), offset = Vector3.new(-1.05, 0, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(200, 205, 220), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.7, 0.4), offset = Vector3.new(0, 0, 1.05), orientation = Vector3.new(-90, 0, 0), color = Color3.fromRGB(200, 205, 220), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.3, 0.7, 0.4), offset = Vector3.new(0, 0, -1.05), orientation = Vector3.new(90, 0, 0), color = Color3.fromRGB(200, 205, 220), material = Enum.Material.Metal, followRotation = true },
+		} },
+	},
+	morningstar = {
+		name = "Morningstar", rarity = 4, price = 900,
+		data = { color = Color3.fromRGB(60, 55, 70), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.2, 1.6, 1.6), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(120, 110, 140), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.25, 0.6, 0.35), offset = Vector3.new(0, 1.05, 0), color = Color3.fromRGB(255, 120, 90), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.25, 0.6, 0.35), offset = Vector3.new(0, -1.05, 0), orientation = Vector3.new(180, 0, 0), color = Color3.fromRGB(255, 120, 90), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.25, 0.6, 0.35), offset = Vector3.new(0, 0, 1.05), orientation = Vector3.new(-90, 0, 0), color = Color3.fromRGB(255, 120, 90), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.25, 0.6, 0.35), offset = Vector3.new(0, 0, -1.05), orientation = Vector3.new(90, 0, 0), color = Color3.fromRGB(255, 120, 90), material = Enum.Material.Metal, followRotation = true },
+		} },
+	},
+	satellite = {
+		name = "Satellite", rarity = 4, price = 950,
+		data = { color = Color3.fromRGB(210, 215, 230), shapes = {
+			{ size = Vector3.new(1.5, 0.08, 0.8), offset = Vector3.new(1.6, 0, 0), color = Color3.fromRGB(40, 80, 200), transparency = 0.1 },
+			{ size = Vector3.new(1.5, 0.08, 0.8), offset = Vector3.new(-1.6, 0, 0), color = Color3.fromRGB(40, 80, 200), transparency = 0.1 },
+			{ size = Vector3.new(0.12, 0.9, 0.12), offset = Vector3.new(0, 1.3, 0), color = Color3.fromRGB(220, 220, 230), material = Enum.Material.Metal },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.25, 0.25, 0.25), offset = Vector3.new(0, 1.8, 0), color = Color3.fromRGB(255, 80, 80) },
+		} },
+	},
+	radar = {
+		name = "Radar", rarity = 4, price = 950,
+		data = { color = Color3.fromRGB(120, 200, 160), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.15, 1.3, 1.3), offset = Vector3.new(0, 1.35, 0), orientation = Vector3.new(50, 0, 90), color = Color3.fromRGB(220, 230, 235), material = Enum.Material.Metal },
+			{ size = Vector3.new(0.12, 0.7, 0.12), offset = Vector3.new(0, 0.85, 0), color = Color3.fromRGB(160, 170, 180), material = Enum.Material.Metal },
+		} },
+	},
+	jester = {
+		name = "Jester", rarity = 4, price = 900,
+		data = { color = Color3.fromRGB(220, 80, 140), shapes = {
+			{ size = Vector3.new(0.18, 0.8, 0.18), offset = Vector3.new(0.5, 1.25, 0), orientation = Vector3.new(0, 0, -25), color = Color3.fromRGB(255, 90, 90) },
+			{ size = Vector3.new(0.18, 0.8, 0.18), offset = Vector3.new(-0.5, 1.25, 0), orientation = Vector3.new(0, 0, 25), color = Color3.fromRGB(90, 200, 90) },
+			{ size = Vector3.new(0.18, 0.8, 0.18), offset = Vector3.new(0, 1.35, 0.5), orientation = Vector3.new(25, 0, 0), color = Color3.fromRGB(90, 130, 255) },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.3, 0.3, 0.3), offset = Vector3.new(0.78, 1.85, 0), color = Color3.fromRGB(255, 220, 90) },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.3, 0.3, 0.3), offset = Vector3.new(-0.78, 1.85, 0), color = Color3.fromRGB(255, 220, 90) },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.3, 0.3, 0.3), offset = Vector3.new(0, 1.95, 0.78), color = Color3.fromRGB(255, 220, 90) },
+		} },
+	},
+	-- Gyro rings (Legendary)
+	gyroring = {
+		name = "Gyro Ring", rarity = 5, price = 2500,
+		data = { color = Color3.fromRGB(255, 170, 80), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.6, 2.6), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 170, 80), transparency = 0.25, followRotation = true },
+		} },
+	},
+	gyrotwin = {
+		name = "Gyro Twin", rarity = 5, price = 2500,
+		data = { color = Color3.fromRGB(90, 220, 255), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.6, 2.6), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(90, 220, 255), transparency = 0.25, followRotation = true },
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.6, 2.6), offset = Vector3.zero, orientation = Vector3.new(90, 0, 90), color = Color3.fromRGB(255, 120, 200), transparency = 0.25, followRotation = true },
+		} },
+	},
+	gyrotri = {
+		name = "Gyro Tri", rarity = 5, price = 2700,
+		data = { color = Color3.fromRGB(180, 255, 140), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.6, 2.6), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(180, 255, 140), transparency = 0.25, followRotation = true },
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.6, 2.6), offset = Vector3.zero, orientation = Vector3.new(90, 0, 90), color = Color3.fromRGB(255, 200, 120), transparency = 0.25, followRotation = true },
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.6, 2.6), offset = Vector3.zero, orientation = Vector3.new(0, 90, 0), color = Color3.fromRGB(150, 150, 255), transparency = 0.25, followRotation = true },
+		} },
+	},
+	drill = {
+		name = "Drill", rarity = 5, price = 2500,
+		data = { color = Color3.fromRGB(200, 200, 210), shapes = {
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.5, 0.9, 0.5), offset = Vector3.new(0, -1.1, 0), orientation = Vector3.new(180, 0, 0), color = Color3.fromRGB(230, 230, 240), material = Enum.Material.Metal },
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.35, 1.1, 1.1), offset = Vector3.new(0, 0.75, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 190, 60), material = Enum.Material.Metal },
+		} },
+	},
+	lantern = {
+		name = "Lantern", rarity = 5, price = 2500,
+		data = { color = Color3.fromRGB(60, 45, 35), shapes = {
+			{ size = Vector3.new(0.8, 0.8, 0.8), offset = Vector3.new(0, 1.5, 0), color = Color3.fromRGB(255, 210, 110), transparency = 0.2 },
+			{ size = Vector3.new(1.0, 0.12, 1.0), offset = Vector3.new(0, 2.0, 0), color = Color3.fromRGB(70, 60, 50), material = Enum.Material.Metal },
+			{ size = Vector3.new(1.0, 0.12, 1.0), offset = Vector3.new(0, 1.05, 0), color = Color3.fromRGB(70, 60, 50), material = Enum.Material.Metal },
+		} },
+	},
+	-- Blades (Mythic)
+	shuriken = {
+		name = "Shuriken", rarity = 6, price = 5000,
+		data = { color = Color3.fromRGB(40, 40, 50), shapes = {
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.15, 0.9, 0.9), offset = Vector3.new(0, 1.15, 0), color = Color3.fromRGB(180, 190, 210), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.15, 0.9, 0.9), offset = Vector3.new(0, -1.15, 0), orientation = Vector3.new(180, 0, 0), color = Color3.fromRGB(180, 190, 210), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.15, 0.9, 0.9), offset = Vector3.new(1.15, 0, 0), orientation = Vector3.new(0, 0, -90), color = Color3.fromRGB(180, 190, 210), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.15, 0.9, 0.9), offset = Vector3.new(-1.15, 0, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(180, 190, 210), material = Enum.Material.Metal, followRotation = true },
+		} },
+	},
+	bladeorb = {
+		name = "Blade Orb", rarity = 6, price = 5000,
+		data = { color = Color3.fromRGB(120, 20, 30), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.18, 2.2, 2.2), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(90, 90, 100), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.14, 0.8, 1.1), offset = Vector3.new(0, 1.4, 0), color = Color3.fromRGB(255, 80, 90), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.14, 0.8, 1.1), offset = Vector3.new(0, -1.4, 0), orientation = Vector3.new(180, 0, 0), color = Color3.fromRGB(255, 80, 90), material = Enum.Material.Metal, followRotation = true },
+		} },
+	},
+	obelisk = {
+		name = "Obelisk", rarity = 6, price = 5000,
+		data = { color = Color3.fromRGB(25, 25, 35), shapes = {
+			{ size = Vector3.new(0.55, 1.6, 0.55), offset = Vector3.new(0, 1.9, 0), color = Color3.fromRGB(80, 240, 200), transparency = 0.15 },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.55, 0.45, 0.55), offset = Vector3.new(0, 2.9, 0), color = Color3.fromRGB(80, 240, 200), transparency = 0.15 },
+		} },
+	},
+	-- Ice (Celestial)
+	icecrystal = {
+		name = "Ice Crystal", rarity = 7, price = 8000,
+		data = { color = Color3.fromRGB(190, 235, 255), shapes = {
+			{ size = Vector3.new(0.4, 1.7, 0.4), offset = Vector3.new(0.5, 0.9, 0.3), orientation = Vector3.new(12, 0, -18), color = Color3.fromRGB(190, 235, 255), material = Enum.Material.Glass, transparency = 0.35 },
+			{ size = Vector3.new(0.3, 1.3, 0.3), offset = Vector3.new(-0.55, 0.8, -0.2), orientation = Vector3.new(-10, 0, 22), color = Color3.fromRGB(160, 220, 255), material = Enum.Material.Glass, transparency = 0.35 },
+			{ size = Vector3.new(0.25, 1.0, 0.25), offset = Vector3.new(0, 0.7, -0.6), orientation = Vector3.new(-24, 0, 0), color = Color3.fromRGB(220, 245, 255), material = Enum.Material.Glass, transparency = 0.35 },
+		} },
+	},
+	snowflake = {
+		name = "Snowflake", rarity = 7, price = 8000,
+		data = { color = Color3.fromRGB(235, 250, 255), shapes = {
+			{ size = Vector3.new(0.14, 2.8, 0.14), offset = Vector3.zero, color = Color3.fromRGB(220, 245, 255), transparency = 0.15, followRotation = true },
+			{ size = Vector3.new(0.14, 2.8, 0.14), offset = Vector3.zero, orientation = Vector3.new(0, 0, 60), color = Color3.fromRGB(220, 245, 255), transparency = 0.15, followRotation = true },
+			{ size = Vector3.new(0.14, 2.8, 0.14), offset = Vector3.zero, orientation = Vector3.new(0, 0, -60), color = Color3.fromRGB(220, 245, 255), transparency = 0.15, followRotation = true },
+		} },
+	},
+	cometcore = {
+		name = "Comet Core", rarity = 7, price = 8500,
+		data = { color = Color3.fromRGB(150, 220, 255), shapes = {
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.7, 0.7, 1.8), offset = Vector3.new(0, 0.25, 1.35), orientation = Vector3.new(180, 0, 0), color = Color3.fromRGB(110, 200, 255), transparency = 0.35 },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.45, 0.45, 1.2), offset = Vector3.new(0, -0.2, 1.7), color = Color3.fromRGB(180, 235, 255), transparency = 0.5 },
+		} },
+	},
+	-- Machines (Divine)
+	reactor = {
+		name = "Reactor", rarity = 8, price = 15000,
+		data = { color = Color3.fromRGB(120, 255, 210), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.16, 2.9, 2.9), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(120, 255, 210), transparency = 0.3, followRotation = true },
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.16, 2.9, 2.9), offset = Vector3.zero, orientation = Vector3.new(90, 0, 90), color = Color3.fromRGB(255, 240, 130), transparency = 0.3, followRotation = true },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(0, 1.6, 0), color = Color3.fromRGB(255, 255, 255) },
+			{ shape = Enum.PartType.Ball, size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(0, -1.6, 0), color = Color3.fromRGB(255, 255, 255) },
+		} },
+	},
+	haloarray = {
+		name = "Halo Array", rarity = 8, price = 15000,
+		data = { color = Color3.fromRGB(255, 245, 210), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.09, 1.5, 1.5), offset = Vector3.new(0, 1.45, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 230, 120), transparency = 0.1 },
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.09, 1.1, 1.1), offset = Vector3.new(0, 1.95, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 240, 170), transparency = 0.2 },
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.09, 0.7, 0.7), offset = Vector3.new(0, 2.4, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 250, 220), transparency = 0.3 },
+		} },
+	},
+	-- Impossible objects (Transcendent)
+	hypercube = {
+		name = "Hypercube", rarity = 9, price = 25000,
+		data = { color = Color3.fromRGB(255, 90, 230), shapes = {
+			{ size = Vector3.new(1.6, 1.6, 1.6), offset = Vector3.zero, color = Color3.fromRGB(255, 90, 230), transparency = 0.45, followRotation = true },
+			{ size = Vector3.new(2.3, 2.3, 2.3), offset = Vector3.zero, orientation = Vector3.new(45, 45, 0), color = Color3.fromRGB(140, 90, 255), transparency = 0.75, followRotation = true },
+		} },
+	},
+	chaosengine = {
+		name = "Chaos Engine", rarity = 9, price = 25000,
+		data = { color = Color3.fromRGB(15, 10, 20), shapes = {
+			{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.14, 2.7, 2.7), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 90, 230), transparency = 0.25, followRotation = true },
+			{ size = Vector3.new(0.6, 0.6, 0.6), offset = Vector3.new(0, 1.5, 0), orientation = Vector3.new(45, 0, 45), color = Color3.fromRGB(255, 90, 230), transparency = 0.2, followRotation = true },
+			{ size = Vector3.new(0.6, 0.6, 0.6), offset = Vector3.new(0, -1.5, 0), orientation = Vector3.new(0, 45, 45), color = Color3.fromRGB(90, 230, 255), transparency = 0.2, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.2, 0.7, 0.7), offset = Vector3.new(1.5, 0, 0), orientation = Vector3.new(0, 0, -90), color = Color3.fromRGB(255, 240, 120), material = Enum.Material.Metal, followRotation = true },
+			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.2, 0.7, 0.7), offset = Vector3.new(-1.5, 0, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 240, 120), material = Enum.Material.Metal, followRotation = true },
+		} },
 	},
 }
 

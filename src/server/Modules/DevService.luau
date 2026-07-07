@@ -11,6 +11,11 @@
 --   /axis <Name> <v>       set a continuous axis (Arc, Angle, Size, Elasticity)
 --   /money <n>             set balance
 --   /cc <n>                set CC (cosmetics currency) balance
+--   /diamonds <n>          alias of /cc (Diamonds IS the cosmetics currency)
+--   /skin <name>           grant + equip a marble by display name or id (case-insensitive,
+--                          partial matches OK; repeat for extra copies/stars)
+--   /policy [on|off|clear] force ArePaidRandomItemsRestricted for you (no arg = toggle;
+--                          clear = back to the real policy) — server + your client both flip
 --   /avgball <n>           force lifetime avg $/marble (drives luck rank, leaderstats,
 --                          overhead billboard, global $/marble leaderboard)
 --   /preset <name>         targeting | chaos | hybrid
@@ -46,6 +51,8 @@ local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local MetricsService = require(SSS.Scripts.Modules.MetricsService)
+local BallSkins = require(RS.Shared.BallSkins)
+local PolicyGate = require(RS.Shared.PolicyGate)
 
 local DevService = {}
 
@@ -965,7 +972,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, cc, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
+		return "commands: tier, maxall, bet, axis, money, cc, diamonds, skin, policy, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -998,11 +1005,67 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		if not n then return "usage: /money <n>" end
 		CurrencyService.SetPoints(player, n, "Dev")
 		return string.format("balance -> %.0f", n)
-	elseif cmd == "cc" then
+	elseif cmd == "cc" or cmd == "diamonds" then
 		local n = tonumber(a2)
-		if not n then return "usage: /cc <n>" end
+		if not n then return "usage: /" .. cmd .. " <n>" end
 		CosmeticService.SetCC(player, n)
 		return string.format("Diamonds -> %d", CosmeticService.GetCC(player))
+	elseif cmd == "skin" then
+		-- Multi-word names arrive as separate args ("/skin Marble God") — rejoin them.
+		local parts: { string } = {}
+		for _, a in { a2, a3, a4 } do
+			if a then
+				table.insert(parts, a)
+			end
+		end
+		local query = table.concat(parts, " ")
+		if query == "" then
+			return "usage: /skin <name or id>  (case-insensitive; partial matches OK)"
+		end
+		local q = query:lower()
+		-- Exact id/name match wins; otherwise first substring match (stable order not
+		-- guaranteed, so be specific when prefixes collide).
+		local matchId: string? = nil
+		local matchName = ""
+		for id, skin in BallSkins.GetAll() do
+			local idL, nameL = id:lower(), skin.name:lower()
+			if idL == q or nameL == q then
+				matchId, matchName = id, skin.name
+				break
+			end
+			if not matchId and (string.find(nameL, q, 1, true) or string.find(idL, q, 1, true)) then
+				matchId, matchName = id, skin.name
+			end
+		end
+		if not matchId then
+			return "no marble matches '" .. query .. "'"
+		end
+		if not CosmeticService.GrantSkin(player, matchId) then
+			return "grant failed (cosmetic data not loaded yet?)"
+		end
+		local skin = BallSkins.Get(matchId)
+		return string.format("granted + equipped %s (%s, %s)", matchName, matchId,
+			BallSkins.RarityName(if skin then skin.rarity else 1))
+	elseif cmd == "policy" then
+		local mode = a2 and a2:lower()
+		local newVal: boolean?
+		if mode == "on" then
+			newVal = true
+		elseif mode == "off" then
+			newVal = false
+		elseif mode == "clear" then
+			newVal = nil
+		else
+			newVal = not PolicyGate.PaidRandomItemsRestricted(player) -- plain toggle
+		end
+		PolicyGate.SetOverride(player, newVal)
+		-- Mirror to the caller's client so the purchase UI re-applies live.
+		local re = RS.Remote:FindFirstChild("DevPolicyOverride")
+		if re and re:IsA("RemoteEvent") then
+			re:FireClient(player, newVal)
+		end
+		return string.format("ArePaidRandomItemsRestricted override -> %s (effective: %s)",
+			tostring(newVal), tostring(PolicyGate.PaidRandomItemsRestricted(player)))
 	elseif cmd == "avgball" then
 		local n = tonumber(a2)
 		if not n then return "usage: /avgball <n>" end
@@ -1139,6 +1202,11 @@ local function onChatted(player: Player, message: string)
 end
 
 function DevService.Init()
+	-- /policy mirrors the server-side override to the caller's client (see PolicyGate).
+	local policyRE = Instance.new("RemoteEvent")
+	policyRE.Name = "DevPolicyOverride"
+	policyRE.Parent = RS.Remote
+
 	for _, player in Players:GetPlayers() do
 		player.Chatted:Connect(function(msg)
 			onChatted(player, msg)

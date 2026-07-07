@@ -549,7 +549,8 @@ function openPanel()
 		openTween:Cancel()
 	end
 
-	t.Visible = false
+	-- The open panel replaces the whole 2×2 trigger quad on the left, not just this button.
+	;(t:FindFirstAncestor("TriggerQuad") :: GuiObject).Visible = false
 	p.Visible = true
 
 	local scale = panelScale(p)
@@ -574,7 +575,7 @@ function QuestUI.Close()
 	end
 	panelScale(p).Scale = restScale
 	p.Visible = false
-	t.Visible = true
+	;(t:FindFirstAncestor("TriggerQuad") :: GuiObject).Visible = true
 end
 
 ----------------------------------------------------------------
@@ -589,7 +590,8 @@ function QuestUI.Init()
 	local playerGui = player:WaitForChild("PlayerGui")
 	local mainGui = playerGui:WaitForChild("MainGui")
 	local leftBar = mainGui:WaitForChild("LeftBar")
-	local t = leftBar:WaitForChild("QuestTriggerHost") :: GuiObject
+	-- Trigger lives in the LeftBar's 2×2 TriggerQuad (nested in a row frame).
+	local t = (leftBar:WaitForChild("TriggerQuad") :: Instance):FindFirstChild("QuestTriggerHost", true) :: GuiObject
 	local p = leftBar:WaitForChild("QuestPanel") :: GuiObject
 
 	-- Clean closed state regardless of how the instances were saved in Studio.
@@ -599,7 +601,7 @@ function QuestUI.Init()
 	panel = p
 
 	table.insert(views, buildTitleResetRows(p, true, false))
-	triggerHandle = UIButton.bind(t, { onClick = openPanel, clickSound = Config.Sounds.Upgrade })
+	triggerHandle = UIButton.bind(t, { onClick = openPanel, clickSound = Config.Sounds.UIClick, hoverScale = 1.08 })
 
 	-- Alternative always-on presentation: any world SurfaceGui tagged QuestUI (same
 	-- CollectionService discovery template as CosmeticsShop).

@@ -1,6 +1,9 @@
 --!strict
--- Daily login reward: once per UTC day, a centered prompt offers a claim (Streak + Luck
--- Bonus preview); claiming rolls a server-authoritative prize (Config.DailyReward.Pool) and
+-- Daily login reward: once per UTC day, claimed by WALKING ON a world pad tagged
+-- Config.Tags.DailyRewardPad (like the group-reward pad). The pad's Studio-authored
+-- Billboard.BillboardGui Title/Timer labels show "Claim Now!" (pink/white) when claimable,
+-- or grey out with "Available in X" until the next UTC day. Touching a claimable pad
+-- rolls a server-authoritative prize (Config.DailyReward.Pool) and
 -- reveals it via a horizontal slot-style reel spin (a strip of decorative filler cells that
 -- spins past and decelerates onto the true result). The landed cell sits under the pointer
 -- for a beat, then the UI closes itself and fires the currency-fly celebration — no
@@ -11,11 +14,13 @@
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
 
+local AutoScale = require(RS.Shared.AutoScale)
 local Config = require(RS.Shared.Config)
 local StringUtils = require(RS.Shared.StringUtils)
-local BallSkins = require(RS.Shared.BallSkins)
 local UIButton = require(RS.Shared.UIButton)
 local SoundService = require(RS.Shared.SoundService)
 local WarnUI = require(RS.Shared.WarnUI)
@@ -23,13 +28,12 @@ local WarnUI = require(RS.Shared.WarnUI)
 local DailyRewardUI = {}
 
 local player = Players.LocalPlayer
-local TutorialService = require(player:WaitForChild("PlayerScripts"):WaitForChild("TutorialService"))
 local CurrencyFlyUI = require(player:WaitForChild("PlayerScripts"):WaitForChild("CurrencyFlyUI"))
 
 export type RewardResult =
 	{ Kind: "Diamonds", Amount: number }
 	| { Kind: "Cash", Amount: number }
-	| { Kind: "Skin", SkinId: string, SkinName: string }
+	| { Kind: "Crate", BoxId: string, BoxName: string }
 
 -- Theme: a "prize reveal" moment — darker + gold, distinct from the light quest/playtime panels.
 local BG = Color3.fromRGB(22, 18, 30)
@@ -42,7 +46,16 @@ local CELL_STROKE = Color3.fromRGB(80, 70, 100)
 local claimRF: RemoteFunction
 local getInfoRF: RemoteFunction
 
+-- Pad billboard theming.
+local TITLE_PINK = Color3.fromRGB(250, 117, 255)
+local PAD_GREY = Color3.fromRGB(100, 100, 100)
+
+-- Whether today's reward is claimable (server-authoritative; refreshed from GetInfo at
+-- load and every DailyRewardChanged push).
+local claimable = false
+
 -- UI handles (built in createUI).
+local uiBuilt = false
 local screenGui: ScreenGui
 local promptFrame: Frame
 local streakLabel: TextLabel
@@ -71,16 +84,6 @@ local function setCell(cell: Frame, icon: string, text: string, bg: Color3?)
 	end
 end
 
-local function randomSkinNameAndId(): (string, string)
-	local ids: { string } = {}
-	for id in BallSkins.GetAll() do
-		table.insert(ids, id)
-	end
-	local id = ids[math.random(#ids)]
-	local skin = BallSkins.Get(id)
-	return id, if skin then skin.name else id
-end
-
 -- Real-result cell content, keyed by RewardResult.Kind.
 local CELL_RENDERERS: { [string]: (Frame, any) -> () } = {
 	Diamonds = function(cell, result)
@@ -89,9 +92,9 @@ local CELL_RENDERERS: { [string]: (Frame, any) -> () } = {
 	Cash = function(cell, result)
 		setCell(cell, "💰", StringUtils.FormatMoney(result.Amount))
 	end,
-	Skin = function(cell, result)
-		local skin = BallSkins.Get(result.SkinId)
-		setCell(cell, "🎨", result.SkinName, if skin then skin.data.color:Lerp(CELL_BG, 0.5) else nil)
+	Crate = function(cell, result)
+		-- The box lands UNOPENED in the stash; the cell shows the box itself.
+		setCell(cell, "📦", result.BoxName)
 	end,
 }
 
@@ -104,10 +107,17 @@ local FILLER_RENDERERS: { [string]: (Frame, any) -> () } = {
 	Cash = function(cell, entry)
 		setCell(cell, "💰", "$" .. StringUtils.FormatShort(entry.Multiplier * 1000))
 	end,
-	Skin = function(cell, _entry)
-		local id, name = randomSkinNameAndId()
-		local skin = BallSkins.Get(id)
-		setCell(cell, "🎨", name, if skin then skin.data.color:Lerp(CELL_BG, 0.5) else nil)
+	Crate = function(cell, entry)
+		-- Filler shows the box itself (the real result cell shows the opened marble).
+		local boxId = entry.BoxId or "Basic"
+		local boxName = boxId .. " Box"
+		for _, box in Config.Crates.Boxes do
+			if box.Id == boxId then
+				boxName = box.Name
+				break
+			end
+		end
+		setCell(cell, "📦", boxName)
 	end,
 }
 
@@ -277,6 +287,9 @@ local function createUI(playerGui: PlayerGui)
 		onClaimClicked()
 	end)
 
+	-- Authored at 1080p; shrink on smaller viewports.
+	AutoScale.Apply(promptFrame)
+
 	----- Reel (slot spin), hidden until claim -----
 	local R = Config.DailyReward.Reel
 	reelViewportWidth = R.CellSize.X * 3 + R.CellPadding * 2
@@ -324,6 +337,9 @@ local function createUI(playerGui: PlayerGui)
 	reelLayout.Padding = UDim.new(0, R.CellPadding)
 	reelLayout.Parent = reelContent
 
+	-- Scale the whole reel viewport too. Safe with the spin math: the position tween runs
+	-- in the reel's own (pre-scale) offset space, which a UIScale multiplies uniformly.
+	AutoScale.Apply(reelViewport)
 end
 
 ----------------------------------------------------------------
@@ -348,7 +364,7 @@ local function spinTargetX(): number
 	return -(cellCenterX - reelViewportWidth / 2)
 end
 
-local RESULT_LINGER = 1.0 -- seconds the landed cell sits under the pointer before the UI closes
+local RESULT_LINGER = 0.25 -- seconds the landed cell sits under the pointer before the UI closes
 local WARN_LIFETIME = 3   -- seconds the post-spin reward banner stays up
 
 -- Post-spin banner text (WarnUI), keyed by RewardResult.Kind — the lasting record of what
@@ -360,8 +376,8 @@ local WARN_TEXT: { [string]: (any) -> string } = {
 	Cash = function(r)
 		return "+" .. StringUtils.FormatMoney(r.Amount) .. "!"
 	end,
-	Skin = function(r)
-		return "New Skin: " .. r.SkinName .. "!"
+	Crate = function(r)
+		return "📦 " .. r.BoxName .. " added to your stash!"
 	end,
 }
 
@@ -379,9 +395,11 @@ local function finishSpin(result: RewardResult)
 	if textFn then
 		WarnUI.WarnLocal(textFn(result), GOLD, WARN_LIFETIME)
 	end
-	-- Skins have no balance icon to fly into; only the two currencies celebrate this way.
+	-- Currencies fly to their balances; a banked box flies 📦 to the LOADOUT trigger.
 	if result.Kind == "Cash" or result.Kind == "Diamonds" then
 		CurrencyFlyUI.Play(result.Kind)
+	elseif result.Kind == "Crate" then
+		CurrencyFlyUI.Play("Crate")
 	end
 end
 
@@ -416,7 +434,20 @@ local function startSpin(result: RewardResult)
 		TweenInfo.new(R.SpinTime, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
 		{ Position = UDim2.new(0, spinTargetX(), 0.5, 0) }
 	)
+	-- Roulette tick: one Bounce per cell the strip drags past the pointer (mirrors
+	-- CrateRollUI). SoundService pools per sound id, so rapid early ticks overlap.
+	local stride = R.CellSize.X + R.CellPadding
+	local startX = reelContent.Position.X.Offset
+	local lastTicks = 0
+	local tickConn = RunService.Heartbeat:Connect(function()
+		local ticks = math.floor((startX - reelContent.Position.X.Offset) / stride)
+		if ticks > lastTicks then
+			lastTicks = ticks
+			SoundService.Play({ soundId = Config.Sounds.Bounce, volume = 0.5, jitter = 0.04 })
+		end
+	end)
 	tween.Completed:Connect(function(state: Enum.PlaybackState)
+		tickConn:Disconnect()
 		if state == Enum.PlaybackState.Completed then
 			finishSpin(result)
 		end
@@ -437,6 +468,115 @@ function onClaimClicked()
 end
 
 ----------------------------------------------------------------
+-- Claim pad (Config.Tags.DailyRewardPad): the reward is claimed by walking on a world
+-- pad, group-reward style. The billboard SHELL is Studio-authored (Pad.Billboard.
+-- BillboardGui with Title + Timer TextLabels, positioned by hand); this only recolors
+-- them and drives the Timer text.
+----------------------------------------------------------------
+
+local PAD_TOUCH_DEBOUNCE = 1.5
+local padLastTouch: { [Instance]: number } = {}
+local padLabels: { { title: TextLabel?, timer: TextLabel? } } = {}
+
+-- Seconds until the next UTC day starts (claims reset on the UTC-day boundary).
+local function secondsToNextClaim(): number
+	return 86400 - os.time() % 86400
+end
+
+local function fmtWait(seconds: number): string
+	local s = math.max(math.ceil(seconds), 0)
+	local h = s // 3600
+	local m = (s % 3600) // 60
+	if h > 0 then
+		return ("%dh %02dm"):format(h, m)
+	elseif m > 0 then
+		return ("%dm %02ds"):format(m, s % 60)
+	end
+	return ("%ds"):format(s)
+end
+
+local function refreshPads()
+	for _, labels in padLabels do
+		if claimable then
+			if labels.title then
+				labels.title.TextColor3 = TITLE_PINK
+			end
+			if labels.timer then
+				labels.timer.TextColor3 = Color3.new(1, 1, 1)
+				labels.timer.Text = "Claim Now!"
+			end
+		else
+			if labels.title then
+				labels.title.TextColor3 = PAD_GREY
+			end
+			if labels.timer then
+				labels.timer.TextColor3 = PAD_GREY
+				labels.timer.Text = "Available in " .. fmtWait(secondsToNextClaim())
+			end
+		end
+	end
+end
+
+-- Claim + reel reveal (the pad's touch action). The claim is server-gated, so a stale
+-- `claimable` can't double-grant — the invoke just comes back ok=false.
+local claiming = false
+local function doClaim()
+	if claiming or not claimable then
+		return
+	end
+	claiming = true
+	local ok, res = pcall(function()
+		return claimRF:InvokeServer()
+	end)
+	if ok and type(res) == "table" and res.ok and res.reward then
+		claimable = false
+		refreshPads()
+		if not uiBuilt then
+			uiBuilt = true
+			createUI(player:WaitForChild("PlayerGui") :: PlayerGui)
+		end
+		promptFrame.Visible = false -- pad flow skips the prompt; straight to the reel
+		screenGui.Enabled = true
+		startSpin(res.reward :: RewardResult)
+	end
+	claiming = false
+end
+
+local function setupPad(inst: Instance)
+	if not inst:IsA("BasePart") or padLastTouch[inst] ~= nil then
+		return
+	end
+	padLastTouch[inst] = 0 -- doubles as the "already wired" marker
+
+	local holder = inst:FindFirstChild("Billboard")
+	local bb = holder and holder:FindFirstChild("BillboardGui")
+	if bb then
+		local title = bb:FindFirstChild("Title")
+		local timer = bb:FindFirstChild("Timer")
+		table.insert(padLabels, {
+			title = if title and title:IsA("TextLabel") then title else nil,
+			timer = if timer and timer:IsA("TextLabel") then timer else nil,
+		})
+		refreshPads()
+	else
+		warn("DailyRewardUI: DailyReward pad has no Billboard.BillboardGui — pad works, but no sign")
+	end
+
+	inst.Touched:Connect(function(obj: Instance)
+		local char = player.Character
+		if not char or not obj:IsDescendantOf(char) then
+			return
+		end
+		local now = os.clock()
+		if now - (padLastTouch[inst] or 0) < PAD_TOUCH_DEBOUNCE then
+			return
+		end
+		padLastTouch[inst] = now
+		doClaim()
+	end)
+end
+
+----------------------------------------------------------------
 -- Init
 ----------------------------------------------------------------
 
@@ -444,31 +584,48 @@ function DailyRewardUI.Init()
 	getInfoRF = RS.Remote:WaitForChild("GetDailyRewardInfo") :: RemoteFunction
 	claimRF = RS.Remote:WaitForChild("ClaimDailyReward") :: RemoteFunction
 
+	-- Wire the claim pads (billboards start greyed until claimability is known).
+	for _, inst in CollectionService:GetTagged(Config.Tags.DailyRewardPad) do
+		setupPad(inst)
+	end
+	CollectionService:GetInstanceAddedSignal(Config.Tags.DailyRewardPad):Connect(setupPad)
+
+	-- Server pushes fresh info after every claim (and on day rollover checks it makes).
+	;(RS.Remote:WaitForChild("DailyRewardChanged") :: RemoteEvent).OnClientEvent:Connect(function(info: any)
+		if type(info) == "table" then
+			claimable = info.claimableToday == true
+			refreshPads()
+		end
+	end)
+
 	task.spawn(function()
-		-- Wait for saved data to load first, so a returning player reads their real streak
-		-- (not a pre-load default), same gate the join tutorial uses.
+		-- Wait for saved data to load first, so a returning player reads their real claim
+		-- state (not a pre-load default), same gate the join tutorial uses.
 		local remote = RS:WaitForChild("Remote")
 		local waitLoaded = remote:WaitForChild("WaitForDataLoaded") :: RemoteFunction
 		waitLoaded:InvokeServer()
 
-		-- A brand-new player gets the tutorial on this same join; don't stack a second
-		-- centered modal on top of it — the reward prompt waits its turn.
-		TutorialService.WaitUntilOver()
-
 		local ok, info = pcall(function()
 			return getInfoRF:InvokeServer()
 		end)
-		if not ok or type(info) ~= "table" or not info.claimableToday then
-			return
+		if ok and type(info) == "table" then
+			claimable = info.claimableToday == true
 		end
+		refreshPads()
 
-		local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
-		createUI(playerGui)
-		streakLabel.Text = "Streak: " .. tostring(info.streak)
-		luckLabel.Text = if info.luckBonus > 0
-			then string.format("🍀 Luck Bonus: +%d%%", math.floor(info.luckBonus * 100 + 0.5))
-			else "🍀 Luck Bonus: —"
-		screenGui.Enabled = true
+		-- 1 Hz countdown ticker; also flips the pad to "Claim Now!" when the UTC day
+		-- rolls over mid-session — the countdown WRAPPING (remaining jumps back up)
+		-- is the reset moment, and a wrap can't be missed by tick jitter.
+		local lastRemaining = math.huge
+		while true do
+			local remaining = secondsToNextClaim()
+			if not claimable and remaining > lastRemaining then
+				claimable = true -- new UTC day started; today is unclaimed
+			end
+			lastRemaining = remaining
+			refreshPads()
+			task.wait(1)
+		end
 	end)
 end
 

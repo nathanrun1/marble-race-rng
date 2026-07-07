@@ -41,20 +41,21 @@ function StringUtils.FormatShort(n: number, floorRound: boolean?, precision: num
         n = math.floor(n * 10 ^ precision) / (10 ^ precision)
     end
 
-    if sciFactor > 0 then
-        return string.format("%."..precision.."fe%d", n, sciFactor)
-    elseif factor ~= "" then
-        return string.format("%."..precision.."f%s", n, factor)
+    -- Only as many digits as the value needs: "2.00" -> "2", "1.50" -> "1.5", "1.35"
+    -- stays — applied to plain, suffixed ("1.5K") and scientific ("1.2e16") forms alike.
+    local function trimZeros(s: string): string
+        if not s:find(".", 1, true) then
+            return s
+        end
+        s = s:gsub("0+$", ""):gsub("%.$", "")
+        return s
     end
 
-    -- No suffix or scientific notation to justify padded decimals: drop a purely-.00 tail
-    -- (a x2 multiplier reads as "2", not "2.00"), but keep a genuine fraction (x1.35 stays as-is).
-    local plain = string.format("%."..precision.."f", n)
-    local whole, frac = plain:match("^(%-?%d+)%.(%d+)$")
-    if frac and tonumber(frac) == 0 then
-        return whole
+    local body = trimZeros(string.format("%."..precision.."f", n))
+    if sciFactor > 0 then
+        return body .. "e" .. tostring(sciFactor)
     end
-    return plain
+    return body .. factor
 end
 
 -- Money string: comma-grouped below 1K (so small balances read exactly), short

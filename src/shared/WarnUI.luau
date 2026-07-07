@@ -37,27 +37,42 @@ if RunService:IsClient() then
 	local TweenService = game:GetService("TweenService")
 	local Players = game:GetService("Players")
 	local AutoScale = require(RS.Shared.AutoScale)
+	local Config = require(RS.Shared.Config)
 
 	local POP_IN     = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 	local FADE_OUT   = TweenInfo.new(0.4,  Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	local DISPLAY_TIME = 1.2  -- seconds the banner stays fully visible before fading
-	local MSG_GAP      = 0.1  -- seconds between consecutive warnings
-	local HOST_Y       = 0.62 -- vertical anchor — a bit below centre
+	local DISPLAY_TIME = 1.2  -- seconds each banner stays fully visible before fading
+	local MSG_GAP      = 0.05 -- pacing between queued banners appearing (ScoreUI-style)
+	local HOST_Y       = 0.62 -- where the NEWEST banner sits — a bit below centre
+	local MAX_STACK    = Config.WarnUI.MaxStack
 
 	local bannerHost: Frame? = nil
+	local bannerCounter = 0
+	-- Visible banners, oldest first. New ones stack; past MAX_STACK the oldest is pruned
+	-- immediately (same policy as ScoreUI's message log).
+	local active: { TextLabel } = {}
 	local messageQueue: { { text: string, color: Color3?, lifetime: number? } } = {}
 	local isProcessing = false
 
-	-- Show one banner and yield until it has fully left the screen.
+	local function pruneBanner(label: TextLabel)
+		local idx = table.find(active, label)
+		if idx then
+			table.remove(active, idx)
+		end
+		label:Destroy()
+	end
+
+	-- Show one banner (non-blocking): it joins the bottom of the stack, older banners are
+	-- pushed up by the list layout, and it fades out on its own timer.
 	local function showBanner(text: string, color: Color3?, lifetime: number?)
 		local host = bannerHost
 		if not host then return end
+		bannerCounter += 1
 
 		local label = Instance.new("TextLabel")
-		label.Name = "Warning"
-		label.Size = UDim2.new(1, 0, 0, 60)
-		label.Position = UDim2.new(0.5, 0, 0.5, 0)
-		label.AnchorPoint = Vector2.new(0.5, 0.5)
+		label.Name = "Warning" .. bannerCounter
+		label.LayoutOrder = bannerCounter
+		label.Size = UDim2.new(1, 0, 0, 52)
 		label.BackgroundTransparency = 1
 		label.Text = text
 		label.TextColor3 = color or DEFAULT_COLOR
@@ -75,20 +90,24 @@ if RunService:IsClient() then
 		local scale = Instance.new("UIScale")
 		scale.Scale = 0
 		scale.Parent = label
-
 		TweenService:Create(scale, POP_IN, { Scale = 1 }):Play()
 
-		task.wait(lifetime or DISPLAY_TIME)
-		if not label.Parent then return end
+		table.insert(active, label)
+		while #active > MAX_STACK do
+			pruneBanner(active[1])
+		end
 
-		local tOut = TweenService:Create(label, FADE_OUT, {
-			TextTransparency = 1,
-			TextStrokeTransparency = 1,
-		})
-		TweenService:Create(label, FADE_OUT, { Position = UDim2.new(0.5, 0, 0.45, 0) }):Play()
-		tOut:Play()
-		tOut.Completed:Wait()
-		label:Destroy()
+		task.delay(lifetime or DISPLAY_TIME, function()
+			if not label.Parent then return end
+			local tOut = TweenService:Create(label, FADE_OUT, {
+				TextTransparency = 1,
+				TextStrokeTransparency = 1,
+			})
+			tOut:Play()
+			tOut.Completed:Once(function()
+				pruneBanner(label)
+			end)
+		end)
 	end
 
 	local function processQueue()
@@ -99,8 +118,8 @@ if RunService:IsClient() then
 				local msg = table.remove(messageQueue, 1)
 				if msg then
 					showBanner(msg.text, msg.color, msg.lifetime)
+					task.wait(MSG_GAP)
 				end
-				task.wait(MSG_GAP)
 			end
 			isProcessing = false
 		end)
@@ -114,13 +133,22 @@ if RunService:IsClient() then
 		screenGui.DisplayOrder = 11 -- above the HUD / alongside AnnounceUI
 		screenGui.Parent = playerGui
 
+		-- Bottom-anchored so the newest banner sits at HOST_Y and older ones stack upward.
 		local host = Instance.new("Frame")
 		host.Name = "BannerHost"
-		host.Size = UDim2.new(0, 600, 0, 60)
-		host.Position = UDim2.new(0.5, 0, HOST_Y, 0)
-		host.AnchorPoint = Vector2.new(0.5, 0.5)
+		host.Size = UDim2.new(0, 600, 0, (52 + 4) * MAX_STACK)
+		host.Position = UDim2.new(0.5, 0, HOST_Y, 26)
+		host.AnchorPoint = Vector2.new(0.5, 1)
 		host.BackgroundTransparency = 1
 		host.Parent = screenGui
+
+		local layout = Instance.new("UIListLayout")
+		layout.FillDirection = Enum.FillDirection.Vertical
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 4)
+		layout.Parent = host
 
 		-- Authored at 1080p; shrink on smaller viewports.
 		AutoScale.Apply(host)

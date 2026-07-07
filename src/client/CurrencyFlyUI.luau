@@ -15,16 +15,18 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local RS = game:GetService("ReplicatedStorage")
 
+local AutoScale = require(RS.Shared.AutoScale)
 local Config = require(RS.Shared.Config)
 local SoundService = require(RS.Shared.SoundService)
 
 local CurrencyFlyUI = {}
 
-export type Kind = "Cash" | "Diamonds"
+export type Kind = "Cash" | "Diamonds" | "Crate"
 
 local EMOJI: { [string]: string } = {
 	Cash = "💰",
 	Diamonds = "💎",
+	Crate = "📦",
 }
 
 -- Visual tuning (this is HUD juice, not gameplay — so it lives here, like CoinPickups' bob/spin).
@@ -61,15 +63,23 @@ local function resolveTarget(kind: Kind): GuiObject?
 	local playerGui = player:FindFirstChildOfClass("PlayerGui")
 	local mainGui = playerGui and playerGui:FindFirstChild("MainGui")
 	local leftBar = mainGui and mainGui:FindFirstChild("LeftBar")
-	local holder = leftBar and leftBar:FindFirstChild(kind)
-	local icon = holder and holder:FindFirstChild("ImageLabel")
+	-- Crates have no balance readout; bought boxes fly to the LOADOUT trigger instead
+	-- (that's where marbles end up mattering), so the flock still lands somewhere real.
+	local icon: Instance? = nil
+	if kind == "Crate" then
+		local quad = if leftBar then leftBar:FindFirstChild("TriggerQuad") else nil
+		icon = if quad then quad:FindFirstChild("LoadoutTriggerHost", true) else nil
+	else
+		local holder = if leftBar then leftBar:FindFirstChild(kind) else nil
+		icon = if holder then holder:FindFirstChild("ImageLabel") else nil
+	end
 	if icon and icon:IsA("GuiObject") then
 		targetIcon[kind] = icon
 		return icon
 	end
 	if not warnedMissing[kind] then
 		warnedMissing[kind] = true
-		warn(("CurrencyFlyUI: MainGui.LeftBar.%s.ImageLabel not found — skipping fly effect"):format(kind))
+		warn(("CurrencyFlyUI: no HUD target found for %s — skipping fly effect"):format(kind))
 	end
 	return nil
 end
@@ -105,6 +115,9 @@ end
 -- One emoji: pop in at (spawnX, spawnY) — absolute screen coords, which ARE this container's
 -- offset coords (the container sits at absolute (0, 0)) — hold, then fly into the icon.
 local function flyOne(parent: Frame, icon: GuiObject, emoji: string, spawnX: number, spawnY: number, holdDelay: number)
+	-- The container works in raw AbsolutePosition coords (no UIScale — the flight targets
+	-- are absolute screen positions), so the emoji SIZE scales by the viewport factor.
+	local vs = AutoScale.GetScale()
 	local label = Instance.new("TextLabel")
 	label.Name = "FlyEmoji"
 	label.BackgroundTransparency = 1
@@ -117,7 +130,7 @@ local function flyOne(parent: Frame, icon: GuiObject, emoji: string, spawnX: num
 	label.Text = emoji
 	label.Parent = parent
 
-	TweenService:Create(label, POP_TWEEN, { Size = UDim2.fromOffset(EMOJI_SIZE, EMOJI_SIZE) }):Play()
+	TweenService:Create(label, POP_TWEEN, { Size = UDim2.fromOffset(math.floor(EMOJI_SIZE * vs + 0.5), math.floor(EMOJI_SIZE * vs + 0.5)) }):Play()
 
 	task.delay(holdDelay, function()
 		if not label:IsDescendantOf(game) then
@@ -125,7 +138,7 @@ local function flyOne(parent: Frame, icon: GuiObject, emoji: string, spawnX: num
 		end
 		-- Target position read at takeoff (not spawn), so a reflowing LeftBar still gets hit.
 		local center = icon.AbsolutePosition + icon.AbsoluteSize * 0.5
-		local endSize = math.floor(EMOJI_SIZE * FLY_END_SCALE + 0.5)
+		local endSize = math.floor(EMOJI_SIZE * vs * FLY_END_SCALE + 0.5)
 		local fly = TweenService:Create(
 			label,
 			TweenInfo.new(FLY_TIME + math.random() * FLY_JITTER, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
@@ -163,9 +176,10 @@ function CurrencyFlyUI.Play(kind: Kind, count: number?)
 
 	local centerX = parent.AbsoluteSize.X * 0.5
 	local centerY = parent.AbsoluteSize.Y * 0.5
+	local vs = AutoScale.GetScale() -- spread scales with the viewport like the emoji size
 	for _ = 1, n do
-		local spawnX = centerX + (math.random() - 0.5) * 2 * SPREAD_X
-		local spawnY = centerY + (math.random() - 0.5) * 2 * SPREAD_Y
+		local spawnX = centerX + (math.random() - 0.5) * 2 * SPREAD_X * vs
+		local spawnY = centerY + (math.random() - 0.5) * 2 * SPREAD_Y * vs
 		local holdDelay = POP_TIME + HOLD_MIN + math.random() * HOLD_JITTER
 		flyOne(parent, icon, emoji, spawnX, spawnY, holdDelay)
 	end

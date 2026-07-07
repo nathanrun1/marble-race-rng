@@ -20,6 +20,7 @@ local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local GoldenPegService = require(SSS.Scripts.Modules.GoldenPegService)
+local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 
 local ScoreHandler = {}
 
@@ -185,6 +186,23 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 		local cashBonus = info.banked * (cashMult - 1)
 		info.banked += cashBonus
 		ScoreUI.PostMessage(player, string.format("Cash Multiplier! +%s (×%d)", StringUtils.FormatMoney(cashBonus), cashMult), Color3.fromRGB(255, 196, 0))
+	end
+
+	-- Timed cash boost (starter pack's 24h ×1.5): same flat global multiplier shape,
+	-- silently 1× once the window lapses.
+	local boostMult = StatsService.GetCashBoost(player)
+	if boostMult > 1 then
+		local boostBonus = info.banked * (boostMult - 1)
+		info.banked += boostBonus
+		ScoreUI.PostMessage(player, string.format("Cash Boost! +%s (×%s)", StringUtils.FormatMoney(boostBonus), StringUtils.FormatShort(boostMult)), Color3.fromRGB(255, 150, 40))
+	end
+
+	-- Skin loadout bonus (crate progression): ×(1 + sum of slotted skins' bonuses).
+	local skinMult = CosmeticService.GetLoadoutMult(player)
+	if skinMult > 1 then
+		local skinBonus = info.banked * (skinMult - 1)
+		info.banked += skinBonus
+		ScoreUI.PostMessage(player, string.format("Marble Bonus! +%s (×%s)", StringUtils.FormatMoney(skinBonus), StringUtils.FormatShort(skinMult)), Color3.fromRGB(255, 120, 220))
 	end
 
 	PrestigeService.AddLifetimeBanked(player, info.banked)

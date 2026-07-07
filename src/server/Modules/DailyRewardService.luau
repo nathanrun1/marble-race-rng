@@ -11,7 +11,6 @@ local SSS = game:GetService("ServerScriptService")
 
 local Config = require(RS.Shared.Config)
 local ProfileStats = require(RS.Shared.ProfileStats)
-local BallSkins = require(RS.Shared.BallSkins)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
@@ -26,7 +25,7 @@ export type DailyRewardData = {
 export type RewardResult =
 	{ Kind: "Diamonds", Amount: number }
 	| { Kind: "Cash", Amount: number }
-	| { Kind: "Skin", SkinId: string, SkinName: string }
+	| { Kind: "Crate", BoxId: string, BoxName: string }
 
 export type Info = {
 	claimableToday: boolean,
@@ -90,36 +89,17 @@ end
 -- + a matching client cell/result renderer — nothing else changes.
 --------------------------------------------------------------------------------
 
-local function ownsEverySkin(player: Player): boolean
-	for id in BallSkins.GetAll() do
-		if not CosmeticService.IsOwned(player, id) then
-			return false
-		end
-	end
-	return true
-end
-
--- Weighted pick from the pool, skipping Skin entries entirely if the player owns every skin
--- (so a roll never "wastes" a slot on an impossible reward).
-local function rollPoolEntry(player: Player): any
+-- Weighted pick from the pool. (No skip logic needed anymore: the Crate kind is never a
+-- dead roll — a duplicate marble stars up instead of being wasted.)
+local function rollPoolEntry(_player: Player): any
 	local pool = Config.DailyReward.Pool
-	local skipSkins = ownsEverySkin(player)
-
 	local total = 0
 	for _, entry in pool do
-		if not (entry.Kind == "Skin" and skipSkins) then
-			total += entry.Weight
-		end
-	end
-	if total <= 0 then
-		return pool[1]
+		total += entry.Weight
 	end
 	local r = math.random() * total
 	local acc = 0
 	for _, entry in pool do
-		if entry.Kind == "Skin" and skipSkins then
-			continue
-		end
 		acc += entry.Weight
 		if r <= acc then
 			return entry
@@ -146,26 +126,27 @@ local function rollCash(player: Player, entry: any, _luckBonus: number): RewardR
 	return { Kind = "Cash", Amount = amount }
 end
 
-local function rollSkin(player: Player, _entry: any, _luckBonus: number): RewardResult?
-	local candidates: { string } = {}
-	for id in BallSkins.GetAll() do
-		if not CosmeticService.IsOwned(player, id) then
-			table.insert(candidates, id)
+-- A free UNOPENED Marble Box (entry.BoxId picks which; defaults to Basic), banked into
+-- the player's stash — they open it at the cosmetics shop whenever they like.
+local function rollCrate(player: Player, entry: any, _luckBonus: number): RewardResult?
+	local boxId = entry.BoxId or "Basic"
+	if not CosmeticService.AddBox(player, boxId) then
+		return nil
+	end
+	local boxName = boxId .. " Box"
+	for _, box in Config.Crates.Boxes do
+		if box.Id == boxId then
+			boxName = box.Name
+			break
 		end
 	end
-	if #candidates == 0 then
-		return nil -- shouldn't happen (rollPoolEntry excludes Skin when this is true)
-	end
-	local id = candidates[math.random(#candidates)]
-	CosmeticService.GrantSkin(player, id)
-	local skin = BallSkins.Get(id)
-	return { Kind = "Skin", SkinId = id, SkinName = if skin then skin.name else id }
+	return { Kind = "Crate", BoxId = boxId, BoxName = boxName }
 end
 
 local REWARD_ROLLERS: { [string]: (Player, any, number) -> RewardResult? } = {
 	Diamonds = rollDiamonds,
 	Cash = rollCash,
-	Skin = rollSkin,
+	Crate = rollCrate,
 }
 
 function DailyRewardService.GetInfo(player: Player): Info
@@ -187,8 +168,8 @@ function DailyRewardService.Claim(player: Player): ClaimResult
 	local roller = REWARD_ROLLERS[entry.Kind]
 	local result = if roller then roller(player, entry, luckBonus) else nil
 	if not result then
-		-- Shouldn't happen (rollPoolEntry already excludes an impossible Skin roll), but never
-		-- let a claim silently fail — fall back to a flat Diamonds grant.
+		-- Shouldn't happen (every pool Kind grants unconditionally), but never let a claim
+		-- silently fail — fall back to a flat Diamonds grant.
 		local amount = math.floor(10 * (1 + luckBonus) + 0.5)
 		CosmeticService.AddCC(player, amount)
 		result = { Kind = "Diamonds", Amount = amount }

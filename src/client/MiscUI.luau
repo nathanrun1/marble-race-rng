@@ -52,6 +52,7 @@ local CASH_LEVEL_COLOR: { [number]: Color3 } = {
 local function bindMuteToggle(host: Instance, initial: boolean, onChange: (boolean) -> ())
 	return UIButton.bind(host, {
 		toggle = { initial = initial, onChange = onChange },
+		hoverScale = 1.08,
 		idleGradient = BLUE,
 		activeGradient = RED,
 		onRender = function(button: GuiButton, active: boolean)
@@ -84,6 +85,7 @@ local function initRightBar()
 	local multLabel = cashButton:WaitForChild("MultLabel") :: TextLabel
 	local cashNextId: number? = nil
 	local cashHandle = UIButton.bind(cashHost, {
+		hoverScale = 1.08,
 		onClick = function()
 			if cashNextId then
 				ProductService.Prompt(cashNextId)
@@ -123,6 +125,7 @@ local function initRightBar()
 	local ballDropId = tonumber(Config.Products.BallDropMaxBet)
 	if ballDropId and ballDropId ~= 0 then
 		UIButton.bind(ballDropHost, {
+			hoverScale = 1.08,
 			onClick = function()
 				ProductService.Prompt(ballDropId)
 			end,
@@ -134,6 +137,7 @@ local function initRightBar()
 	local starterHost = rightBar:WaitForChild("StarterPackHost") :: GuiObject
 	local starterId = tonumber(Config.GamePasses.StarterPack)
 	UIButton.bind(starterHost, {
+		hoverScale = 1.08,
 		onClick = function()
 			if starterId then
 				ProductService.PromptGamePass(starterId)
@@ -175,6 +179,7 @@ function MiscUI.Init()
 	-- Camera: gold while the alternate board view is active.
 	UIButton.bind(tools:WaitForChild("CamButtonHost"), {
 		toggle = { initial = CameraService.IsBoardView(), onChange = CameraService.SetBoardView },
+		hoverScale = 1.08,
 		idleGradient = BLUE,
 		activeGradient = GOLD,
 	})

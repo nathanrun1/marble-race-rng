@@ -25,11 +25,15 @@ local StatsService = {}
 export type Stats = {
 	upgradesPurchased: number,
 	cashMultiplier: number,
+	-- Timed cash boost (starter pack): multiplies banked cash while os.time() < boostUntil.
+	boostMult: number,
+	boostUntil: number,
 	ownsStarterPack: boolean,
 	lastGroupRewardClaim: number, -- os.time() of the last group-reward claim (0 = never)
 	completedTutorial: boolean,   -- whether the join tutorial has been finished/skipped
-	completedCosmeticTutorial: boolean, -- the later 50-Diamonds cosmetics-shop tutorial
+	completedCosmeticTutorial: boolean, -- the later afford-a-Marble-Box cosmetics-shop tutorial
 	completedTuningTutorial: boolean,   -- the first-axis-upgrade ball-tuning tutorial
+	completedLoadoutTutorial: boolean,  -- the first-new-skin loadout tutorial
 	-- Oldest-first, newest last; capped at Config.BallAverage.Window entries (PrestigeService
 	-- empties this on rebirth). Feeds GetAvgMoneyPerBall via BallAverage.Compute.
 	recentBalls: { number },
@@ -56,11 +60,14 @@ local function defaults(): Stats
 	return {
 		upgradesPurchased = 0,
 		cashMultiplier = 1,
+		boostMult = 1,
+		boostUntil = 0,
 		ownsStarterPack = false,
 		lastGroupRewardClaim = 0,
 		completedTutorial = false,
 		completedCosmeticTutorial = false,
 		completedTuningTutorial = false,
+		completedLoadoutTutorial = false,
 		recentBalls = {},
 	}
 end
@@ -95,6 +102,12 @@ end
 
 function StatsService.GetCashMultiplier(player: Player): number
 	return get(player.UserId).cashMultiplier
+end
+
+-- The timed boost's multiplier if its window is still running, else 1.
+function StatsService.GetCashBoost(player: Player): number
+	local s = get(player.UserId)
+	return if os.time() < s.boostUntil then s.boostMult else 1
 end
 
 function StatsService.OwnsStarterPack(player: Player): boolean
@@ -152,6 +165,18 @@ function StatsService.SetCashMultiplier(player: Player, value: number)
 	announce(player)
 end
 
+-- Start (or restart) a timed cash boost: `mult`× banked cash for `seconds` from now.
+-- A fresh grant of a lower multiplier still applies — last grant wins.
+function StatsService.GrantCashBoost(player: Player, mult: number, seconds: number)
+	local s = stats[player.UserId]
+	if not s or mult <= 0 or seconds <= 0 then
+		return
+	end
+	s.boostMult = mult
+	s.boostUntil = os.time() + seconds
+	announce(player)
+end
+
 -- Stamp the group-reward claim time to now (server-authoritative cooldown anchor).
 function StatsService.SetGroupRewardClaimedNow(player: Player)
 	local s = stats[player.UserId]
@@ -179,6 +204,16 @@ function StatsService.SetCompletedCosmeticTutorial(player: Player)
 		return
 	end
 	s.completedCosmeticTutorial = true
+	announce(player)
+end
+
+-- Same for the loadout tutorial (fires on the first non-default skin). Idempotent.
+function StatsService.SetCompletedLoadoutTutorial(player: Player)
+	local s = stats[player.UserId]
+	if not s or s.completedLoadoutTutorial then
+		return
+	end
+	s.completedLoadoutTutorial = true
 	announce(player)
 end
 
@@ -244,6 +279,12 @@ function StatsService.ApplyData(player: Player, saved: Stats?)
 		if type(saved.cashMultiplier) == "number" then
 			s.cashMultiplier = saved.cashMultiplier
 		end
+		if type(saved.boostMult) == "number" and saved.boostMult > 0 then
+			s.boostMult = saved.boostMult
+		end
+		if type(saved.boostUntil) == "number" then
+			s.boostUntil = saved.boostUntil
+		end
 		if type(saved.ownsStarterPack) == "boolean" then
 			s.ownsStarterPack = saved.ownsStarterPack
 		end
@@ -258,6 +299,9 @@ function StatsService.ApplyData(player: Player, saved: Stats?)
 		end
 		if type(saved.completedTuningTutorial) == "boolean" then
 			s.completedTuningTutorial = saved.completedTuningTutorial
+		end
+		if type(saved.completedLoadoutTutorial) == "boolean" then
+			s.completedLoadoutTutorial = saved.completedLoadoutTutorial
 		end
 		if type(saved.recentBalls) == "table" then
 			for _, v in saved.recentBalls do
@@ -329,6 +373,8 @@ function StatsService.Init()
 			StatsService.SetCompletedCosmeticTutorial(player)
 		elseif which == "tuning" then
 			StatsService.SetCompletedTuningTutorial(player)
+		elseif which == "loadout" then
+			StatsService.SetCompletedLoadoutTutorial(player)
 		else
 			StatsService.SetCompletedTutorial(player)
 		end

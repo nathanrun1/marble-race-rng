@@ -85,6 +85,11 @@ local pgFill: any = prog:FindFirstChild("Frame"):FindFirstChild("Fill")
 local trigMeta: any = trigger:FindFirstChild("Frame")
 local trigMult: any = trigMeta and trigMeta:FindFirstChild("Mult")
 
+-- Studio-authored "💎 +X on Rebirth" line under the stat chips (Diamonds granted on
+-- prestige = nextCost × Config.Cosmetics.RebirthCCRatio). FindFirstChild: absent in
+-- older saved places, in which case the line just stays blank.
+local diamondsGainLabel: any = panel:FindFirstChild("DiamondsGain")
+
 -- Stat chips share the default name "Frame"; resolve them by LayoutOrder. Each
 -- chip holds a "Val" label. Order matches GenUI: lifetime, next cost, prestige #.
 -- Golden-obstacle footer labels (runtime-built in Init — the panel is Studio-authored, so
@@ -215,6 +220,11 @@ local function render(info: PrestigeInfo)
 	ptsVal.Text   = StringUtils.FormatMoney(moneyProgress) .. " / " .. StringUtils.FormatMoney(moneyRequired)
 	statLife.Text = StringUtils.FormatMoney(info.lifetimeBanked)
 	statCost.Text = StringUtils.FormatMoney(moneyRequired)
+	if diamondsGainLabel then
+		-- Mirrors the server grant: PrestigeService pays floor(nextCost × RebirthCCRatio).
+		local ccGained = math.floor(info.nextCost * Config.Cosmetics.RebirthCCRatio)
+		diamondsGainLabel.Text = "💎 +" .. StringUtils.FormatShort(ccGained) .. " on Rebirth"
+	end
 	statNum.Text  = info.count .. " → " .. (info.count + 1)
 
 	local frac = math.clamp(moneyRequired > 0 and moneyProgress / moneyRequired or 0, 0, 1)
@@ -310,14 +320,15 @@ function PrestigeUI.Init()
 	overlay.Visible = false
 
 	-- Golden-obstacle footer: one slim row appended below the PRESTIGE button (the
-	-- panel's UIListLayout runs on LayoutOrder; the button row is order 9). The panel
-	-- has a fixed authored height, so grow it by the row's height + list padding.
+	-- panel's UIListLayout runs on LayoutOrder; the button row is order 10, after the
+	-- authored DiamondsGain line took 8). The panel has a fixed authored height, so
+	-- grow it by the row's height + list padding.
 	local ROW_HEIGHT = 44
 	local row = f("Frame", {
 		Name = "GoldenPegs",
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, ROW_HEIGHT),
-		LayoutOrder = 10,
+		LayoutOrder = 11,
 	}, panel)
 	f("UIListLayout", {
 		FillDirection = Enum.FillDirection.Vertical,

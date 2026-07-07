@@ -9,19 +9,30 @@ local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
+local Config = require(RS.Shared.Config)
 local BallSkins = require(RS.Shared.BallSkins)
 local BallEffects = require(RS.Shared.BallEffects)
+local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local Signal = require(RS.Shared.Signal)
 local BallService = require(SSS.Scripts.Modules.BallService)
+-- NOTE: ProductService is required lazily in Init — it requires DataService, which
+-- requires this module, so a top-level require here is a cycle.
 
 local CosmeticService = {}
 
 local DEFAULT_SKIN = BallSkins.GetDefaultId()
+local LOADOUT_SLOTS = Config.Cosmetics.LoadoutSlots
 
 export type CosmeticData = {
 	cc: number,                   -- Cosmetic Coin balance
 	owned: { [string]: boolean }, -- owned skin ids (the default skin is always owned)
-	equipped: string,             -- equipped skin id
+	equipped: string,             -- VISUAL skin id (what the marbles wear; independent of loadout)
+	copies: { [string]: number }, -- total copies per owned skin (dupes star it up — CosmeticBonus)
+	-- Bonus loadout: slot -> skin id, keyed by STRING slot number ("1".."LoadoutSlots")
+	-- so DataStore round trips never mangle a sparse array.
+	loadout: { [string]: string },
+	pity: { [string]: number },   -- per-crate rolls since the last MinRarity+ hit
+	boxes: { [string]: number },  -- unopened boxes held per crate id (bought to hoard)
 }
 
 export type CosmeticInfo = {
@@ -29,24 +40,61 @@ export type CosmeticInfo = {
 	equipped: string,
 	selected: string,             -- skin highlighted in the shop (sample ball + buy-button target)
 	owned: { [string]: boolean },
+	copies: { [string]: number },
+	loadout: { [string]: string },
+	pity: { [string]: number },
+	boxes: { [string]: number },  -- unopened boxes held per crate id
+	loadoutBonus: number,         -- current total bonus (the +X% the loadout pays)
+	freeCrateIn: number,          -- seconds until the free box is claimable (0 = ready)
 }
 
 export type PurchaseResult = { ok: boolean, reason: string?, bought: boolean?, equipped: boolean? }
 
+export type RollResult = {
+	ok: boolean,
+	reason: string?,   -- "invalid" | "insufficient_cc" | "not_ready"
+	skinId: string?,
+	rarity: number?,
+	copies: number?,   -- total copies of the rolled skin after this roll
+	star: number?,
+	isNew: boolean?,
+}
+
 local data: { [number]: CosmeticData } = {}
 local selected: { [number]: string } = {} -- in-memory shop selection (not persisted)
+-- Session free-box timer (os.clock deadline per user; not persisted — the cadence is
+-- "FirstDelay after join (0 = instantly), Interval after every claim" by design).
+local freeDue: { [number]: number } = {}
 
 -- (player, info) — fired after any cosmetic change.
 CosmeticService.Changed = Signal.new()
 
 local changedRE: RemoteEvent
+local crateRolledRE: RemoteEvent
 
 local function defaults(): CosmeticData
-	return { cc = 0, owned = { [DEFAULT_SKIN] = true }, equipped = DEFAULT_SKIN }
+	return {
+		cc = 0,
+		owned = { [DEFAULT_SKIN] = true },
+		equipped = DEFAULT_SKIN,
+		copies = { [DEFAULT_SKIN] = 1 },
+		loadout = {},
+		pity = {},
+		boxes = {},
+	}
 end
 
 local function get(userId: number): CosmeticData
 	return data[userId] or defaults()
+end
+
+-- Loadout as a numeric slot array (holes allowed) for CosmeticBonus.
+local function loadoutArray(d: CosmeticData): { [number]: string? }
+	local arr: { [number]: string? } = {}
+	for slot = 1, LOADOUT_SLOTS do
+		arr[slot] = d.loadout[tostring(slot)]
+	end
+	return arr
 end
 
 local function buildInfo(player: Player): CosmeticInfo
@@ -56,6 +104,12 @@ local function buildInfo(player: Player): CosmeticInfo
 		equipped = d.equipped,
 		selected = selected[player.UserId] or d.equipped,
 		owned = d.owned,
+		copies = d.copies,
+		loadout = d.loadout,
+		pity = d.pity,
+		boxes = d.boxes,
+		loadoutBonus = CosmeticBonus.LoadoutBonus(loadoutArray(d), d.copies),
+		freeCrateIn = math.max(0, math.ceil((freeDue[player.UserId] or (os.clock() + Config.Crates.Free.FirstDelay)) - os.clock())),
 	}
 end
 
@@ -128,13 +182,20 @@ function CosmeticService.GetSelected(player: Player): string
 	return selected[player.UserId] or get(player.UserId).equipped
 end
 
+-- Add one copy of a skin (ownership + star progression). Returns the new copy total.
+local function addCopy(d: CosmeticData, skinId: string): number
+	d.owned[skinId] = true
+	d.copies[skinId] = (d.copies[skinId] or 0) + 1
+	return d.copies[skinId]
+end
+
 -- Grant a skin outright (no CC cost) and equip it — used by the Robux fallback product.
 function CosmeticService.GrantSkin(player: Player, skinId: string): boolean
 	local d = data[player.UserId]
 	if not d or not BallSkins.Get(skinId) then
 		return false
 	end
-	d.owned[skinId] = true
+	addCopy(d, skinId)
 	d.equipped = skinId
 	announce(player)
 	return true
@@ -155,12 +216,244 @@ function CosmeticService.Purchase(player: Player, skinId: string): PurchaseResul
 	end
 	if d.cc >= skin.price then
 		d.cc -= skin.price
-		d.owned[skinId] = true
+		addCopy(d, skinId)
 		d.equipped = skinId
 		announce(player)
 		return { ok = true, bought = true }
 	end
 	return { ok = false, reason = "insufficient_cc" }
+end
+
+--------------------------------------------------------------------------------
+-- Crate rolls (Marble Boxes), star dupes, pity
+--------------------------------------------------------------------------------
+-- Skins grouped by rarity once (the roll picks a rarity by weight, then a uniform
+-- random skin of that rarity).
+local skinsByRarity: { [number]: { string } } = {}
+for id, skin in BallSkins.GetAll() do
+	local list = skinsByRarity[skin.rarity]
+	if not list then
+		list = {}
+		skinsByRarity[skin.rarity] = list
+	end
+	table.insert(list, id)
+end
+
+-- Roll a rarity from weights, optionally clamped to >= minRarity (pity). Rarities with
+-- no skins defined are skipped regardless of weight.
+local function rollRarity(weights: { number }, minRarity: number?): number
+	local floor = minRarity or 1
+	local total = 0
+	for rarity = floor, #weights do
+		if skinsByRarity[rarity] then
+			total += weights[rarity]
+		end
+	end
+	if total <= 0 then
+		-- Degenerate config (e.g. pity floor above every weighted rarity): highest
+		-- rarity that has skins at all.
+		for rarity = #weights, 1, -1 do
+			if skinsByRarity[rarity] then
+				return rarity
+			end
+		end
+		return 1
+	end
+	local pick = math.random() * total
+	for rarity = floor, #weights do
+		if skinsByRarity[rarity] then
+			pick -= weights[rarity]
+			if pick <= 0 then
+				return rarity
+			end
+		end
+	end
+	return floor
+end
+
+type BoxDef = { Id: string, Name: string, Cost: number?, Product: string?, Weights: { number }, Pity: { Every: number, MinRarity: number }? }
+
+local boxById: { [string]: BoxDef } = {}
+for _, box in Config.Crates.Boxes :: { BoxDef } do
+	boxById[box.Id] = box
+end
+
+-- Roll one skin from a box for the player: pity bookkeeping, copy/star grant, announce.
+-- Cost/eligibility are the CALLER's job (RollCrate spends cc; ClaimFreeCrate gates on the
+-- timer) — this is the shared inner roll.
+local function rollFrom(player: Player, d: CosmeticData, box: BoxDef): RollResult
+	local pity = box.Pity
+	local count = d.pity[box.Id] or 0
+	local forced = pity ~= nil and (count + 1) >= pity.Every
+	local rarity = rollRarity(box.Weights, if forced and pity then pity.MinRarity else nil)
+	if pity then
+		d.pity[box.Id] = if rarity >= pity.MinRarity then 0 else count + 1
+	end
+
+	local pool = skinsByRarity[rarity] :: { string }
+	local skinId = pool[math.random(#pool)]
+	local isNew = d.owned[skinId] ~= true
+	local copies = addCopy(d, skinId)
+
+	announce(player)
+	return {
+		ok = true,
+		skinId = skinId,
+		rarity = rarity,
+		copies = copies,
+		star = CosmeticBonus.StarOf(copies),
+		isNew = isNew,
+	}
+end
+
+-- Open one Marble Box: consumes a held (pre-bought) box first, otherwise pays the
+-- cc cost from Config.Crates.Boxes on the spot.
+function CosmeticService.RollCrate(player: Player, boxId: string): RollResult
+	local d = data[player.UserId]
+	local box = boxById[boxId]
+	if not d or not box then
+		return { ok = false, reason = "invalid" }
+	end
+	local held = d.boxes[box.Id] or 0
+	if held > 0 then
+		d.boxes[box.Id] = if held > 1 then held - 1 else nil
+	else
+		local cost = box.Cost or 0
+		if d.cc < cost then
+			return { ok = false, reason = "insufficient_cc" }
+		end
+		d.cc -= cost
+	end
+	return rollFrom(player, d, box)
+end
+
+-- Buy one box WITHOUT opening it (hoard to open later — RollCrate consumes held
+-- boxes before charging cc). Returns the same shape as RollCrate for shared
+-- client error handling; ok=true carries no skin fields.
+function CosmeticService.BuyCrate(player: Player, boxId: string): RollResult
+	local d = data[player.UserId]
+	local box = boxById[boxId]
+	if not d or not box then
+		return { ok = false, reason = "invalid" }
+	end
+	local cost = box.Cost or 0
+	if d.cc < cost then
+		return { ok = false, reason = "insufficient_cc" }
+	end
+	d.cc -= cost
+	d.boxes[box.Id] = (d.boxes[box.Id] or 0) + 1
+	announce(player)
+	return { ok = true }
+end
+
+-- Open one box FREE of charge (no Diamonds; pity ticks as usual) — used by rewards that
+-- grant a crate opening (e.g. the daily reward's Crate kind). `boxId` must be a
+-- Config.Crates.Boxes id.
+function CosmeticService.GrantCrateRoll(player: Player, boxId: string): RollResult
+	local d = data[player.UserId]
+	local box = boxById[boxId]
+	if not d or not box then
+		return { ok = false, reason = "invalid" }
+	end
+	return rollFrom(player, d, box)
+end
+
+-- Bank `count` (default 1) unopened boxes into the player's stash — no roll, no charge.
+-- Used by grants that award the box itself (daily reward); RollCrate opens stashed
+-- boxes before charging Diamonds.
+function CosmeticService.AddBox(player: Player, boxId: string, count: number?): boolean
+	local d = data[player.UserId]
+	local box = boxById[boxId]
+	if not d or not box then
+		return false
+	end
+	d.boxes[box.Id] = (d.boxes[box.Id] or 0) + math.max(1, math.floor(count or 1))
+	announce(player)
+	return true
+end
+
+-- GrantCrateRoll, plus a CrateRolled push so the client presents the result (reel or
+-- banner) — for server-initiated grants with no invoke to return through (starter pack).
+function CosmeticService.GrantCrateRollAnnounced(player: Player, boxId: string): RollResult
+	local result = CosmeticService.GrantCrateRoll(player, boxId)
+	if result.ok and crateRolledRE then
+		crateRolledRE:FireClient(player, boxId, result)
+	end
+	return result
+end
+
+-- Claim the session free box (FirstDelay after join, Interval after each claim).
+function CosmeticService.ClaimFreeCrate(player: Player): RollResult
+	local d = data[player.UserId]
+	if not d then
+		return { ok = false, reason = "invalid" }
+	end
+	local due = freeDue[player.UserId]
+	if not due or os.clock() < due then
+		return { ok = false, reason = "not_ready" }
+	end
+	freeDue[player.UserId] = os.clock() + Config.Crates.Free.Interval
+	return rollFrom(player, d, Config.Crates.Free :: BoxDef)
+end
+
+--------------------------------------------------------------------------------
+-- Loadout (bonus slots) + visual equip
+--------------------------------------------------------------------------------
+-- Put an owned skin in a loadout slot (clears it from any other slot), or clear the
+-- slot with skinId = nil.
+function CosmeticService.SetLoadoutSlot(player: Player, slot: number, skinId: string?): boolean
+	local d = data[player.UserId]
+	if not d or slot ~= math.floor(slot) or slot < 1 or slot > LOADOUT_SLOTS then
+		return false
+	end
+	if skinId ~= nil and d.owned[skinId] ~= true then
+		return false
+	end
+	if skinId then
+		for s, id in d.loadout do
+			if id == skinId then
+				d.loadout[s] = nil
+			end
+		end
+	end
+	d.loadout[tostring(slot)] = skinId
+	announce(player)
+	return true
+end
+
+-- Fill the loadout with the highest-bonus owned skins (CosmeticBonus.BestLoadout).
+function CosmeticService.EquipBest(player: Player)
+	local d = data[player.UserId]
+	if not d then
+		return
+	end
+	local best = CosmeticBonus.BestLoadout(d.copies)
+	d.loadout = {}
+	for slot, id in best do
+		d.loadout[tostring(slot)] = id
+	end
+	announce(player)
+end
+
+-- Set the VISUAL skin (what marbles wear) — independent of the bonus loadout.
+function CosmeticService.SetEquipped(player: Player, skinId: string): boolean
+	local d = data[player.UserId]
+	if not d or d.owned[skinId] ~= true then
+		return false
+	end
+	d.equipped = skinId
+	announce(player)
+	return true
+end
+
+-- Global banked multiplier from the loadout: ×(1 + sum of slotted skins' bonuses).
+-- Applied by ScoreHandler at banking, alongside the prestige/cash multipliers.
+function CosmeticService.GetLoadoutMult(player: Player): number
+	local d = data[player.UserId]
+	if not d then
+		return 1
+	end
+	return 1 + CosmeticBonus.LoadoutBonus(loadoutArray(d), d.copies)
 end
 
 --------------------------------------------------------------------------------
@@ -191,10 +484,47 @@ function CosmeticService.ApplyData(player: Player, saved: CosmeticData?)
 		if type(saved.equipped) == "string" and d.owned[saved.equipped] then
 			d.equipped = saved.equipped
 		end
+		if type(saved.copies) == "table" then
+			for id, n in saved.copies do
+				if type(n) == "number" and n >= 1 and BallSkins.Get(id) then
+					d.copies[id] = math.floor(n)
+				end
+			end
+		end
+		if type(saved.loadout) == "table" then
+			for slotStr, id in saved.loadout do
+				local slot = tonumber(slotStr)
+				if slot and slot >= 1 and slot <= LOADOUT_SLOTS and d.owned[id] == true then
+					d.loadout[tostring(slot)] = id
+				end
+			end
+		end
+		if type(saved.pity) == "table" then
+			for boxId, n in saved.pity do
+				if boxById[boxId] and type(n) == "number" and n >= 0 then
+					d.pity[boxId] = math.floor(n)
+				end
+			end
+		end
+		if type(saved.boxes) == "table" then
+			for boxId, n in saved.boxes do
+				if boxById[boxId] and type(n) == "number" and n >= 1 then
+					d.boxes[boxId] = math.floor(n)
+				end
+			end
+		end
 	end
 	d.owned[DEFAULT_SKIN] = true -- the default skin is always owned
+	-- Migration: pre-crate saves have owned skins but no copy counts — seed them at 1
+	-- so stars/bonuses work (nobody loses a skin, everyone starts at ★1).
+	for id in d.owned do
+		if not d.copies[id] then
+			d.copies[id] = 1
+		end
+	end
 	data[player.UserId] = d
 	selected[player.UserId] = d.equipped
+	freeDue[player.UserId] = os.clock() + Config.Crates.Free.FirstDelay
 	announce(player)
 end
 
@@ -205,6 +535,7 @@ end
 function CosmeticService.Clear(player: Player)
 	data[player.UserId] = nil
 	selected[player.UserId] = nil
+	freeDue[player.UserId] = nil
 end
 
 --------------------------------------------------------------------------------
@@ -238,6 +569,87 @@ function CosmeticService.Init()
 			CosmeticService.Select(player, skinId)
 		end
 	end)
+
+	-- Crate rolls + free box.
+	;(getRemote("RollCrate", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player, boxId: any)
+		if type(boxId) ~= "string" then
+			return { ok = false, reason = "invalid" }
+		end
+		return CosmeticService.RollCrate(player, boxId)
+	end
+	;(getRemote("ClaimFreeCrate", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player)
+		return CosmeticService.ClaimFreeCrate(player)
+	end
+	;(getRemote("BuyCrate", "RemoteFunction") :: RemoteFunction).OnServerInvoke = function(player: Player, boxId: any)
+		if type(boxId) ~= "string" then
+			return { ok = false, reason = "invalid" }
+		end
+		return CosmeticService.BuyCrate(player, boxId)
+	end
+
+	-- Loadout + visual equip (fire-and-forget: the CosmeticChanged push carries the
+	-- authoritative state either way).
+	;(getRemote("SetLoadoutSlot", "RemoteEvent") :: RemoteEvent).OnServerEvent:Connect(function(player: Player, slot: any, skinId: any)
+		if type(slot) == "number" and (skinId == nil or type(skinId) == "string") then
+			CosmeticService.SetLoadoutSlot(player, slot, skinId)
+		end
+	end)
+	;(getRemote("EquipBestLoadout", "RemoteEvent") :: RemoteEvent).OnServerEvent:Connect(function(player: Player)
+		CosmeticService.EquipBest(player)
+	end)
+	;(getRemote("EquipCosmetic", "RemoteEvent") :: RemoteEvent).OnServerEvent:Connect(function(player: Player, skinId: any)
+		if type(skinId) == "string" then
+			CosmeticService.SetEquipped(player, skinId)
+		end
+	end)
+
+	-- Robux crate purchases: one dev product per box (Config.Crates.Boxes[].Product)
+	-- opens one box on receipt, exactly like a Diamonds roll (pity ticks too). The
+	-- result is pushed to the buyer over CrateRolled so the client can play the reel
+	-- reveal (receipts complete asynchronously — there's no invoke to return through).
+	crateRolledRE = getRemote("CrateRolled", "RemoteEvent") :: RemoteEvent
+	local ProductService = require(RS.Shared.ProductService) -- lazy: see the note at the top requires
+	local PolicyGate = require(RS.Shared.PolicyGate)
+
+	-- Diamond packs (Config.DiamondPacks): one dev product each, granting a flat Diamonds
+	-- amount on receipt. Registered here because Diamonds ARE this service's cc.
+	-- Paid-random-items-restricted players can't buy Diamonds or crates with Robux (the
+	-- client hides/blocks the prompts; refusing the receipt here is the backstop — the
+	-- unconsumed purchase is never granted and Roblox eventually reverses it).
+	for _, pack in Config.DiamondPacks do
+		local packProductId = tonumber(pack.Product)
+		if packProductId and packProductId ~= 0 then
+			local amount = pack.Diamonds
+			ProductService.RegisterProduct(packProductId, function(player: Player, _receiptInfo: any): boolean
+				if PolicyGate.PaidRandomItemsRestricted(player) then
+					return false -- policy-restricted: never consume this purchase
+				end
+				if not data[player.UserId] then
+					return false -- data not loaded yet; ProcessReceipt retries
+				end
+				CosmeticService.AddCC(player, amount)
+				return true
+			end)
+		end
+	end
+
+	for _, box in Config.Crates.Boxes :: { BoxDef } do
+		local productId = tonumber(box.Product)
+		if productId and productId ~= 0 then
+			ProductService.RegisterProduct(productId, function(player: Player, _receiptInfo: any): boolean
+				if PolicyGate.PaidRandomItemsRestricted(player) then
+					return false -- policy-restricted: never consume this purchase
+				end
+				local d = data[player.UserId]
+				if not d then
+					return false -- data not loaded yet; ProcessReceipt retries
+				end
+				local result = rollFrom(player, d, box)
+				crateRolledRE:FireClient(player, box.Id, result)
+				return true
+			end)
+		end
+	end
 
 	-- The Signal fires LIFO, and Services bootstrap inits CosmeticService BEFORE BallEffects — so
 	-- this handler (connected first) runs LAST, painting the equipped skin's colour over BallEffects'

@@ -393,7 +393,8 @@ local function openTuning(triggerHost: GuiObject)
 	tuningOpen = true
 	if tuningTween then tuningTween:Cancel() end
 
-	triggerHost.Visible = false
+	-- The open menu replaces the whole 2×2 trigger quad on the left, not just this button.
+	;(triggerHost:FindFirstAncestor("TriggerQuad") :: GuiObject).Visible = false
 	Controller.root.Visible = true
 	CameraService.SetTuningView(true) -- swing to the ball-tuning camera while open
 	BallTuningPreview.SetVisible(true) -- aim lines + preview ball
@@ -416,19 +417,19 @@ local function closeTuning(triggerHost: GuiObject)
 
 	tuningScale().Scale = tuningRestScale   -- restore resting size for the next open
 	Controller.root.Visible = false
-	triggerHost.Visible = true
+	;(triggerHost:FindFirstAncestor("TriggerQuad") :: GuiObject).Visible = true
 	CameraService.SetTuningView(false) -- back to board view / default camera
 	BallTuningPreview.SetVisible(false)
 end
 
 local function initTuningMenu()
 	local leftBar = Controller.root.Parent
-	local triggerHost = leftBar:WaitForChild("TuneTriggerHost") :: GuiObject
+	local triggerHost = (leftBar:WaitForChild("TriggerQuad") :: Instance):FindFirstChild("TuneTriggerHost", true) :: GuiObject
 	local closeBtn = Controller.root:WaitForChild("UIListIgnore"):WaitForChild("CloseButton") :: GuiButton
 
 	Controller.root.Visible = false   -- closed by default
 	triggerHost.Visible = true
-	UIButton.bind(triggerHost, { onClick = function() openTuning(triggerHost) end })
+	UIButton.bind(triggerHost, { onClick = function() openTuning(triggerHost) end, hoverScale = 1.08 })
 	closeBtn.Activated:Connect(function() closeTuning(triggerHost) end)
 end
 

@@ -16,6 +16,7 @@ Config.Sounds = {
 	Fire = "rbxassetid://105137237689649",
 	Cold = "rbxassetid://116320134099218",
 	Prestige = "rbxassetid://84051226507785",
+	UIClick = "", -- PLACEHOLDER: generic UI click (menu open / equip). Empty = silent until set.
 	Music = "rbxassetid://9043887120"  
 }
 
@@ -53,6 +54,8 @@ Config.Tags = {
 	BoardFloor = "BoardFloor",           -- The floor parts marbles roll on (darker default; see Config.BoardAppearance)
 	BoardSide = "BoardSide",             -- The barrier/side parts (lighter default; see Config.BoardAppearance)
 	QuestUI = "QuestUI",                 -- A SurfaceGui the daily-quest panel is also built into (client QuestUI)
+	FreeCratePad = "FreeCratePad",       -- A pad that claims the free Marble Box on touch (client CosmeticsShop builds its billboard/timer)
+	DailyRewardPad = "DailyReward",      -- A pad that claims the daily reward on touch (client DailyRewardUI fills its authored Billboard.BillboardGui Title/Timer)
 }
 
 Config.Attributes = {
@@ -177,9 +180,9 @@ Config.Coins = {
 	InitialSpawn = 2,         -- coins handed to a player as soon as their client is ready
 	SpawnIntervalMin = 30,    -- seconds between spawns (uniform random in [min, max]) per player
 	SpawnIntervalMax = 60,
-	ValueMin = 100,           -- reward range (cash), inclusive both ends
-	ValueMax = 2000,
-	ValueStep = 50,           -- rewards snap to this increment
+	ValueMin = 50,            -- reward range (cash), inclusive both ends
+	ValueMax = 1000,
+	ValueStep = 25,           -- rewards snap to this increment
 	ShineTopFraction = 0.25,  -- coins in the top this fraction of the value range also get a light
 	RedTopFraction = 0.5,     -- coins in the top this fraction are tinted red (parts + decals)
 	RewardWarnLifetime = 2,   -- seconds the "+$X" WarnUI banner stays up
@@ -189,7 +192,7 @@ Config.Coins = {
 	-- currency) instead of cash. BiasExponent > 1 skews the roll toward Min via
 	-- random()^BiasExponent (1 = uniform, 2 = quadratic bias low, ...) — see CoinService.
 	BlueChance = 0.20,
-	BlueDiamonds = { Min = 1, Max = 10, BiasExponent = 2 },
+	BlueDiamonds = { Min = 1, Max = 5, BiasExponent = 2 },
 }
 
 -- Playtime reward ladder (see PlaytimeBonusService). Cumulative seconds played -> claimable
@@ -229,6 +232,21 @@ Config.Admins = { 89831196 }
 Config.Metrics = {
 	ExcludedUserIds = { 338455474, 110797589, 1244172772, 245715627, 1244172772 },  -- extra user ids to exclude besides the admins
 	ReportDays = 14,       -- default day rows /metrics prints
+}
+
+Config.WarnUI = {
+	MaxStack = 5, -- banners visible at once; older ones are pruned to keep this cap (like ScoreUI)
+}
+
+-- Diamonds purchase packs (client DiamondsShopUI + product registration in CosmeticService).
+-- Ordered smallest -> biggest; Diamonds-per-Robux IMPROVES up the ladder so bigger packs are
+-- better value (RobuxHint is display-only fallback text — the real price comes from the dev
+-- product once its id is set). PLACEHOLDER product ids ("0" = button prompts nothing).
+Config.DiamondPacks = {
+	{ Id = "Handful",  Name = "Handful of Diamonds",  Icon = "🤲", Diamonds = 100,  Product = "0", RobuxHint = 50 },
+	{ Id = "Crate",    Name = "Crate of Diamonds",    Icon = "📦", Diamonds = 350,  Product = "0", RobuxHint = 149 },
+	{ Id = "Pile",     Name = "Pile of Diamonds",     Icon = "💰", Diamonds = 900,  Product = "0", RobuxHint = 349 },
+	{ Id = "Mountain", Name = "Mountain of Diamonds", Icon = "⛰️", Diamonds = 3000, Product = "0", RobuxHint = 999 },
 }
 
 Config.Prestige = {
@@ -541,7 +559,6 @@ Config.Products = {
 	Multiplier4x  = "3605951969",
 	Multiplier8x  = "3605951998",
 	Multiplier16x = "3605952025",
-	-- TODO: placeholder — replace with the real dev product id from the Creator Dashboard.
 	BallDropMaxBet = "3607663509",
 }
 
@@ -655,14 +672,14 @@ Config.Quests = {
 --   Diamonds : flat Min..Max Diamonds, boosted by the login-streak Luck Bonus (below).
 --   Cash     : Multiplier × the player's HIGHEST-OWNED MaxBet tier's bet size (NOT their
 --              currently selected bet) — scales with progression without its own tier/config.
---   Skin     : a random ball skin (BallSkins) the player doesn't already own; the roll skips
---              this Kind entirely if the player owns every skin.
+--   Crate    : a free UNOPENED Marble Box (BoxId picks which) banked into the player's
+--              stash — they open it at the cosmetics shop whenever they like.
 Config.DailyReward = {
 	-- Ordered worst -> best; Weight falls as the prize's value rises, so probability actually
 	-- tracks how good a roll is (10 > 8 > 5 > 4 > 2 > 1.5 > 1). The rare/top Diamonds tier is
-	-- the "lucky end": ~10 Diamonds max, deliberately modest next to a free Skin (BallSkins
-	-- prices run 50-2800 CC) or the big Cash multiplier — Diamonds/day is meant to trickle,
-	-- not race a player to a skin purchase (rebirthing is the intended main CC source).
+	-- the "lucky end": ~10 Diamonds max, deliberately modest next to a free Basic Box (150
+	-- Diamonds' worth) or the big Cash multiplier — Diamonds/day is meant to trickle, not
+	-- race a player to a Marble Box (rebirthing is the intended main Diamonds source).
 	Pool = {
 		{ Kind = "Diamonds", Weight = 10, Min = 2, Max = 4 },
 		{ Kind = "Cash", Weight = 8, Multiplier = 1 },
@@ -670,7 +687,8 @@ Config.DailyReward = {
 		{ Kind = "Cash", Weight = 4, Multiplier = 3 },
 		{ Kind = "Diamonds", Weight = 2, Min = 7, Max = 10 },
 		{ Kind = "Cash", Weight = 1.5, Multiplier = 8 },
-		{ Kind = "Skin", Weight = 1 },
+		{ Kind = "Crate", Weight = 1, BoxId = "Basic" },
+		{ Kind = "Crate", Weight = 0.4, BoxId = "Silver" },
 	},
 	-- Diamonds-only streak bonus ("Luck Bonus" in the UI): +StreakBonusPerDay per consecutive
 	-- login day beyond the first, capped at MaxBonusDays (so it doesn't grow forever) — e.g.
@@ -690,13 +708,15 @@ Config.DailyReward = {
 	},
 }
 
--- Starter pack (Robux): a one-time new-player boost. Grants UpgradeTiers on every
--- upgrade track and Balance cash. Only offered while the player has fewer than
--- MaxUpgrades total upgrade tiers and hasn't already bought it. Once owned, every
--- prestige thereafter grants PostPrestigeFreeTier on all tracks.
+-- Starter pack (Robux): a one-time new-player boost. Grants Balance cash, Diamonds,
+-- and Crates.Count free openings of the Crates.BoxId box. Only offered while the
+-- player has fewer than MaxUpgrades total upgrade tiers and hasn't already bought it.
+-- Once owned, every prestige thereafter grants PostPrestigeFreeTier on all tracks.
 Config.StarterPack = {
-	Balance = 50000,           -- cash granted on purchase
-	UpgradeTiers = 2,          -- tier every upgrade track is raised to
+	Balance = 75000,           -- cash granted on purchase
+	Diamonds = 100,            -- Diamonds granted on purchase
+	Crates = { BoxId = "Silver", Count = 2 }, -- free crate rolls granted on purchase
+	Boost = { Mult = 1.5, Hours = 24 }, -- timed cash multiplier granted on purchase
 	MaxUpgrades = 20,           -- hide the pack once the player has this many total upgrades
 	PostPrestigeFreeTier = 1,  -- free tier on all tracks after each prestige (owners only)
 }
@@ -705,18 +725,73 @@ Config.StarterPack = {
 -- currency tuning. CC (Cosmetic Coins) is earned by rebirthing — RebirthCCRatio × the RP spent on
 -- each rebirth — and spent on skins. The yellow-themed shop lives on a SurfaceGui tagged
 -- Config.Tags.CosmeticsGui, with a floating sample ball over Config.Tags.CosmeticBallSample.
--- RarityProducts (one Robux dev product per rarity) is the fallback when a player can't afford a skin.
+-- RarityProducts (one Robux dev product per rarity) is the direct-buy path shown ONLY to
+-- paid-random-items-restricted players (crates/Diamond packs are Robux-blocked for them).
 Config.Cosmetics = {
 	RebirthCCRatio = 1.0, -- CC granted per 1 RP spent on a rebirth
-	-- Robux fallback: one dev product per rarity (index = rarity 1..5). When a player can't afford the
-	-- selected skin with CC, the shop prompts the product for that skin's rarity, which grants it.
-	-- PLACEHOLDER ids — fill in real product ids per rarity from the Creator Dashboard.
-	RarityProducts = { 
-		"3607562563", 
-		"3607562601", 
-		"3607562664", 
-		"3607562701", 
-		"3607562744" 
+	-- One dev product per rarity (index = rarity 1..5). For paid-random-items-restricted
+	-- players (PolicyGate) the index footer offers this deterministic direct purchase of
+	-- the selected skin; everyone else unlocks from crates only. Rarities without an id
+	-- (6+, or a "0" placeholder) simply show no direct-buy button.
+	RarityProducts = {
+		"3607562563",
+		"3607562601",
+		"3607562664",
+		"3607562701",
+		"3607562744"
+	},
+
+	----------------------------------------------------------------------------
+	-- Skin power (crate/loadout progression, shared math in CosmeticBonus)
+	----------------------------------------------------------------------------
+	-- Slots in the bonus loadout. Every slotted skin contributes its bonus; the total is
+	-- one global money multiplier applied at banking (ScoreHandler): ×(1 + sum of bonuses).
+	LoadoutSlots = 5,
+	-- Base money bonus per skin by rarity (1..9). A full early loadout of commons is a
+	-- noticeable-but-small +10%; the 6-9 tiers (Mythic/Celestial/Divine/Transcendent)
+	-- are the whale-tail chase — Gold Box exclusive, tiny odds.
+	RarityBonus = { 0.02, 0.05, 0.12, 0.30, 0.75, 1.8, 4, 9, 20 },
+	-- Duplicate copies star a skin up: ★k at StarDupes[k] DUPLICATES (copies beyond the
+	-- first). Triangular like the golden peg schedule: 0, 1, 3, 6, 10.
+	StarDupes = { 0, 1, 3, 6, 10 },
+	-- Bonus multiplier at ★1..★5: a ★5 common (+8%) rivals a fresh epic (+30%)... almost.
+	StarMults = { 1, 1.5, 2, 3, 4 },
+}
+
+-- Marble Boxes: crate rolls are the main way to get skins (the shop's direct-purchase flow
+-- is retired in favour of the index tab). Weights are per-rarity (1..5) relative chances.
+-- Pity: rolling Every times without hitting rarity >= MinRarity forces one; the counter
+-- resets whenever a roll (natural or forced) lands MinRarity+. Counters persist per box.
+-- The Free box is never purchasable: it's granted on a session timer (FirstDelay after
+-- join, then every Interval after each claim) and claimed from the shop's crates tab.
+Config.Crates = {
+	-- Weights are per-rarity (1..9); rarities 6-9 only drop from the Gold Box.
+	-- Product: a Robux dev product that opens ONE box of this type (pity ticks as usual).
+	-- PLACEHOLDER ids — fill in real product ids from the Creator Dashboard ("0" = hidden).
+	-- Every tier carries a TINY tail into higher rarities than its bread-and-butter range
+	-- (Free→Legendary, Basic→Mythic, Silver→Divine): barely moves the distribution, but
+	-- even the cheapest box can dream.
+	Boxes = {
+		{ Id = "Basic",  Name = "Basic Box",  Cost = 150,  Product = "3608526615", Weights = { 60, 30, 9, 1, 0.25, 0.05, 0, 0, 0 },  Pity = { Every = 10, MinRarity = 3 } },
+		{ Id = "Silver", Name = "Silver Box", Cost = 400,  Product = "3608536989", Weights = { 30, 40, 22, 7, 1, 0.2, 0.06, 0.02, 0 }, Pity = { Every = 15, MinRarity = 4 } },
+		{ Id = "Gold",   Name = "Gold Box",   Cost = 1000, Product = "3608537009", Weights = { 0, 25, 45, 24, 5, 0.7, 0.2, 0.08, 0.02 }, Pity = { Every = 20, MinRarity = 5 } },
+	},
+	Free = {
+		Id = "FreeBox",
+		Name = "Free Box",
+		Weights = { 75, 20, 4.5, 0.5, 0.08 },
+		FirstDelay = 0, -- seconds after join until the FIRST free box (0 = instant hook)
+		Interval = 180, -- delay after every claim
+	},
+	-- Crate-opening reel (CrateRollUI): slot-style strip of possible skins that decelerates
+	-- onto the rolled one. Fillers are drawn from the crate's OWN Weights, so what spins
+	-- past honestly previews that crate's odds. Same shape as Config.DailyReward.Reel.
+	Reel = {
+		FillerCells = 36,     -- 1.5× the daily reward's; paired with 1.5× SpinTime the strip
+		CellsAfterResult = 3, -- travels at a similar speed, just half again as long
+		CellSize = Vector2.new(140, 140),
+		CellPadding = 12,
+		SpinTime = 4.8,
 	},
 }
 
@@ -774,6 +849,7 @@ table.freeze(Config.Quests)
 table.freeze(Config.Quests.Templates)
 table.freeze(Config.StarterPack)
 table.freeze(Config.Cosmetics)
+table.freeze(Config.Crates)
 
 Config.Animations = {
 	ElectroSwing = "81301976341047",
@@ -802,11 +878,18 @@ Config.Podium = {
 --
 --   text        : the message (string).
 --   boxPosition : UDim2 centre of the message box (Scale). Defaults to lower-centre.
---   highlight   : optional { Position = UDim2 (centre of the spot), Size = UDim2 (spot size) }.
---                 Present = dim everything except this rect; absent = no dimming. The UDim2s
---                 resolve like any screen UDim2 (Scale × viewport) but the Offset is multiplied
---                 by the AutoScale factor — so you can author the spot in 1080p offset pos/size
---                 to line up with AutoScaled UI elements (use the element's own UDim2 + size).
+--   highlight   : optional { Position = UDim2, Size = UDim2 (spot size), Anchor = Vector2?,
+--                 RespectInset = boolean? }. Present = dim everything except this rect; absent
+--                 = no dimming. Anchor picks which point of the spot Position refers to, like
+--                 GuiObject.AnchorPoint — e.g. Vector2.new(0, 1) = Position is the spot's
+--                 bottom-left corner; defaults to the centre (0.5, 0.5). RespectInset = true
+--                 shifts the spot down by the topbar GUI inset — use it when the coords were
+--                 copied from an inset-respecting ScreenGui (the default kind), so the spot
+--                 lands where that UI actually renders in-game; default false = raw screen
+--                 coords. The UDim2s resolve like any screen UDim2 (Scale × viewport) but the
+--                 Offset is multiplied by the AutoScale factor — so you can author the spot in
+--                 1080p offset pos/size to line up with AutoScaled UI elements (use the
+--                 element's own UDim2 + size).
 --   camera      : optional { Position = Vector3, Orientation = Vector3 (deg), FieldOfView = number? }
 --                 scripted camera shot for the step (smoothly tweened); absent = default camera.
 --   arrow       : optional physical world-arrow target (client WorldArrow), floating near the
@@ -876,13 +959,41 @@ Config.Tutorial = {
 	-- cosmetics shop. Same step shape as Steps above, same Skip button; finishing or
 	-- skipping persists separately (Stats.completedCosmeticTutorial) so it runs once ever.
 	Cosmetic = {
-		DiamondTrigger = 50,
+		-- Trigger: enough Diamonds for the CHEAPEST Marble Box (derived from Config.Crates,
+		-- so crate price tuning moves the tutorial with it).
+		DiamondTrigger = (function()
+			local cheapest = math.huge
+			for _, box in Config.Crates.Boxes do
+				cheapest = math.min(cheapest, box.Cost)
+			end
+			return cheapest
+		end)(),
 		Steps = {
 			{
-				text = "You've earned 50 diamonds! Buy a skin from the cosmetics shop.",
+				text = "You can afford a Marble Box! Roll one at the cosmetics shop.",
 				boxPosition = UDim2.fromScale(0.75, 0.80), -- same lower-right spot as the upgrade steps
 				arrow = { Kind = "CosmeticsShop" },
-				complete = { Kind = "BuySkin" },
+				complete = { Kind = "RollCrate" }, -- any box opening (bought or free)
+			},
+		},
+	},
+	-- Third tutorial: fires the first time a skin other than the default Classic is
+	-- unlocked — step 1 opens the LOADOUT menu (auto-completes if it's already open),
+	-- step 2 waits for a skin to land in a bonus slot. Run-once
+	-- (Stats.completedLoadoutTutorial).
+	Loadout = {
+		Steps = {
+			{
+				text = "You unlocked a new marble! Open the LOADOUT menu.",
+				boxPosition = UDim2.fromScale(0.75, 0.80),
+				highlight = { Position = UDim2.fromOffset(103, 870), Size = UDim2.fromOffset(194, 121) },
+				complete = { Kind = "OpenLoadout" },
+			},
+			{
+				text = "Equip the best possible loadout for maximum bonus cash.",
+				boxPosition = UDim2.fromScale(0.75, 0.80),
+				highlight = { Position = UDim2.fromOffset(1108,398), Size = UDim2.fromOffset(244,93), Anchor = Vector2.new(0.5, 1) },
+				complete = { Kind = "EquipLoadoutSlot" },
 			},
 		},
 	},
@@ -896,7 +1007,7 @@ Config.Tutorial = {
 				boxPosition = UDim2.fromScale(0.75, 0.80),
 				-- PLACEHOLDER rect (rough guess at the left bar's TuneTriggerHost) — re-measure
 				-- its real 1080p-authored position/size and update.
-				highlight = { Position = UDim2.fromOffset(131, 886), Size = UDim2.fromOffset(247, 90) },
+				highlight = { Position = UDim2.fromOffset(285, 870), Size = UDim2.fromOffset(201, 121) },
 				complete = { Kind = "OpenTuningMenu" },
 			},
 		},
@@ -923,4 +1034,6 @@ table.freeze(Config.GroupReward)
 table.freeze(Config.Podium)
 table.freeze(Config.Podium.Animations)
 table.freeze(Config.Tutorial)
+table.freeze(Config.WarnUI)
+table.freeze(Config.DiamondPacks)
 return Config

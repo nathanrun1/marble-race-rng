@@ -22,6 +22,7 @@ local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
 
 local Config = require(RS.Shared.Config)
 local AutoScale = require(RS.Shared.AutoScale)
@@ -34,13 +35,20 @@ local CameraService = require(PlayerScripts:WaitForChild("CameraService"));
 local WorldArrow = require(PlayerScripts:WaitForChild("WorldArrow"));
 local CoinPickups = require(PlayerScripts:WaitForChild("CoinPickups"));
 local BallTuningUI = require(PlayerScripts:WaitForChild("BallTuningUI"));
+local LoadoutUI = require(PlayerScripts:WaitForChild("LoadoutUI"));
+local CrateRollUI = require(PlayerScripts:WaitForChild("CrateRollUI"));
+local BallSkins = require(RS.Shared.BallSkins)
 
 -- Matches UpgradeShop.luau's own (bare, not-in-Config.Attributes) TRACK_ATTR local constant —
 -- the attribute a kiosk part stores its upgrade track under. Kept identical here so an
 -- "UpgradeShopTrack" arrow finds the exact kiosks UpgradeShop.luau opens on touch.
 local TRACK_ATTRIBUTE = "Track"
 
-type Highlight = { Position: UDim2, Size: UDim2, HighlightDim: number? } -- dim overrides Config.Tutorial.HighlightDim
+-- Anchor picks which point of the rect Position refers to (like GuiObject.AnchorPoint;
+-- default centre 0.5,0.5); HighlightDim overrides Config.Tutorial.HighlightDim.
+-- RespectInset = true shifts the rect by the topbar GUI inset, so coords copied from an
+-- inset-respecting ScreenGui land on the element; default false (raw screen coords).
+type Highlight = { Position: UDim2, Size: UDim2, Anchor: Vector2?, RespectInset: boolean?, HighlightDim: number? }
 type Shot = { Position: Vector3, Orientation: Vector3, FieldOfView: number? }
 
 -- Both are open-ended tagged unions: { Kind = "SomeKind", ...Kind-specific fields }. Kept as
@@ -69,6 +77,7 @@ local TEXT_STROKE = 0.4
 local steps: { Step } = (Config.Tutorial.Steps :: any) :: { Step }
 local cosmeticSteps: { Step } = (Config.Tutorial.Cosmetic.Steps :: any) :: { Step }
 local tuningSteps: { Step } = (Config.Tutorial.Tuning.Steps :: any) :: { Step }
+local loadoutSteps: { Step } = (((Config.Tutorial :: any).Loadout and (Config.Tutorial :: any).Loadout.Steps) or {}) :: { Step }
 
 -- The sequence the runner is currently playing. finish() reports activeId to the server
 -- ("main" / "cosmetic" / "tuning") so the right completed-flag is persisted.
@@ -236,18 +245,26 @@ end
 -- Step application (smooth transitions) — dim/highlight/camera logic unchanged
 --------------------------------------------------------------------------------
 
--- Resolve a highlight (centre Position + Size as UDim2s) to a Scale rect (cx, cy, w, h, all
--- 0..1 of the screen). The UDim2 resolves like any screen UDim2 (Scale × viewport) except the
--- Offset is multiplied by the AutoScale factor, so a 1080p-authored offset pos/size lines up
--- with AutoScaled UI on any resolution. (Pure-Scale highlights are unaffected: offset 0.)
+-- Resolve a highlight (Position at its Anchor point + Size as UDim2s) to a CENTRE Scale
+-- rect (cx, cy, w, h, all 0..1 of the screen). The UDim2 resolves like any screen UDim2
+-- (Scale × viewport) except the Offset is multiplied by the AutoScale factor, so a
+-- 1080p-authored offset pos/size lines up with AutoScaled UI on any resolution.
+-- (Pure-Scale highlights are unaffected: offset 0.)
 local function resolveRect(h: Highlight): (number, number, number, number)
 	local cam = workspace.CurrentCamera
 	local vp = if cam then cam.ViewportSize else Vector2.new(1920, 1080)
 	local f = AutoScale.GetScale()
-	local cx = (vp.X * h.Position.X.Scale + h.Position.X.Offset * f) / vp.X
-	local cy = (vp.Y * h.Position.Y.Scale + h.Position.Y.Offset * f) / vp.Y
 	local w = (vp.X * h.Size.X.Scale + h.Size.X.Offset * f) / vp.X
 	local ht = (vp.Y * h.Size.Y.Scale + h.Size.Y.Offset * f) / vp.Y
+	-- This gui ignores the topbar inset (the dim mask must cover the WHOLE screen), so by
+	-- default authored coords are raw screen coords. RespectInset = true shifts the rect
+	-- by the inset instead — for spots whose coords were copied from an inset-respecting
+	-- ScreenGui, so they land where that UI actually renders.
+	local inset = if h.RespectInset then GuiService:GetGuiInset() else Vector2.zero
+	-- Position marks the rect's Anchor point (default centre); shift to the centre.
+	local a = h.Anchor or Vector2.new(0.5, 0.5)
+	local cx = (vp.X * h.Position.X.Scale + h.Position.X.Offset * f + inset.X) / vp.X + (0.5 - a.X) * w
+	local cy = (vp.Y * h.Position.Y.Scale + h.Position.Y.Offset * f + inset.Y) / vp.Y + (0.5 - a.Y) * ht
 	return cx, cy, w, ht
 end
 
@@ -437,6 +454,92 @@ local function startOpenTuningMenu(_spec: CompletionSpec, onComplete: () -> ()):
 	end
 end
 
+-- The loadout panel being opened (LoadoutUI.Opened); completes immediately (deferred)
+-- if it's already open when the step starts — same shape as OpenTuningMenu.
+local function startOpenLoadout(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	if LoadoutUI.IsOpen() then
+		task.defer(onComplete)
+		return function() end
+	end
+	local conn = LoadoutUI.Opened:Connect(onComplete)
+	return function()
+		conn:Disconnect()
+	end
+end
+
+-- Any Marble Box opening (CosmeticChanged): the TOTAL copy count rising covers dupe
+-- rolls too, which owned-count misses (a dupe adds no new owned id). Baselined like
+-- BuySkin below so pre-existing copies don't complete the step instantly.
+local function startRollCrate(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	local remote = RS:WaitForChild("Remote")
+	local changedRE = remote:WaitForChild("CosmeticChanged") :: RemoteEvent
+	local getInfoRF = remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
+
+	local function copiesSum(info: any): number
+		local n = 0
+		if type(info) == "table" and type(info.copies) == "table" then
+			for _, c in info.copies do
+				if type(c) == "number" then
+					n += c
+				end
+			end
+		end
+		return n
+	end
+
+	local baseline = math.huge
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return getInfoRF:InvokeServer()
+		end)
+		baseline = if ok then copiesSum(info) else 1
+	end)
+
+	local conn = changedRE.OnClientEvent:Connect(function(info: any)
+		if copiesSum(info) > baseline then
+			onComplete()
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
+-- A skin landing in any bonus-loadout slot (CosmeticChanged loadout fill count rising
+-- past the step-start baseline — EQUIP BEST counts too).
+local function startEquipLoadoutSlot(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	local remote = RS:WaitForChild("Remote")
+	local changedRE = remote:WaitForChild("CosmeticChanged") :: RemoteEvent
+	local getInfoRF = remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
+
+	local function filledSlots(info: any): number
+		local n = 0
+		if type(info) == "table" and type(info.loadout) == "table" then
+			for _ in info.loadout do
+				n += 1
+			end
+		end
+		return n
+	end
+
+	local baseline = math.huge
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return getInfoRF:InvokeServer()
+		end)
+		baseline = if ok then filledSlots(info) else 0
+	end)
+
+	local conn = changedRE.OnClientEvent:Connect(function(info: any)
+		if filledSlots(info) > baseline then
+			onComplete()
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
 -- Any skin being ADDED to the owned set (CosmeticChanged) — bought from the shop, or earned
 -- any other way (a daily-reward Skin roll counts too). Baselines the current owned count
 -- first so a pre-existing collection doesn't complete the step instantly.
@@ -502,7 +605,10 @@ local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } 
 	CollectCoin = startCollectCoin,
 	ScoreBalls = startScoreBalls,
 	BuySkin = startBuySkin,
+	RollCrate = startRollCrate,
 	OpenTuningMenu = startOpenTuningMenu,
+	OpenLoadout = startOpenLoadout,
+	EquipLoadoutSlot = startEquipLoadoutSlot,
 }
 
 --------------------------------------------------------------------------------
@@ -680,6 +786,60 @@ function TutorialService.Init()
 			end
 			conn = changedRE.OnClientEvent:Connect(maybeTrigger)
 			-- Snapshot too: the balance may already be past the trigger when this binds.
+			local ok, info = pcall(function()
+				return getInfoRF:InvokeServer()
+			end)
+			if ok then
+				maybeTrigger(info)
+			end
+		end)
+
+		-- Loadout tutorial: after the main one is over, the first time any skin OTHER than
+		-- the default Classic is owned (first crate pull / daily-reward skin) — walks the
+		-- player through opening the loadout and slotting a skin. Run-once (persisted).
+		task.spawn(function()
+			if #loadoutSteps == 0 or (stats and stats.completedLoadoutTutorial) then
+				return
+			end
+			TutorialService.WaitUntilOver()
+
+			local changedRE = remote:WaitForChild("CosmeticChanged") :: RemoteEvent
+			local getInfoRF = remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
+			local DEFAULT_ID = BallSkins.GetDefaultId()
+			local triggered = false
+			local conn: RBXScriptConnection? = nil
+			local function maybeTrigger(info: any)
+				if triggered or type(info) ~= "table" or type(info.owned) ~= "table" then
+					return
+				end
+				local hasNonDefault = false
+				for id in info.owned do
+					if id ~= DEFAULT_ID then
+						hasNonDefault = true
+						break
+					end
+				end
+				if not hasNonDefault then
+					return
+				end
+				triggered = true
+				if conn then
+					conn:Disconnect()
+				end
+				-- Own thread: startSequence yields while another sequence tears down.
+				task.spawn(function()
+					-- The inventory push lands the moment the SERVER rolls — before the crate
+					-- reel even starts client-side. Give the reveal a beat to begin, then hold
+					-- until it fully finishes so the tutorial doesn't talk over the spin.
+					task.wait(0.6)
+					while CrateRollUI.IsSpinning() do
+						task.wait(0.25)
+					end
+					startSequence(playerGui, "loadout", loadoutSteps)
+				end)
+			end
+			conn = changedRE.OnClientEvent:Connect(maybeTrigger)
+			-- Snapshot too: the skin may already be owned when this binds.
 			local ok, info = pcall(function()
 				return getInfoRF:InvokeServer()
 			end)

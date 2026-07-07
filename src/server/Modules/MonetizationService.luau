@@ -19,7 +19,6 @@ local ScoreUI = require(RS.Shared.ScoreUI)
 local AnnounceUI = require(RS.Shared.AnnounceUI)
 local ProductService = require(RS.Shared.ProductService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
-local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local DataService = require(SSS.Scripts.Modules.DataService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
@@ -62,8 +61,12 @@ local function grantStarterPack(player: Player)
 	if StatsService.OwnsStarterPack(player) then
 		return
 	end
-	UpgradeService.RaiseAllTracksTo(player, Config.StarterPack.UpgradeTiers)
 	CurrencyService.AddPoints(player, Config.StarterPack.Balance, "Starter Pack")
+	CosmeticService.AddCC(player, Config.StarterPack.Diamonds)
+	for _ = 1, Config.StarterPack.Crates.Count do
+		CosmeticService.GrantCrateRollAnnounced(player, Config.StarterPack.Crates.BoxId)
+	end
+	StatsService.GrantCashBoost(player, Config.StarterPack.Boost.Mult, Config.StarterPack.Boost.Hours * 3600)
 	StatsService.SetOwnsStarterPack(player, true)
 	DataService.SaveNow(player) -- persist the grant promptly (real money)
 
@@ -71,7 +74,13 @@ local function grantStarterPack(player: Player)
 	AnnounceUI.Announce(player, "Starter Pack Claimed!", Color3.fromRGB(255, 215, 0))
 	ScoreUI.PostMessage(
 		player,
-		"Starter Pack Bonus! " .. StringUtils.FormatMoney(Config.StarterPack.Balance),
+		("Starter Pack Bonus! %s + 💎%d + %d Marble Boxes + ×%s Cash (%dh)"):format(
+			StringUtils.FormatMoney(Config.StarterPack.Balance),
+			Config.StarterPack.Diamonds,
+			Config.StarterPack.Crates.Count,
+			StringUtils.FormatShort(Config.StarterPack.Boost.Mult),
+			Config.StarterPack.Boost.Hours
+		),
 		Color3.fromRGB(55, 132, 170)
 	)
 end

@@ -46,6 +46,7 @@ local FIRE_NAME          = "HeatFire"
 local SKIN_EMITTER_NAME  = "SkinParticles" -- the cosmetic skin's ambient emitters (see BallSkins)
 local BOUNCE_EMITTER_NAME = "SkinBounce"   -- burst-only emitter fired on bounce (skin.data.bounce)
 local ORBIT_PART_NAME    = "SkinOrbit"     -- cosmetic parts that revolve around the ball (skin.data.orbits)
+local SHAPE_PART_NAME    = "SkinShape"     -- cosmetic parts fixed to the ball (skin.data.shapes)
 local HIGHLIGHT_NAME     = "SkinHighlight" -- the glow on "good" (rarer) skins (skin.data.highlight)
 local HIGHLIGHT_MIN_RARITY = 3             -- rarity at/above which a skin auto-gets a glow
 local POPUP_TWEEN        = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -207,6 +208,48 @@ local function applyOrbits(ball: BasePart, orbits: { BallSkins.OrbitData }?)
 	end
 end
 
+-- Cosmetic parts FIXED to the ball (skin.data.shapes): anchored, non-colliding, massless — the
+-- ball's physics/hitbox are untouched. Positioned every frame alongside the orbits (UpdateOrbits);
+-- by default they stay world-upright (a crown shouldn't tumble with a rolling marble) unless the
+-- shape sets followRotation.
+local function clearShapes(ball: BasePart)
+	for _, child in ball:GetChildren() do
+		if child:IsA("BasePart") and child.Name:sub(1, #SHAPE_PART_NAME) == SHAPE_PART_NAME then
+			child:Destroy()
+		end
+	end
+end
+
+local function applyShapes(ball: BasePart, shapes: { BallSkins.ShapeData }?)
+	clearShapes(ball)
+	if not shapes then
+		return
+	end
+	for i, s in shapes do
+		local p = Instance.new("Part")
+		p.Name = SHAPE_PART_NAME .. tostring(i)
+		p.Shape = s.shape or Enum.PartType.Block
+		p.Size = s.size or Vector3.new(0.8, 0.8, 0.8)
+		p.Color = s.color or Color3.fromRGB(255, 255, 255)
+		p.Material = s.material or Enum.Material.Neon
+		p.Transparency = s.transparency or 0
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = false
+		p.Massless = true
+		p:SetAttribute("ShapeOffset", s.offset or Vector3.new(0, 1.2, 0))
+		p:SetAttribute("ShapeOrient", s.orientation or Vector3.zero)
+		p:SetAttribute("ShapeFollow", s.followRotation == true)
+		-- Authored size kept aside: shapes are designed around a 2-stud marble, and the
+		-- positioner rescales size+offset to the ball's actual diameter (tuning Size /
+		-- the big shop sample would otherwise swallow or dwarf them).
+		p:SetAttribute("ShapeSize", p.Size)
+		p.Parent = ball
+	end
+end
+
 -- The glow on rarer skins. A Highlight Adorned to the ball; colours default to the skin's base colour
 -- (so it's "appropriate" without per-skin config), overridable via skin.data.highlight. DepthMode is
 -- Occluded by default, so the glow is hidden behind walls rather than X-raying through them.
@@ -305,6 +348,7 @@ function BallEffects.ApplyAppearance(ball: BasePart, appearance: Appearance)
 		applySkinParticles(ball, skin.data.particles)
 		applyBounceEmitter(ball, skin.data.bounce)
 		applyOrbits(ball, skin.data.orbits)
+		applyShapes(ball, skin.data.shapes)
 		local hl = skin.data.highlight
 		if not hl and skin.rarity >= HIGHLIGHT_MIN_RARITY then
 			hl = {} -- auto-glow for "good" skins, coloured by the skin's base colour
@@ -352,6 +396,21 @@ function BallEffects.UpdateOrbits(ball: BasePart)
 				cf = cf * CFrame.Angles(t * spin.X, t * spin.Y, t * spin.Z)
 			end
 			p.CFrame = cf
+		elseif p:IsA("BasePart") and p.Name:sub(1, #SHAPE_PART_NAME) == SHAPE_PART_NAME then
+			-- Fixed shapes: ride the ball's position; world-upright unless ShapeFollow.
+			-- Size + offset scale with the ball's diameter (authored for a 2-stud marble).
+			local scale = ball.Size.X / 2
+			if (p:GetAttribute("ShapeAppliedScale") :: number?) ~= scale then
+				p:SetAttribute("ShapeAppliedScale", scale)
+				local authored = (p:GetAttribute("ShapeSize") :: Vector3?) or p.Size
+				p.Size = authored * scale
+			end
+			local offset = (p:GetAttribute("ShapeOffset") :: Vector3?) or Vector3.new(0, 1.2, 0)
+			local orient = (p:GetAttribute("ShapeOrient") :: Vector3?) or Vector3.zero
+			local base = if p:GetAttribute("ShapeFollow") == true then ballCF else CFrame.new(ballCF.Position)
+			p.CFrame = base
+				* CFrame.new(offset * scale)
+				* CFrame.Angles(math.rad(orient.X), math.rad(orient.Y), math.rad(orient.Z))
 		end
 	end
 end
@@ -690,12 +749,16 @@ local TouchInputService = game:GetService("TouchInputService")
 		ball:Destroy()
 	end
 
-	-- Balls that carry orbiting cosmetic parts, animated locally every frame (everyone sees them).
+	-- Balls that carry orbiting/fixed cosmetic parts, animated locally every frame
+	-- (everyone sees them).
 	local orbitBalls: { [BasePart]: boolean } = {}
 	local function trackOrbits(ball: BasePart)
-		-- Orbit parts may replicate a moment after the ball, so scan now and watch for late ones.
+		-- Cosmetic parts may replicate a moment after the ball, so scan now and watch for late ones.
 		local function check(child: Instance)
-			if child:IsA("BasePart") and child.Name:sub(1, #ORBIT_PART_NAME) == ORBIT_PART_NAME then
+			if child:IsA("BasePart")
+				and (child.Name:sub(1, #ORBIT_PART_NAME) == ORBIT_PART_NAME
+					or child.Name:sub(1, #SHAPE_PART_NAME) == SHAPE_PART_NAME)
+			then
 				orbitBalls[ball] = true
 			end
 		end

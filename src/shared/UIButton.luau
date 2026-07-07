@@ -33,6 +33,7 @@ export type Gradient = { top: Color3, mid: Color3, bot: Color3 }
 export type Config = {
 	pressOffset: number?,          -- px the button drops on press (default 4)
 	hoverTransparency: number?,    -- Hover overlay transparency on hover (default 0.86)
+	hoverScale: number?,           -- host enlarges to this on hover (e.g. 1.07); off when nil
 	feelTween: TweenInfo?,         -- tween for hover/press (default a quick quad-out)
 	clickSound: string?,           -- SoundService id to play on click
 	onClick: (() -> ())?,          -- momentary action (ignored when `toggle` is set)
@@ -163,6 +164,9 @@ function UIButton.bind(host: Instance, config: Config): Handle
 			posTween:Cancel()
 			posTween = nil
 		end
+		if hostScale then
+			hostScale.Scale = 1
+		end
 		if hover then
 			hover.BackgroundTransparency = 1
 		end
@@ -173,16 +177,36 @@ function UIButton.bind(host: Instance, config: Config): Handle
 		end
 	end
 
-	track(button.MouseEnter:Connect(function()
-		if disabled or not hover then
+	-- Optional hover enlarge: a UIScale on the HOST (so the shadow grows too), created
+	-- lazily. Scale pops over grid/list neighbours, which is the point.
+	local hostScale: UIScale? = nil
+	local function tweenHoverScale(goal: number)
+		if not config.hoverScale then
 			return
 		end
-		TweenService:Create(hover, feel, { BackgroundTransparency = hoverTransparency }):Play()
+		if not hostScale then
+			local s = Instance.new("UIScale")
+			s.Name = "HoverScale"
+			s.Parent = if host:IsA("GuiObject") then host else button
+			hostScale = s
+		end
+		TweenService:Create(hostScale :: UIScale, feel, { Scale = goal }):Play()
+	end
+
+	track(button.MouseEnter:Connect(function()
+		if disabled then
+			return
+		end
+		tweenHoverScale(config.hoverScale or 1)
+		if hover then
+			TweenService:Create(hover, feel, { BackgroundTransparency = hoverTransparency }):Play()
+		end
 	end))
 	track(button.MouseLeave:Connect(function()
 		if disabled then
 			return
 		end
+		tweenHoverScale(1)
 		if hover then
 			TweenService:Create(hover, feel, { BackgroundTransparency = 1 }):Play()
 		end
@@ -202,7 +226,8 @@ function UIButton.bind(host: Instance, config: Config): Handle
 	end))
 
 	local function playClickSound()
-		if config.clickSound then
+		-- "" is a configured-but-silent placeholder (e.g. Config.Sounds.UIClick).
+		if config.clickSound and config.clickSound ~= "" then
 			SoundService.Play({ soundId = config.clickSound })
 		end
 	end

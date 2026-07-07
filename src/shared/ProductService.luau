@@ -140,16 +140,38 @@ end
 if RunService:IsClient() then
 	local Players = game:GetService("Players")
 	local Signal = require(RS.Shared.Signal)
+	local Config = require(RS.Shared.Config)
+	local PolicyGate = require(RS.Shared.PolicyGate)
 
 	local localPlayer = Players.LocalPlayer
 
 	-- Fires when a prompt this client opened closes: (productId, wasPurchased).
 	ProductService.PromptFinished = Signal.new()
 
+	-- Product ids that ARE a paid random item (crate boxes) or feed one (Diamond packs):
+	-- never promptable for a paid-random-items-restricted player. Second line of defense
+	-- behind the UIs hiding these buttons (and the server refusing the receipts).
+	local policyGatedIds: { [number]: boolean } = {}
+	for _, pack in Config.DiamondPacks do
+		local id = tonumber(pack.Product)
+		if id and id ~= 0 then
+			policyGatedIds[id] = true
+		end
+	end
+	for _, box in Config.Crates.Boxes do
+		local id = tonumber(box.Product)
+		if id and id ~= 0 then
+			policyGatedIds[id] = true
+		end
+	end
+
 	-- Open the Roblox purchase dialog for a developer product. Fulfilment happens
 	-- server-side in ProcessReceipt; listen to PromptFinished (or CurrencyService) to
 	-- react once it completes.
 	function ProductService.Prompt(productId: number)
+		if policyGatedIds[productId] and PolicyGate.PaidRandomItemsRestricted() then
+			return -- paid-random-items policy: no Robux route to Diamonds or crates
+		end
 		MarketplaceService:PromptProductPurchase(localPlayer, productId)
 	end
 

@@ -1,12 +1,16 @@
 --!strict
 -- Custom day-by-day analytics mirroring the Roblox dashboard numbers — DAU, new players,
--- sessions, playtime, and D1/D7/D30 retention — but EXCLUDING the players listed in
+-- sessions, playtime, mean + median session length, average playtime per player, and
+-- D1/D7/D30 retention — but EXCLUDING the players listed in
 -- Config.Metrics.ExcludedUserIds (plus Config.Admins). That exclusion is the whole point:
 -- dev/tester sessions badly distort a small game's numbers, and the official dashboard
 -- can't filter them out.
 --
 -- Storage (DataStore METRICS_STORE, one record per UTC day):
 --   day_<n>     n = floor(os.time()/86400). { sessions, playtime (sec),
+--                 sessionLens = { sec, ... } (one entry per cleanly-ENDED session, credited
+--                 to the day it ended; crashes contribute playtime but no length sample, so
+--                 the median leans slightly on clean sessions),
 --                 players = { [userIdStr]: true }, new = { [userIdStr]: true } }
 --   seen_<uid>  the first UTC day this player ever joined (drives "new" + cohorts).
 --                 Players who predate this system count as "new" on their first visit
@@ -90,6 +94,7 @@ end
 type DayRecord = {
 	sessions: number?,
 	playtime: number?,
+	sessionLens: { number }?,
 	players: { [string]: boolean }?,
 	new: { [string]: boolean }?,
 }
@@ -105,6 +110,7 @@ local function updateDay(day: number, mutate: (DayRecord) -> ())
 			local r: DayRecord = record or {}
 			r.sessions = r.sessions or 0
 			r.playtime = r.playtime or 0
+			r.sessionLens = r.sessionLens or {}
 			r.players = r.players or {}
 			r.new = r.new or {}
 			mutate(r)
@@ -119,10 +125,14 @@ end
 
 -- userId -> os.clock() the un-flushed playtime slice started (join, or the last flush).
 local tracked: { [number]: number } = {}
+-- userId -> os.clock() at join (whole-session length for the median sample).
+local joinedAt: { [number]: number } = {}
 
 -- Credit the playtime since the last flush to TODAY's record (and mark the player
 -- present today — a session crossing midnight lands in both days' DAU this way).
-local function flush(userId: number)
+-- endingSession also records the whole join->now session length (median sample),
+-- credited to the day the session ends.
+local function flush(userId: number, endingSession: boolean?)
 	local last = tracked[userId]
 	if not last then
 		return
@@ -130,13 +140,18 @@ local function flush(userId: number)
 	local now = os.clock()
 	tracked[userId] = now
 	local delta = now - last
-	if delta < 1 then
+	local joined = joinedAt[userId]
+	local sessionLen: number? = if endingSession and joined then now - joined else nil
+	if delta < 1 and not sessionLen then
 		return
 	end
 	local uid = tostring(userId)
 	updateDay(todayIndex(), function(r)
 		r.playtime = (r.playtime :: number) + delta
 		;(r.players :: { [string]: boolean })[uid] = true
+		if sessionLen then
+			table.insert(r.sessionLens :: { number }, math.floor(sessionLen + 0.5))
+		end
 	end)
 end
 
@@ -146,6 +161,7 @@ local function onPlayerAdded(player: Player)
 	end
 	local userId = player.UserId
 	tracked[userId] = os.clock()
+	joinedAt[userId] = os.clock()
 
 	task.spawn(function()
 		-- First-ever visit? Claim the seen-key under UpdateAsync so two servers can't
@@ -174,9 +190,10 @@ end
 
 local function onPlayerRemoving(player: Player)
 	if tracked[player.UserId] then
-		flush(player.UserId)
+		flush(player.UserId, true)
 		tracked[player.UserId] = nil
 	end
+	joinedAt[player.UserId] = nil
 end
 
 ----------------------------------------------------------------------------------
@@ -215,6 +232,20 @@ local function fmtHours(seconds: number): string
 	return string.format("%.0fm", seconds / 60)
 end
 
+-- Median of a list (nil when empty; mean of the middle two on even counts).
+local function median(list: { number }): number?
+	local n = #list
+	if n == 0 then
+		return nil
+	end
+	local sorted = table.clone(list)
+	table.sort(sorted)
+	if n % 2 == 1 then
+		return sorted[(n + 1) // 2]
+	end
+	return (sorted[n // 2] + sorted[n // 2 + 1]) / 2
+end
+
 -- Print the last `days` (default Config.Metrics.ReportDays) UTC days, one row each, plus
 -- window totals. Retention cells show "—" while their target day hasn't happened yet (or
 -- the cohort is empty). Yields (DataStore reads); run via task.spawn from a command.
@@ -239,7 +270,7 @@ function MetricsService.PrintReport(days: number?)
 		return cache[day]
 	end
 
-	local bar = string.rep("=", 96)
+	local bar = string.rep("=", 116)
 	print(bar)
 	print(string.format(
 		"Game Metrics — last %d days (UTC) — excluding %d listed + %d admin user ids%s",
@@ -248,7 +279,10 @@ function MetricsService.PrintReport(days: number?)
 		#Config.Admins,
 		if recording then "" else "  [this server is NOT recording]"
 	))
-	print(string.format("%-12s %5s %5s %6s %9s %9s %8s %8s %8s", "date", "DAU", "new", "sess", "playtime", "avg sess", "D1", "D7", "D30"))
+	print(string.format(
+		"%-12s %5s %5s %6s %9s %9s %9s %9s %8s %8s %8s",
+		"date", "DAU", "new", "sess", "playtime", "avg sess", "med sess", "avg plr", "D1", "D7", "D30"
+	))
 
 	-- A retention cell: cohort day + offset. "—" when the target day is still in the
 	-- future or the cohort had no new players.
@@ -260,38 +294,48 @@ function MetricsService.PrintReport(days: number?)
 	end
 
 	local totalSessions, totalPlaytime, totalNew, dauSum = 0, 0, 0, 0
+	local allSessionLens: { number } = {}
 	for day = today - nDays + 1, today do
 		local r = fetch(day) or {}
 		local dau = setSize(r.players)
 		local newCount = setSize(r.new)
 		local sessions = r.sessions or 0
 		local playtime = r.playtime or 0
+		local dayMedian = median(r.sessionLens or {})
 		totalSessions += sessions
 		totalPlaytime += playtime
 		totalNew += newCount
 		dauSum += dau
+		for _, len in r.sessionLens or {} do
+			table.insert(allSessionLens, len)
+		end
 
 		print(string.format(
-			"%-12s %5d %5d %6d %9s %9s %8s %8s %8s",
+			"%-12s %5d %5d %6d %9s %9s %9s %9s %8s %8s %8s",
 			os.date("!%Y-%m-%d", day * DAY) :: string,
 			dau,
 			newCount,
 			sessions,
 			fmtHours(playtime),
 			if sessions > 0 then fmtHours(playtime / sessions) else "—",
+			if dayMedian then fmtHours(dayMedian) else "—",
+			if dau > 0 then fmtHours(playtime / dau) else "—", -- avg playtime per player
 			retentionCell(day, r.new, newCount, 1),
 			retentionCell(day, r.new, newCount, 7),
 			retentionCell(day, r.new, newCount, 30)
 		))
 	end
 
+	local windowMedian = median(allSessionLens)
 	print(string.format(
-		"WINDOW: avg DAU %.1f | new %d | sessions %d | playtime %s | avg session %s",
+		"WINDOW: avg DAU %.1f | new %d | sessions %d | playtime %s | avg session %s | med session %s | avg playtime/player-day %s",
 		dauSum / nDays,
 		totalNew,
 		totalSessions,
 		fmtHours(totalPlaytime),
-		if totalSessions > 0 then fmtHours(totalPlaytime / totalSessions) else "—"
+		if totalSessions > 0 then fmtHours(totalPlaytime / totalSessions) else "—",
+		if windowMedian then fmtHours(windowMedian) else "—",
+		if dauSum > 0 then fmtHours(totalPlaytime / dauSum) else "—"
 	))
 	print(bar)
 end
@@ -327,7 +371,7 @@ function MetricsService.Init()
 		for userId in tracked do
 			pending += 1
 			task.spawn(function()
-				flush(userId)
+				flush(userId, true) -- shutdown ends every session; keep the median samples
 				pending -= 1
 			end)
 		end

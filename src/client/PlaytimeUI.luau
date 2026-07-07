@@ -98,7 +98,8 @@ local function openMenu(triggerHost: GuiObject, panel: GuiObject)
 	isOpen = true
 	if openTween then openTween:Cancel() end
 
-	triggerHost.Visible = false
+	-- The open panel replaces the whole 2×2 trigger quad on the left, not just this button.
+	;(triggerHost:FindFirstAncestor("TriggerQuad") :: GuiObject).Visible = false
 	panel.Visible = true
 
 	local scale = panelScale(panel)
@@ -118,7 +119,7 @@ local function closeMenu(triggerHost: GuiObject, panel: GuiObject)
 
 	panelScale(panel).Scale = restScale
 	panel.Visible = false
-	triggerHost.Visible = true
+	;(triggerHost:FindFirstAncestor("TriggerQuad") :: GuiObject).Visible = true
 end
 
 ----------------------------------------------------------------
@@ -504,7 +505,7 @@ function PlaytimeUI.Init()
 	local playerGui = player:WaitForChild("PlayerGui")
 	local mainGui = playerGui:WaitForChild("MainGui")
 	local leftBar = mainGui:WaitForChild("LeftBar")
-	local triggerHost = leftBar:WaitForChild("PlaytimeTriggerHost") :: GuiObject
+	local triggerHost = (leftBar:WaitForChild("TriggerQuad") :: Instance):FindFirstChild("PlaytimeTriggerHost", true) :: GuiObject
 	triggerHost.Visible = true
 	leftBarRef = leftBar
 	triggerHostRef = triggerHost
@@ -514,7 +515,7 @@ function PlaytimeUI.Init()
 		defaultTriggerColor = tbtn.BackgroundColor3
 	end
 
-	triggerBtn = UIButton.bind(triggerHost, { onClick = openPlaytimePanel })
+	triggerBtn = UIButton.bind(triggerHost, { onClick = openPlaytimePanel, hoverScale = 1.08 })
 
 	-- Live updates: the service pushes on load, on a rung becoming available, and on claim.
 	changedRE.OnClientEvent:Connect(function(info)
