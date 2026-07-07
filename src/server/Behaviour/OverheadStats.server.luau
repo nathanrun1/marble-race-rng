@@ -1,8 +1,10 @@
 --!strict
 -- Overhead stats: a BillboardGui above every player's head showing their rebirth count
--- (hidden at 0), luck rank (text colored by the rank, shared LuckRanks scale), and
--- lifetime average $/marble — the same server-authoritative figures the leaderstats
--- columns use. Built server-side so it replicates to everyone.
+-- (hidden at 0), luck rank (text colored by the rank, shared LuckRanks scale), lifetime
+-- average $/marble, and the marble they're wearing (circular colour swatch in the
+-- cosmetics-shop style + the skin's name in its rarity colour) — the same
+-- server-authoritative figures the leaderstats columns use. Built server-side so it
+-- replicates to everyone.
 --
 -- Refresh is throttled: banking marks the player dirty and a slow loop re-renders, so
 -- high-frequency builds don't spam property replication to every client per ball.
@@ -13,14 +15,18 @@ local SSS = game:GetService("ServerScriptService")
 
 local StringUtils = require(RS.Shared.StringUtils)
 local LuckRanks = require(RS.Shared.LuckRanks)
+local BallSkins = require(RS.Shared.BallSkins)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
+local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 
 local REFRESH_INTERVAL = 2 -- seconds between dirty re-renders (banking can be many/sec)
 local MAX_DISTANCE = 120
 -- 2.1 cleared the default Roblox display name but the bottom line still overlapped
--- usernames; +1.5 text lines (a line = 0.32 × the 2.4-stud gui ≈ 0.77 studs) on top.
-local STUDS_ABOVE_HEAD = 3.25
+-- usernames; +1.5 text lines on top. The gui grew 2.4 -> 3.2 studs for the marble row
+-- (each line stays ~0.77 studs: 0.24 × 3.2), and since StudsOffset positions the gui's
+-- CENTRE, half the growth (0.4) is added so the bottom line stays put.
+local STUDS_ABOVE_HEAD = 3.65
 
 local PRESTIGE_PURPLE = Color3.fromRGB(179, 136, 255) -- matches the rebirth banner/UI violet
 local MONEY_GREEN = Color3.fromRGB(96, 224, 120)      -- matches the HUD $/marble readout
@@ -30,15 +36,20 @@ type Entry = {
 	prestige: TextLabel,
 	luck: TextLabel,
 	money: TextLabel,
+	marbleSwatch: Frame,
+	marbleStroke: UIStroke,
+	marbleName: TextLabel,
 }
 
 local entries: { [number]: Entry } = {}
 local dirty: { [number]: boolean } = {}
 
+local LINE_HEIGHT = 0.24 -- of the 3.2-stud gui: ~0.77 studs, same as the old 0.32 × 2.4
+
 local function makeLine(parent: Instance, order: number, color: Color3): TextLabel
 	local lbl = Instance.new("TextLabel")
 	lbl.BackgroundTransparency = 1
-	lbl.Size = UDim2.new(1, 0, 0.32, 0)
+	lbl.Size = UDim2.new(1, 0, LINE_HEIGHT, 0)
 	lbl.LayoutOrder = order
 	lbl.Font = Enum.Font.FredokaOne
 	lbl.TextScaled = true
@@ -66,6 +77,16 @@ local function refresh(player: Player)
 	entry.luck.Text = "🍀 " .. rank.Name
 	LuckRanks.ApplyToLabel(entry.luck, rank) -- flat color, or top-rank text gradient
 	entry.money.Text = "💰 $" .. StringUtils.FormatShort(avg) .. "/marble"
+
+	-- Worn marble: colour swatch + name in the skin's rarity colour.
+	local skin = BallSkins.Get(CosmeticService.GetEquipped(player))
+	if skin then
+		local rarityColor = BallSkins.RarityColor(skin.rarity)
+		entry.marbleSwatch.BackgroundColor3 = skin.data.color
+		entry.marbleStroke.Color = rarityColor
+		entry.marbleName.Text = skin.name
+		entry.marbleName.TextColor3 = rarityColor
+	end
 end
 
 local function buildFor(player: Player, character: Model)
@@ -78,7 +99,7 @@ local function buildFor(player: Player, character: Model)
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "OverheadStats"
 	gui.Adornee = head
-	gui.Size = UDim2.new(7, 0, 2.4, 0) -- studs
+	gui.Size = UDim2.new(7, 0, 3.2, 0) -- studs (see STUDS_ABOVE_HEAD note)
 	gui.StudsOffset = Vector3.new(0, STUDS_ABOVE_HEAD, 0)
 	gui.MaxDistance = MAX_DISTANCE
 	gui.LightInfluence = 0
@@ -90,11 +111,57 @@ local function buildFor(player: Player, character: Model)
 	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom -- lines stack down toward the head
 	layout.Parent = gui
 
+	-- Worn-marble row (bottom, closest to the head): circular colour swatch in the
+	-- cosmetics-shop style + the skin's name; refresh() colours both by the skin.
+	local row = Instance.new("Frame")
+	row.BackgroundTransparency = 1
+	row.Size = UDim2.new(1, 0, LINE_HEIGHT, 0)
+	row.LayoutOrder = 4
+	row.Parent = gui
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	rowLayout.Padding = UDim.new(0, 6)
+	rowLayout.Parent = row
+
+	-- Square side derived from the FIXED gui geometry (7 × 3.2 studs, LINE_HEIGHT rows)
+	-- rather than an aspect constraint — the constraint's fit modes all read the
+	-- authored width (zero) and collapsed/shrank the circle.
+	local sideStuds = 0.8 * LINE_HEIGHT * 3.2 -- 0.8 of the row height, in studs
+	local swatch = Instance.new("Frame")
+	swatch.Name = "Swatch"
+	swatch.LayoutOrder = 1
+	swatch.Size = UDim2.new(sideStuds / 7, 0, 0.8, 0)
+	swatch.Parent = row
+	local sc = Instance.new("UICorner")
+	sc.CornerRadius = UDim.new(0.5, 0)
+	sc.Parent = swatch
+	local swatchStroke = Instance.new("UIStroke")
+	swatchStroke.Thickness = 2
+	swatchStroke.Parent = swatch
+
+	local marbleName = Instance.new("TextLabel")
+	marbleName.LayoutOrder = 2
+	marbleName.BackgroundTransparency = 1
+	marbleName.AutomaticSize = Enum.AutomaticSize.X
+	marbleName.Size = UDim2.new(0, 0, 1, 0)
+	marbleName.Font = Enum.Font.FredokaOne
+	marbleName.TextScaled = true
+	marbleName.TextStrokeColor3 = Color3.new(0, 0, 0)
+	marbleName.TextStrokeTransparency = 0.3
+	marbleName.Text = ""
+	marbleName.Parent = row
+
 	entries[player.UserId] = {
 		gui = gui,
 		prestige = makeLine(gui, 1, PRESTIGE_PURPLE),
 		luck = makeLine(gui, 2, Color3.new(1, 1, 1)),
 		money = makeLine(gui, 3, MONEY_GREEN),
+		marbleSwatch = swatch,
+		marbleStroke = swatchStroke,
+		marbleName = marbleName,
 	}
 	-- Parent BEFORE the initial refresh: refresh() skips unparented guis, so the old
 	-- order left the labels blank until the first ball bank marked the player dirty.
@@ -127,6 +194,10 @@ end)
 -- Prestige count changes surface within the same interval (Changed fires per bank, so it
 -- rides the throttle rather than triggering an immediate re-render).
 PrestigeService.Changed:Connect(function(player: Player)
+	dirty[player.UserId] = true
+end)
+-- Wearing a different marble re-renders the swatch/name row within the same interval.
+CosmeticService.Changed:Connect(function(player: Player)
 	dirty[player.UserId] = true
 end)
 

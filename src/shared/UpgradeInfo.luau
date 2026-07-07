@@ -27,7 +27,6 @@ export type UpgradeDef = {
 	Widths: { number }?,                       -- Arc: tier cap = #Widths - 1
 	Ranges: { { Min: number, Max: number } }?, -- continuous axes: cap = #Ranges - 1
 	MaxTier: number?,
-	Locked: boolean?, -- starts hidden behind a flat unlock; see Info.locked
 }
 
 export type Info = {
@@ -40,11 +39,10 @@ export type Info = {
 	maxed: boolean,
 	price: number?,   -- nil if maxed
 	canAfford: boolean,
-	-- True for a Locked track still at tier 0: the shop UI shows a "???" teaser (name only)
-	-- with a flat unlock price instead of the real desc/icon/tier/values. Buying tier 0->1 is
-	-- otherwise an ordinary purchase — same price, same Purchase() call — just re-skinned as
-	-- "Unlock". Once tier >= 1 it behaves exactly like any other upgrade forever after.
-	locked: boolean,
+	-- NOTE: per-track "Locked" gating is gone — upgrade gating is now the world
+	-- UpgradeLock models (server UpgradeLockService / client UpgradeLocks), which sit
+	-- OUTSIDE this pure math: a gated track prices normally here but can't be bought
+	-- or opened until its lock is purchased.
 }
 
 -- Everything purchasable: the idle/scoring tracks (Config.Upgrades) AND the continuous
@@ -109,7 +107,6 @@ function UpgradeInfo.Build(track: string, tier: number, points: number): Info?
 		maxed = price == nil,
 		price = price,
 		canAfford = price ~= nil and points >= price,
-		locked = def.Locked == true and tier == 0,
 	}
 end
 

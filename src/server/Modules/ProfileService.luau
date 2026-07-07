@@ -52,6 +52,10 @@ export type Profile = {
 	-- Persisted so a crash/rejoin between paying and the receipt processing still
 	-- lets ProcessReceipt know which track to grant (see UpgradeService).
 	pendingBoostTrack: string?,
+	-- World upgrade locks bought this prestige (lock id -> true; see UpgradeLockService).
+	-- Lives in the profile ON PURPOSE: ResetProfile (prestige) wipes it so the locks
+	-- return, and DataService persistence carries it across sessions for free.
+	unlockedLocks: { [string]: boolean },
 }
 
 -- profiles[userId] = Profile
@@ -96,6 +100,7 @@ local function newProfile(): Profile
 			LaunchPhase = d.LaunchPhase,
 			axes = axes,
 		},
+		unlockedLocks = {},
 	}
 end
 
@@ -155,6 +160,24 @@ end
 -- mutation, so it doesn't fire Changed — nothing renders off it.
 function ProfileService.SetPendingBoostTrack(player: Player, track: string?)
 	get(player).pendingBoostTrack = track
+end
+
+-- World upgrade locks bought this prestige (lock id -> true). Returned by reference;
+-- mutate only through SetLockUnlocked.
+function ProfileService.GetUnlockedLocks(player: Player): { [string]: boolean }
+	return get(player).unlockedLocks
+end
+
+-- Mark a world lock as bought. Fires Changed/ProfileChanged so the client's lock
+-- views (UpgradeLocks, UpgradeShop billboards) re-render from the pushed profile.
+function ProfileService.SetLockUnlocked(player: Player, lockId: string)
+	local profile = get(player)
+	if profile.unlockedLocks[lockId] then
+		return
+	end
+	profile.unlockedLocks[lockId] = true
+	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile)
 end
 
 --------------------------------------------------------------------------------
@@ -268,6 +291,7 @@ function ProfileService.ResetProfile(player: Player)
 	end
 	local d = Config.LoadoutDefaults
 	profile.loadout = { Bet = ProfileStats.GetBetSizeAtTier(0), BetTier = 0, LaunchPhase = d.LaunchPhase, axes = axes }
+	profile.unlockedLocks = {} -- world upgrade locks return on prestige
 	ProfileService.Changed:Fire(player, profile)
 	ProfileChangedRE:FireClient(player, profile)
 end
@@ -304,6 +328,13 @@ function ProfileService.ApplyData(player: Player, saved: Profile?)
 		end
 		if type(saved.pendingBoostTrack) == "string" then
 			profile.pendingBoostTrack = saved.pendingBoostTrack
+		end
+		if type(saved.unlockedLocks) == "table" then
+			for lockId, on in saved.unlockedLocks do
+				if type(lockId) == "string" and on == true then
+					profile.unlockedLocks[lockId] = true
+				end
+			end
 		end
 		if saved.loadout then
 			local sl = saved.loadout

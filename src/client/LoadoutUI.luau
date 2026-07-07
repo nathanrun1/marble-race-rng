@@ -32,6 +32,10 @@ local LoadoutUI = {}
 
 -- Fired whenever the panel opens (TutorialService's OpenLoadout completion listens).
 LoadoutUI.Opened = Signal.new()
+-- Fired on every EQUIP BEST press — even one that changes nothing (already-best
+-- loadout). TutorialService's EquipLoadoutSlot completion listens, so the tutorial
+-- advances on the press itself, not only on a loadout change.
+LoadoutUI.EquipBestPressed = Signal.new()
 
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
@@ -370,6 +374,7 @@ local function resolveUI()
 		onClick = function()
 			equipBestRE:FireServer()
 			selection = nil
+			LoadoutUI.EquipBestPressed:Fire()
 		end,
 		pressOffset = 3,
 		clickSound = Config.Sounds.UIClick,

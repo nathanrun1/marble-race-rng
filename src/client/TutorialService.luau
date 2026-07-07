@@ -44,11 +44,25 @@ local BallSkins = require(RS.Shared.BallSkins)
 -- "UpgradeShopTrack" arrow finds the exact kiosks UpgradeShop.luau opens on touch.
 local TRACK_ATTRIBUTE = "Track"
 
--- Anchor picks which point of the rect Position refers to (like GuiObject.AnchorPoint;
--- default centre 0.5,0.5); HighlightDim overrides Config.Tutorial.HighlightDim.
--- RespectInset = true shifts the rect by the topbar GUI inset, so coords copied from an
--- inset-respecting ScreenGui land on the element; default false (raw screen coords).
-type Highlight = { Position: UDim2, Size: UDim2, Anchor: Vector2?, RespectInset: boolean?, HighlightDim: number? }
+-- Two ways to define the spot:
+--   Element = "MainGui.LeftBar.TriggerQuad.LoadoutTriggerHost" — surround a live
+--     GuiObject (dot path under PlayerGui; each segment falls back to a recursive
+--     find, so intermediate row/container frames can be skipped) plus Padding px.
+--     Resolution/inset-proof: the rect is read from AbsolutePosition/AbsoluteSize.
+--   Position/Size UDim2s — hand-authored rect. Anchor picks which point of the rect
+--     Position refers to (like GuiObject.AnchorPoint; default centre); RespectInset
+--     = true shifts by the topbar GUI inset for coords copied from inset-respecting
+--     ScreenGuis (default false = raw screen coords).
+-- HighlightDim overrides Config.Tutorial.HighlightDim either way.
+type Highlight = {
+	Element: string?,
+	Padding: number?,
+	Position: UDim2?,
+	Size: UDim2?,
+	Anchor: Vector2?,
+	RespectInset: boolean?,
+	HighlightDim: number?,
+}
 type Shot = { Position: Vector3, Orientation: Vector3, FieldOfView: number? }
 
 -- Both are open-ended tagged unions: { Kind = "SomeKind", ...Kind-specific fields }. Kept as
@@ -245,17 +259,54 @@ end
 -- Step application (smooth transitions) — dim/highlight/camera logic unchanged
 --------------------------------------------------------------------------------
 
--- Resolve a highlight (Position at its Anchor point + Size as UDim2s) to a CENTRE Scale
--- rect (cx, cy, w, h, all 0..1 of the screen). The UDim2 resolves like any screen UDim2
--- (Scale × viewport) except the Offset is multiplied by the AutoScale factor, so a
--- 1080p-authored offset pos/size lines up with AutoScaled UI on any resolution.
--- (Pure-Scale highlights are unaffected: offset 0.)
+-- Walk a dot path under PlayerGui to a GuiObject. Each segment tries a direct child
+-- first, then a recursive find — so container frames (TriggerQuad's rows, etc.) don't
+-- have to appear in the path.
+local function resolveElement(path: string): GuiObject?
+	local inst: Instance? = player:FindFirstChildOfClass("PlayerGui")
+	for token in string.gmatch(path, "[^%.]+") do
+		if not inst then
+			return nil
+		end
+		inst = inst:FindFirstChild(token) or inst:FindFirstChild(token, true)
+	end
+	return if inst and inst:IsA("GuiObject") then inst else nil
+end
+
+-- Resolve a highlight to a CENTRE Scale rect (cx, cy, w, h, all 0..1 of the screen).
+--
+-- Element form: the rect is the live GuiObject's AbsolutePosition/AbsoluteSize plus
+-- Padding px (scaled by AutoScale) — inset/resolution/scale all come along for free.
+-- AbsolutePosition's origin is the inset-safe corner, and this gui ignores the inset
+-- (full-screen mask), so the inset is added back to land in full-screen coords.
+--
+-- Position/Size form: the UDim2s resolve like any screen UDim2 (Scale × viewport)
+-- except the Offset is multiplied by the AutoScale factor, so a 1080p-authored offset
+-- pos/size lines up with AutoScaled UI on any resolution. (Pure-Scale highlights are
+-- unaffected: offset 0.)
 local function resolveRect(h: Highlight): (number, number, number, number)
 	local cam = workspace.CurrentCamera
 	local vp = if cam then cam.ViewportSize else Vector2.new(1920, 1080)
 	local f = AutoScale.GetScale()
-	local w = (vp.X * h.Size.X.Scale + h.Size.X.Offset * f) / vp.X
-	local ht = (vp.Y * h.Size.Y.Scale + h.Size.Y.Offset * f) / vp.Y
+
+	if h.Element then
+		local el = resolveElement(h.Element)
+		if el then
+			local inset = GuiService:GetGuiInset()
+			local pad = (h.Padding or 10) * f
+			local pos, size = el.AbsolutePosition, el.AbsoluteSize
+			local cx = (pos.X + size.X / 2 + inset.X) / vp.X
+			local cy = (pos.Y + size.Y / 2 + inset.Y) / vp.Y
+			return cx, cy, (size.X + pad * 2) / vp.X, (size.Y + pad * 2) / vp.Y
+		end
+		warn("TutorialService: highlight element not found: " .. h.Element)
+		return 0.5, 0.5, 0, 0
+	end
+
+	local hPos = h.Position :: UDim2
+	local hSize = h.Size :: UDim2
+	local w = (vp.X * hSize.X.Scale + hSize.X.Offset * f) / vp.X
+	local ht = (vp.Y * hSize.Y.Scale + hSize.Y.Offset * f) / vp.Y
 	-- This gui ignores the topbar inset (the dim mask must cover the WHOLE screen), so by
 	-- default authored coords are raw screen coords. RespectInset = true shifts the rect
 	-- by the inset instead — for spots whose coords were copied from an inset-respecting
@@ -263,8 +314,8 @@ local function resolveRect(h: Highlight): (number, number, number, number)
 	local inset = if h.RespectInset then GuiService:GetGuiInset() else Vector2.zero
 	-- Position marks the rect's Anchor point (default centre); shift to the centre.
 	local a = h.Anchor or Vector2.new(0.5, 0.5)
-	local cx = (vp.X * h.Position.X.Scale + h.Position.X.Offset * f + inset.X) / vp.X + (0.5 - a.X) * w
-	local cy = (vp.Y * h.Position.Y.Scale + h.Position.Y.Offset * f + inset.Y) / vp.Y + (0.5 - a.Y) * ht
+	local cx = (vp.X * hPos.X.Scale + hPos.X.Offset * f + inset.X) / vp.X + (0.5 - a.X) * w
+	local cy = (vp.Y * hPos.Y.Scale + hPos.Y.Offset * f + inset.Y) / vp.Y + (0.5 - a.Y) * ht
 	return cx, cy, w, ht
 end
 
@@ -506,7 +557,8 @@ local function startRollCrate(_spec: CompletionSpec, onComplete: () -> ()): () -
 end
 
 -- A skin landing in any bonus-loadout slot (CosmeticChanged loadout fill count rising
--- past the step-start baseline — EQUIP BEST counts too).
+-- past the step-start baseline), OR any EQUIP BEST press — the press completes even
+-- when the loadout is already optimal and nothing changes.
 local function startEquipLoadoutSlot(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
 	local remote = RS:WaitForChild("Remote")
 	local changedRE = remote:WaitForChild("CosmeticChanged") :: RemoteEvent
@@ -535,8 +587,10 @@ local function startEquipLoadoutSlot(_spec: CompletionSpec, onComplete: () -> ()
 			onComplete()
 		end
 	end)
+	local pressConn = LoadoutUI.EquipBestPressed:Connect(onComplete)
 	return function()
 		conn:Disconnect()
+		pressConn:Disconnect()
 	end
 end
 

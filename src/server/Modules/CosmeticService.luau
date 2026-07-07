@@ -616,6 +616,7 @@ function CosmeticService.Init()
 	-- Paid-random-items-restricted players can't buy Diamonds or crates with Robux (the
 	-- client hides/blocks the prompts; refusing the receipt here is the backstop — the
 	-- unconsumed purchase is never granted and Roblox eventually reverses it).
+	local flyRE = getRemote("PlayCurrencyFly", "RemoteEvent") :: RemoteEvent -- client CurrencyFlyUI listens
 	for _, pack in Config.DiamondPacks do
 		local packProductId = tonumber(pack.Product)
 		if packProductId and packProductId ~= 0 then
@@ -628,6 +629,7 @@ function CosmeticService.Init()
 					return false -- data not loaded yet; ProcessReceipt retries
 				end
 				CosmeticService.AddCC(player, amount)
+				flyRE:FireClient(player, "Diamonds") -- 💎 fly-to-balance celebration
 				return true
 			end)
 		end

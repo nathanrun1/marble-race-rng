@@ -205,6 +205,21 @@ function CurrencyFlyUI.Init()
 
 	screenGui = gui
 	container = frame
+
+	-- Server-granted rewards (obby prize) fire PlayCurrencyFly with a kind; anything
+	-- unknown is ignored. Soft-waited: the remote only exists once a server granter
+	-- that wants the flourish has created it (ObbyZone today).
+	task.spawn(function()
+		local remote = RS:WaitForChild("Remote")
+		local re = remote:WaitForChild("PlayCurrencyFly", 60)
+		if re and re:IsA("RemoteEvent") then
+			re.OnClientEvent:Connect(function(kind: any)
+				if type(kind) == "string" and EMOJI[kind] then
+					CurrencyFlyUI.Play(kind :: Kind)
+				end
+			end)
+		end
+	end)
 end
 
 return CurrencyFlyUI

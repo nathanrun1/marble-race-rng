@@ -17,7 +17,10 @@ Config.Sounds = {
 	Cold = "rbxassetid://116320134099218",
 	Prestige = "rbxassetid://84051226507785",
 	UIClick = "", -- PLACEHOLDER: generic UI click (menu open / equip). Empty = silent until set.
-	Music = "rbxassetid://9043887120"  
+	Music = "rbxassetid://9043887120",
+	Confirmation2 = "rbxassetid://87535825628082",
+	Confirmation3 = "rbxassetid://124879887650269",
+	Confirmation4 = "rbxassetid://80527877392020"
 }
 
 Config.BackgroundPlaylist = {
@@ -56,6 +59,7 @@ Config.Tags = {
 	QuestUI = "QuestUI",                 -- A SurfaceGui the daily-quest panel is also built into (client QuestUI)
 	FreeCratePad = "FreeCratePad",       -- A pad that claims the free Marble Box on touch (client CosmeticsShop builds its billboard/timer)
 	DailyRewardPad = "DailyReward",      -- A pad that claims the daily reward on touch (client DailyRewardUI fills its authored Billboard.BillboardGui Title/Timer)
+	UpgradeLock = "UpgradeLock",         -- A world lock Model gating upgrade tracks: attribute "UpgradeLock" lists the tracks, "Price" is the cash unlock cost, child "Pad" is the unlock pad (server UpgradeLockService + client UpgradeLocks)
 }
 
 Config.Attributes = {
@@ -243,10 +247,10 @@ Config.WarnUI = {
 -- better value (RobuxHint is display-only fallback text — the real price comes from the dev
 -- product once its id is set). PLACEHOLDER product ids ("0" = button prompts nothing).
 Config.DiamondPacks = {
-	{ Id = "Handful",  Name = "Handful of Diamonds",  Icon = "🤲", Diamonds = 100,  Product = "0", RobuxHint = 50 },
-	{ Id = "Crate",    Name = "Crate of Diamonds",    Icon = "📦", Diamonds = 350,  Product = "0", RobuxHint = 149 },
-	{ Id = "Pile",     Name = "Pile of Diamonds",     Icon = "💰", Diamonds = 900,  Product = "0", RobuxHint = 349 },
-	{ Id = "Mountain", Name = "Mountain of Diamonds", Icon = "⛰️", Diamonds = 3000, Product = "0", RobuxHint = 999 },
+	{ Id = "Handful",  Name = "Handful of Diamonds",  Icon = "🤲", Diamonds = 100,  Product = "3608551478", RobuxHint = 50 },
+	{ Id = "Crate",    Name = "Crate of Diamonds",    Icon = "📦", Diamonds = 350,  Product = "3608551532", RobuxHint = 149 },
+	{ Id = "Pile",     Name = "Pile of Diamonds",     Icon = "💰", Diamonds = 900,  Product = "3608551575", RobuxHint = 349 },
+	{ Id = "Mountain", Name = "Mountain of Diamonds", Icon = "⛰️", Diamonds = 3000, Product = "3608551623", RobuxHint = 999 },
 }
 
 Config.Prestige = {
@@ -326,11 +330,6 @@ Config.Upgrades = {
 		Cost = { Base = 250, Growth = 1.9 },
 		Name = "Max Bet", Short = "Bet", Desc = "Raise your betting ceiling.",
 		Icon = "💰",
-		-- Not locked: bet sizing already works from tier 0 (free) via BetUI's raise/lower, so
-		-- hiding the shop kiosk's name/desc/price behind a "???" teaser until the first tier is
-		-- bought would misrepresent it as a gated feature. UpgradeService/ShopUI/UpgradeShop key
-		-- off this the same as any other track — it's just never true for MaxBet anymore.
-		Locked = false,
 	},
 	-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 	-- Combo bonus is an ABSOLUTE point add (combo × this), free of the bet — the low-bet/high-
@@ -355,7 +354,7 @@ Config.Upgrades = {
 	BaseAdditive = {
 		Base = 0.0, C1 = 0.05, C2 = 0.0, C3 = 0.0,
 		Cost = { Base = 300, Growth = 1.7 },
-		Name = "Base Bonus", Short = "Base", Desc = "Boost the board's slot multipliers.",
+		Name = "Mult Bonus", Short = "Base", Desc = "Boost the board's slot multipliers.",
 		Icon = "➕"
 	},
 	-- Minimum delay between launches. PerTier 0.67→0.82: gentler throughput ramp. Cost growth
@@ -363,10 +362,9 @@ Config.Upgrades = {
 	Frequency = {
 		Base = 2, PerTier = 0.82,
 		MaxTier = 12,
-		Cost = { Initial = 750, Base = 230, Growth = 1.9 },
-		Name = "Launch Delay", Short = "Freq", Desc = "Decrease time between launches",
+		Cost = { Base = 230, Growth = 1.9 },
+		Name = "Launch Frequency", Short = "Freq", Desc = "Increase marbles launched per second.",
 		Icon = "🔄",
-		Locked = true,
 	},
 	-- pegHeatFactor = PerTier * tier (additive). Sensitivity to peg heat (§1.5,
 	-- simplified): tier 0 = heat has no effect; higher = aimed hot pegs pay more
@@ -399,7 +397,6 @@ type AxisDef = {
 	Short: string?,
 	Desc: string?,
 	Icon: string?,
-	Locked: boolean?
 }
 Config.Axes = {
 	Elasticity = {
@@ -419,10 +416,9 @@ Config.Axes = {
 			{ Min = 0.04, Max = 0.96 },
 			{ Min = 0.0, Max = 1.0 },
 		},
-		Cost = { Initial = 4000, Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Bounciness", Short = "Bounce", Desc = "How bouncy the marble is.",
 		Icon = "💨",
-		Locked = true,
 	},
 	Size = {
 		Default = 1.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
@@ -441,10 +437,9 @@ Config.Axes = {
 			{ Min = 0.51, Max = 0.98 },
 			{ Min = 0.5, Max = 1 },
 		},
-		Cost = { Initial = 4500, Base = 2000, Growth = 1.8 },
+		Cost = { Base = 2000, Growth = 1.8 },
 		Name = "Marble Size", Short = "Size", Desc = "Unlock different marble sizes.",
 		Icon = "◯",
-		Locked = true,
 	},
 	Angle = {
 		Default = 0.0,  -- full size; smaller is the upgrade direction (§3 B-adj)
@@ -463,10 +458,9 @@ Config.Axes = {
 			{ Min = -math.rad(55.7), Max = math.rad(55.7) },
 			{ Min = -math.rad(65.0), Max = math.rad(65.0) },
 		},
-		Cost = { Initial = 4000, Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Angle", Short = "Angle", Desc = "Tune the launch direction.",
 		Icon = "🏹",
-		Locked = true,
 	},
 	Arc = {
 		Default = math.rad(15),
@@ -485,10 +479,9 @@ Config.Axes = {
 			{ Min = math.rad(5), Max = math.rad(69.6) },
 			{ Min = math.rad(5), Max = math.rad(80.0) },
 		},
-		Cost = { Initial = 3500, Base = 1500, Growth = Config.Economy.BasePriceGrowth },
+		Cost = { Base = 1500, Growth = Config.Economy.BasePriceGrowth },
 		Name = "Launcher Swivel", Short = "Swivel", Desc = "Widen or tighten the possible launch angles.",
 		Icon = "🎯",
-		Locked = true,
 	},
 } :: { [string]: AxisDef }
 
@@ -878,18 +871,18 @@ Config.Podium = {
 --
 --   text        : the message (string).
 --   boxPosition : UDim2 centre of the message box (Scale). Defaults to lower-centre.
---   highlight   : optional { Position = UDim2, Size = UDim2 (spot size), Anchor = Vector2?,
---                 RespectInset = boolean? }. Present = dim everything except this rect; absent
---                 = no dimming. Anchor picks which point of the spot Position refers to, like
---                 GuiObject.AnchorPoint — e.g. Vector2.new(0, 1) = Position is the spot's
---                 bottom-left corner; defaults to the centre (0.5, 0.5). RespectInset = true
---                 shifts the spot down by the topbar GUI inset — use it when the coords were
---                 copied from an inset-respecting ScreenGui (the default kind), so the spot
---                 lands where that UI actually renders in-game; default false = raw screen
---                 coords. The UDim2s resolve like any screen UDim2 (Scale × viewport) but the
---                 Offset is multiplied by the AutoScale factor — so you can author the spot in
---                 1080p offset pos/size to line up with AutoScaled UI elements (use the
---                 element's own UDim2 + size).
+--   highlight   : optional; present = dim everything except the spot. Two forms:
+--                 { Element = "MainGui.LeftBar.TriggerQuad.LoadoutTriggerHost", Padding = px? }
+--                   — surround a live GuiObject (dot path under PlayerGui; path segments fall
+--                   back to a recursive find, so container frames can be skipped) with Padding
+--                   px (default 10) around it. PREFERRED: reads the element's live absolute
+--                   rect, so it's immune to resolution / inset differences (Studio vs Player).
+--                 { Position = UDim2, Size = UDim2, Anchor = Vector2?, RespectInset = boolean? }
+--                   — hand-authored rect. Anchor picks which point of the spot Position refers
+--                   to, like GuiObject.AnchorPoint (default centre). RespectInset = true shifts
+--                   the spot by the topbar GUI inset for coords copied from an inset-respecting
+--                   ScreenGui. The UDim2s resolve like any screen UDim2 (Scale × viewport) but
+--                   the Offset is multiplied by the AutoScale factor — author in 1080p offsets.
 --   camera      : optional { Position = Vector3, Orientation = Vector3 (deg), FieldOfView = number? }
 --                 scripted camera shot for the step (smoothly tweened); absent = default camera.
 --   arrow       : optional physical world-arrow target (client WorldArrow), floating near the
@@ -986,13 +979,13 @@ Config.Tutorial = {
 			{
 				text = "You unlocked a new marble! Open the LOADOUT menu.",
 				boxPosition = UDim2.fromScale(0.75, 0.80),
-				highlight = { Position = UDim2.fromOffset(103, 870), Size = UDim2.fromOffset(194, 121) },
+				highlight = { Element = "MainGui.LeftBar.TriggerQuad.LoadoutTriggerHost" },
 				complete = { Kind = "OpenLoadout" },
 			},
 			{
 				text = "Equip the best possible loadout for maximum bonus cash.",
 				boxPosition = UDim2.fromScale(0.75, 0.80),
-				highlight = { Position = UDim2.fromOffset(1108,398), Size = UDim2.fromOffset(244,93), Anchor = Vector2.new(0.5, 1) },
+				highlight = { Element = "LoadoutGui.Panel.EquipBestHost" },
 				complete = { Kind = "EquipLoadoutSlot" },
 			},
 		},

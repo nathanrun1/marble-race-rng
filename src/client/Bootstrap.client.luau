@@ -5,6 +5,7 @@ local player = Players.LocalPlayer
 local PlayerScripts = player:WaitForChild("PlayerScripts")
 
 local UpgradeShop = require(PlayerScripts:WaitForChild("UpgradeShop"))
+local UpgradeLocks = require(PlayerScripts:WaitForChild("UpgradeLocks"))
 local BallEffects = require(RS.Shared:WaitForChild("BallEffects"))
 local ScoreUI = require(RS.Shared:WaitForChild("ScoreUI"))
 local AnnounceUI = require(RS.Shared:WaitForChild("AnnounceUI"))
@@ -41,6 +42,7 @@ local DailyRewardUI = require(PlayerScripts:WaitForChild("DailyRewardUI"))
 local Config = require(RS.Shared:WaitForChild("Config"))
 
 print("Bootstrapping services...")
+UpgradeLocks.Init() -- before UpgradeShop: its lock state greys/hides gated kiosks
 UpgradeShop.Init()
 BallEffects.Init()
 ScoreUI.Init()

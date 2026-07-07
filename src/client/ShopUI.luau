@@ -20,9 +20,10 @@ local PlayerGui: PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 local ShopGui = PlayerGui:WaitForChild("ShopGui") :: any
 local ShopFrame: Frame = ShopGui.ShopFrame :: Frame
 
--- Locked tracks hide the Effect/Track/3x sections (see loadShop), which would otherwise leave
--- dead space below the buy button. Fixed heights (X/position untouched) rather than
--- AutomaticSize, so the two states are exactly as tall as their content is meant to be.
+-- The lock view (a world UpgradeLock's purchase screen) hides the Effect/Track/3x
+-- sections (see loadLock), which would otherwise leave dead space below the buy
+-- button. Fixed heights (X/position untouched) rather than AutomaticSize, so the two
+-- states are exactly as tall as their content is meant to be.
 local UNLOCKED_SIZE_Y = 437
 local LOCKED_SIZE_Y = 300
 
@@ -39,6 +40,7 @@ local activeTween: Tween? = nil
 local BalanceChangedRE: RemoteEvent = RS.Remote.BalanceChanged
 local PurchaseUpgradeRF: RemoteFunction = RS.Remote.PurchaseUpgrade
 local RequestUpgradeBoostRF: RemoteFunction = RS.Remote:WaitForChild("RequestUpgradeBoost")
+local PurchaseUpgradeLockRF: RemoteFunction = RS.Remote:WaitForChild("PurchaseUpgradeLock")
 
 local UI = {
 	name = ShopGui.ShopFrame.Head.NameStack.ShopName, -- TextLabel
@@ -83,10 +85,9 @@ local MAGENTA      = Color3.fromRGB(236, 63, 212)   -- #ec3fd4  borders / accent
 local PIP_BORDER   = Color3.fromRGB(234, 220, 240)  -- #eadcf0  empty pip border
 local CHIP         = Color3.fromRGB(244, 238, 248)  -- #f4eef8  chip / empty pip
 
--- Locked-upgrade teaser styling: a still-hidden upgrade shows a "???" placeholder in a
--- grey/black theme instead of its real name/desc/values, with the buy button reading
--- "Unlock" instead of "UPGRADE". Only the name stays visible (see Config.Upgrades/Axes
--- entries with Locked = true).
+-- Lock-view styling: a world UpgradeLock's purchase screen shows a "???" placeholder
+-- in a grey/black theme instead of a track's real name/desc/values, with the buy
+-- button reading "Unlock" instead of "UPGRADE" (see ShopUI.OpenLock).
 local LOCK_STROKE   = Color3.fromRGB(70, 70, 78)   -- grey/black border
 local LOCK_ICON     = "❓"
 local LOCK_DESC     = "???"
@@ -105,6 +106,11 @@ local loadedTrack: string? = nil
 -- reloads below). Drives the optimistic buy in onBuyPressed: its canAfford is the client's
 -- best guess at whether the purchase will succeed.
 local loadedInfo: Info? = nil
+
+-- A world UpgradeLock being offered instead of a track (see ShopUI.OpenLock); mutually
+-- exclusive with loadedTrack.
+export type LockView = { id: string, price: number, tracks: { string } }
+local loadedLock: LockView? = nil
 
 -- The 3× boost grants 3 tiers, so it's only offered when at least 3 tiers remain.
 -- `boostButton` is bound at the bottom; loadShop captures it as a forward ref.
@@ -287,20 +293,14 @@ function loadShop(track: string): Info
 	assert(upgradeInfo, "unknown upgrade track: " .. track)
 
 	UI.name.Text = upgradeInfo.name
-	applyLockChrome(upgradeInfo.locked)
+	applyLockChrome(false)
 
-	if upgradeInfo.locked then
-		UI.desc.Text = LOCK_DESC
-		UI.icon.Text = LOCK_ICON
-		UI.tiers.Text = LOCK_TIER
+	UI.desc.Text = upgradeInfo.desc
+	UI.icon.Text = upgradeInfo.icon
+	if upgradeInfo.maxTier ~= nil then
+		UI.tiers.Text = upgradeInfo.tier.." / "..upgradeInfo.maxTier
 	else
-		UI.desc.Text = upgradeInfo.desc
-		UI.icon.Text = upgradeInfo.icon
-		if upgradeInfo.maxTier ~= nil then
-			UI.tiers.Text = upgradeInfo.tier.." / "..upgradeInfo.maxTier
-		else
-			UI.tiers.Text = upgradeInfo.tier
-		end
+		UI.tiers.Text = upgradeInfo.tier
 	end
 
     if upgradeInfo.price then
@@ -310,33 +310,26 @@ function loadShop(track: string): Info
     end
 	adjustButton(upgradeInfo.canAfford)
 
-	-- Current/next values, the tier-pip track, and the 3× boost all reveal progress on the
-	-- track, so a still-locked upgrade hides all three instead of rendering them.
-	UI.effect.Visible = not upgradeInfo.locked
+	UI.effect.Visible = true
 	if UI.effectSpacer then
-		UI.effectSpacer.Visible = not upgradeInfo.locked
+		UI.effectSpacer.Visible = true
 	end
-	if not upgradeInfo.locked then
-		UI.curValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier)
-		if not upgradeInfo.maxed then
-			UI.nextValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier + 1)
-		else
-			UI.nextValue.Text = "—"
-		end
+	UI.curValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier)
+	if not upgradeInfo.maxed then
+		UI.nextValue.Text = ProfileStats.GetDisplayString(track, upgradeInfo.tier + 1)
+	else
+		UI.nextValue.Text = "—"
 	end
 
-	UI.track.Visible = not upgradeInfo.locked
-	if not upgradeInfo.locked then
-		createPips(UI.track, upgradeInfo.maxTier, upgradeInfo.tier)
-	end
+	UI.track.Visible = true
+	createPips(UI.track, upgradeInfo.maxTier, upgradeInfo.tier)
 
     -- Offer the 3× boost only when at least 3 tiers remain (unbounded tracks always
-    -- qualify) and the track is already unlocked. Otherwise grey the button out (or hide
-    -- it entirely while locked) and suppress the can't-afford prompt.
-    boostAvailable = not upgradeInfo.locked and (upgradeInfo.maxTier == nil
-        or (upgradeInfo.maxTier - upgradeInfo.tier) >= BOOST_TIERS)
+    -- qualify). Otherwise grey the button out and suppress the can't-afford prompt.
+    boostAvailable = upgradeInfo.maxTier == nil
+        or (upgradeInfo.maxTier - upgradeInfo.tier) >= BOOST_TIERS
     if UI.boostHost then
-        UI.boostHost.Visible = not upgradeInfo.locked
+        UI.boostHost.Visible = true
     end
     if boostButton then
         boostButton.SetDisabled(not boostAvailable)
@@ -346,7 +339,39 @@ function loadShop(track: string): Info
 
     loadedTrack = track
     loadedInfo = upgradeInfo
+    loadedLock = nil
     return upgradeInfo
+end
+
+-- Loads ShopGui as a world-lock purchase screen: grey teaser chrome, "???" placeholder,
+-- the lock's flat price, and an "Unlock" buy button. Tier/effect/3× stay hidden — a
+-- lock has no progression, it's one flat purchase.
+local function loadLock(lock: LockView)
+	UI.name.Text = "🔒 LOCKED"
+	applyLockChrome(true)
+	UI.desc.Text = LOCK_DESC
+	UI.icon.Text = LOCK_ICON
+	UI.tiers.Text = LOCK_TIER
+	UI.price.Text = "$" .. StringUtils.FormatShort(lock.price)
+	adjustButton(cachedBalance >= lock.price)
+
+	UI.effect.Visible = false
+	if UI.effectSpacer then
+		UI.effectSpacer.Visible = false
+	end
+	UI.track.Visible = false
+	boostAvailable = false
+	if UI.boostHost then
+		UI.boostHost.Visible = false
+	end
+	if boostButton then
+		boostButton.SetDisabled(true)
+		boostButton.SetGlowing(false, BOOST_GLOW_GOLD, BOOST_GLOW_WHITE)
+	end
+
+	loadedLock = lock
+	loadedTrack = nil
+	loadedInfo = nil
 end
 
 -- Render just the tier-advance bits (tier badge, pips, current/next effect values) as if a
@@ -386,13 +411,26 @@ end
 -- re-renders from server truth either way, so a wrong guess (balance changed since the
 -- last render) simply snaps back rather than staying granted.
 function onBuyPressed()
+    -- Lock view: one flat server-validated purchase, no optimistic tier prediction.
+    local lock = loadedLock
+    if lock then
+        local res = PurchaseUpgradeLockRF:InvokeServer(lock.id)
+        if type(res) == "table" and res.ok then
+            SoundService.Play({ soundId = Config.Sounds.Upgrade })
+            punch()
+            playFlare("Unlocked!")
+            ShopUI.CloseShop() -- the world model fades out (UpgradeLocks); nothing left to show
+        end
+        return
+    end
+
     local track = loadedTrack
     if track == nil then
         return
     end
 
     local info = loadedInfo
-    local predicted = info ~= nil and info.canAfford and not info.locked and not info.maxed
+    local predicted = info ~= nil and info.canAfford and not info.maxed
     if predicted then
         -- Cleared until the response reconciles, so mashing Buy mid-flight falls back to
         -- the non-optimistic path instead of re-predicting from the same stale tier.
@@ -455,6 +493,17 @@ function ShopUI.OpenShop(track: string)
 	t:Play()
 end
 
+-- Enable the shop as a world-lock purchase screen (UpgradeLocks pads open this).
+function ShopUI.OpenLock(lock: LockView)
+	if activeTween then activeTween:Cancel() end
+	loadLock(lock)
+	ShopFrame.Position = POS_RIGHT
+	ShopGui.Enabled = true
+	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_OPEN })
+	activeTween = t
+	t:Play()
+end
+
 -- Determines if the Shop UI is open
 function ShopUI.IsOpen(): boolean
 	return ShopGui.Enabled
@@ -482,8 +531,12 @@ end
 BalanceChangedRE.OnClientEvent:Connect(function(newBalance: number)
     cachedBalance = newBalance
     seededBalance = true
-    if ShopGui.Enabled and loadedTrack then
-        loadShop(loadedTrack)
+    if ShopGui.Enabled then
+        if loadedTrack then
+            loadShop(loadedTrack)
+        elseif loadedLock then
+            loadLock(loadedLock) -- re-colour the Unlock button's affordability
+        end
     end
 end)
 

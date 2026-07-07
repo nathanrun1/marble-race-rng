@@ -10,6 +10,7 @@ local CollisionService = require(SSS.Scripts.Modules.CollisionService)
 local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PegService = require(SSS.Scripts.Modules.PegService)
 local UpgradeService = require(SSS.Scripts.Modules.UpgradeService)
+local UpgradeLockService = require(SSS.Scripts.Modules.UpgradeLockService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
@@ -35,6 +36,9 @@ local MetricsService = require(SSS.Scripts.Modules.MetricsService)
 -- ProfileService before gameplay services that read upgrade/loadout state.
 CurrencyService.Init()
 ProfileService.Init()
+-- UpgradeLockService before UpgradeService's first purchase can arrive (UpgradeService
+-- checks IsTrackLocked through it); scans the workspace UpgradeLock models.
+UpgradeLockService.Init()
 -- UpgradeService after Currency + Profile (it spends/sets through them).
 UpgradeService.Init()
 -- PrestigeService after Profile (it resets through it).

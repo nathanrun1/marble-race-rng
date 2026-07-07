@@ -350,7 +350,12 @@ local function presentRoll(result: RollResult)
 		text = ("%s ★%d (%s copy #%d)"):format(name, result.star or 1, BallSkins.RarityName(rarity), result.copies or 1)
 	end
 	WarnUI.WarnLocal(text, BallSkins.RarityColor(rarity), 4)
-	SoundService.Play({ soundId = if result.isNew then Config.Sounds.Jackpot else Config.Sounds.Collect2 })
+	-- Reveal sting scales with the pull's rarity: Common-Rare (1-3), Epic-Mythic (4-6),
+	-- Celestial+ (7-9).
+	local sting = if rarity >= 7 then Config.Sounds.Confirmation4
+		elseif rarity >= 4 then Config.Sounds.Confirmation3
+		else Config.Sounds.Confirmation2
+	SoundService.Play({ soundId = sting })
 	CosmeticsShop.select(result.skinId)
 end
 
@@ -457,7 +462,7 @@ local function refreshFreeButton()
 	local ready = remaining <= 0
 	if ready and not freeAnnounced then
 		freeAnnounced = true
-		WarnUI.WarnLocal("🎁 Free marble roll available!", GOLD, 4)
+		WarnUI.WarnLocal("🎁 Free marble box available!", GOLD, 4)
 	elseif not ready then
 		freeAnnounced = false
 	end

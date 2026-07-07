@@ -13,6 +13,20 @@ local SoundService = require(RS.Shared.SoundService)
 local ObbyZone = {}
 ObbyZone.__index = ObbyZone
 
+-- Server->client trigger for the currency-fly celebration (client CurrencyFlyUI
+-- listens): fired with the fly kind ("Cash") on obby completion. Created here since
+-- this is currently the only server-side granter that wants the flourish.
+local flyRE: RemoteEvent = (function()
+	local existing = RS.Remote:FindFirstChild("PlayCurrencyFly")
+	if existing and existing:IsA("RemoteEvent") then
+		return existing
+	end
+	local re = Instance.new("RemoteEvent")
+	re.Name = "PlayCurrencyFly"
+	re.Parent = RS.Remote
+	return re
+end)()
+
 local COOLDOWN: number = 5
 
 -- Walkspeed while inside the obby area (the Checkpoints.In volume), and the speed to
@@ -68,6 +82,7 @@ function ObbyZone.New(obby: Model)
 		print("obby complete")
 		CurrencyService.AddPoints(player, self.prize, "Completed Obby, prize: " .. self.prize)
 		ScoreUI.PostMessage(player, "Obby Complete! +"..StringUtils.FormatMoney(self.prize))
+		flyRE:FireClient(player, "Cash") -- 💰 fly-to-balance celebration
 		SoundService.Play({ soundId = Config.Sounds.Upgrade })
 		tpPlayerToPart(player, self.startPart)
 

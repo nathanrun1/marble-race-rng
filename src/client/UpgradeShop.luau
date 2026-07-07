@@ -24,6 +24,7 @@ local UpgradeShop = {}
 local player = Players.LocalPlayer
 local PlayerScripts = player:WaitForChild("PlayerScripts")
 local ShopUI = require(PlayerScripts:WaitForChild("ShopUI"))
+local UpgradeLocks = require(PlayerScripts:WaitForChild("UpgradeLocks"))
 
 local Remote = RS:WaitForChild("Remote")
 local BalanceChangedRE = Remote:WaitForChild("BalanceChanged") :: RemoteEvent
@@ -58,6 +59,7 @@ end
 ----------------------------------------------------------------------------------
 type Display = {
 	track: string,
+	bb: BillboardGui,      -- whole readout; hidden outright while the track's world lock is unbought
 	tierLabel: TextLabel,
 	priceLabel: TextLabel,
 	priceChip: Frame,
@@ -192,6 +194,7 @@ local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 
 	return {
 		track = pad:GetAttribute(TRACK_ATTR) :: string,
+		bb = bb,
 		tierLabel = tierLabel,
 		priceLabel = priceLabel,
 		priceChip = priceChip,
@@ -200,15 +203,13 @@ local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 	}
 end
 
--- Apply a GetUpgradeInfo entry { tier, price, canAfford, maxed, locked } to one display.
+-- Apply a GetUpgradeInfo entry { tier, price, canAfford, maxed } to one display.
 local function applyInfo(d: Display, info: any)
-	if info.locked then
-		-- Teaser state: still shows the name (already on the billboard) + the flat unlock
-		-- price, but hides tier/level and greys the pad + IconFrame instead of colouring
-		-- them by affordability.
-		d.tierLabel.Text = "🔒 Locked"
-		d.priceLabel.Text = "$" .. StringUtils.FormatShort(info.price)
-		d.priceChip.BackgroundColor3 = MAXED_COLOR
+	if UpgradeLocks.IsTrackLocked(d.track) then
+		-- Behind an unbought world lock: NO billboard at all (the group's lock pad is
+		-- the one selling the unlock), pad dead (see the Touched handler), and the pad
+		-- + IconFrame greyed with a "❓" icon.
+		d.bb.Enabled = false
 		d.emitter.Enabled = false
 		d.platform.Color = LOCKED_COLOR
 		if d.iconFrame then
@@ -219,6 +220,7 @@ local function applyInfo(d: Display, info: any)
 		end
 		return
 	end
+	d.bb.Enabled = true
 
 	d.tierLabel.Text = "Lv. " .. tostring(info.tier)
 	if d.iconLabel then
@@ -347,6 +349,9 @@ local function setupShopAt(inst: Instance)
 
 	inst.Touched:Connect(function(obj: Instance)
 		if not obj:IsDescendantOf(player.Character) then return end
+		if UpgradeLocks.IsTrackLocked(track) then
+			return -- gated: the group's lock pad is the only way in
+		end
 		local now = os.clock()
 		if now - (lastTouch[inst] or 0) < TOUCH_DEBOUNCE then return end
 		lastTouch[inst] = now

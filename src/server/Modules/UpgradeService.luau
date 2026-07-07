@@ -18,6 +18,7 @@ local UpgradeInfo = require(RS.Shared.UpgradeInfo)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
+local UpgradeLockService = require(SSS.Scripts.Modules.UpgradeLockService)
 local SoundService = require(RS.Shared.SoundService)
 local ProductService = require(RS.Shared.ProductService)
 
@@ -38,7 +39,7 @@ local UpgradeDefs = UpgradeInfo.Defs
 export type Info = UpgradeInfo.Info
 export type PurchaseResult = {
 	ok: boolean,
-	reason: string?,               -- "invalid_track" | "maxed" | "cannot_afford"
+	reason: string?,               -- "invalid_track" | "locked" | "maxed" | "cannot_afford"
 	upgrades: { [string]: Info }?, -- fresh snapshot for the UI to re-render
 }
 
@@ -77,6 +78,11 @@ end
 function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	if UpgradeDefs[track] == nil then
 		return { ok = false, reason = "invalid_track" }
+	end
+	-- A track behind an unbought world lock can't be purchased at all (the client
+	-- greys its kiosk out; this is the authority behind that).
+	if UpgradeLockService.IsTrackLocked(player, track) then
+		return { ok = false, reason = "locked", upgrades = UpgradeService.GetAllInfo(player) }
 	end
 	local tier = ProfileService.GetUpgradeTier(player, track)
 	local price = priceAt(track, tier)
@@ -152,8 +158,9 @@ function UpgradeService.RequestBoost(player: Player, track: string): number?
 		return nil
 	end
 	local tier = ProfileService.GetUpgradeTier(player, track)
-	-- Don't prompt on a still-locked track — the 3× pack isn't offered until it's unlocked.
-	if def.Locked == true and tier == 0 then
+	-- Don't prompt on a track behind an unbought world lock — the 3× pack isn't
+	-- offered until the lock is purchased.
+	if UpgradeLockService.IsTrackLocked(player, track) then
 		return nil
 	end
 	-- Don't prompt on a maxed track — there'd be nothing to grant.
