@@ -14,6 +14,7 @@ local ProductService = require(RS.Shared.ProductService)
 local StringUtils = require(RS.Shared.StringUtils)
 local WarnUI = require(RS.Shared.WarnUI)
 local PolicyGate = require(RS.Shared.PolicyGate)
+local SoundService = require(RS.Shared.SoundService)
 
 local DiamondsShopUI = {}
 
@@ -88,6 +89,7 @@ local function fillCard(card: Instance, pack: any)
 
 	if buy then
 		buy.Activated:Connect(function()
+			SoundService.PlayClick()
 			if productId then
 				ProductService.Prompt(productId)
 			else
@@ -103,7 +105,10 @@ function DiamondsShopUI.Init()
 	screenGui = gui
 	local panel = gui:WaitForChild("Panel")
 
-	;(panel:WaitForChild("CloseButton") :: GuiButton).Activated:Connect(DiamondsShopUI.Close)
+	;(panel:WaitForChild("CloseButton") :: GuiButton).Activated:Connect(function()
+		SoundService.PlayClick()
+		DiamondsShopUI.Close()
+	end)
 
 	local packsFrame = panel:WaitForChild("Packs")
 	for _, pack in Config.DiamondPacks do
@@ -125,6 +130,7 @@ function DiamondsShopUI.Init()
 			plusButton = plus
 			plus.Visible = not policyBlocked -- policy may have resolved first
 			plus.Activated:Connect(function()
+				SoundService.PlayClick()
 				if DiamondsShopUI.IsOpen() then
 					DiamondsShopUI.Close()
 				else

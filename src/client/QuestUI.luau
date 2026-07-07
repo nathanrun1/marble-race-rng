@@ -601,7 +601,7 @@ function QuestUI.Init()
 	panel = p
 
 	table.insert(views, buildTitleResetRows(p, true, false))
-	triggerHandle = UIButton.bind(t, { onClick = openPanel, clickSound = Config.Sounds.UIClick, hoverScale = 1.08 })
+	triggerHandle = UIButton.bind(t, { onClick = openPanel, hoverScale = 1.08 })
 
 	-- Alternative always-on presentation: any world SurfaceGui tagged QuestUI (same
 	-- CollectionService discovery template as CosmeticsShop).

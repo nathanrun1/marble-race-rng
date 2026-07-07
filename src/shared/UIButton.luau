@@ -35,7 +35,7 @@ export type Config = {
 	hoverTransparency: number?,    -- Hover overlay transparency on hover (default 0.86)
 	hoverScale: number?,           -- host enlarges to this on hover (e.g. 1.07); off when nil
 	feelTween: TweenInfo?,         -- tween for hover/press (default a quick quad-out)
-	clickSound: string?,           -- SoundService id to play on click
+	clickSound: string?,           -- click sound id; nil = the default click (SoundService.PlayClick), "" = silent
 	onClick: (() -> ())?,          -- momentary action (ignored when `toggle` is set)
 	toggle: {
 		initial: boolean?,
@@ -226,8 +226,11 @@ function UIButton.bind(host: Instance, config: Config): Handle
 	end))
 
 	local function playClickSound()
-		-- "" is a configured-but-silent placeholder (e.g. Config.Sounds.UIClick).
-		if config.clickSound and config.clickSound ~= "" then
+		-- nil = the game's default click (SoundService.PlayClick); "" = explicitly
+		-- silent; anything else = this button's own sound id.
+		if config.clickSound == nil then
+			SoundService.PlayClick()
+		elseif config.clickSound ~= "" then
 			SoundService.Play({ soundId = config.clickSound })
 		end
 	end

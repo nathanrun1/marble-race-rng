@@ -424,10 +424,23 @@ local function resolveCosmeticsShop(_spec: ArrowSpec): () -> Vector3?
 	end
 end
 
+-- Points at the free-marble-box claim pad (the first part tagged FreeCratePad).
+local function resolveFreeCratePad(_spec: ArrowSpec): () -> Vector3?
+	return function(): Vector3?
+		for _, pad in CollectionService:GetTagged(Config.Tags.FreeCratePad) do
+			if pad:IsA("BasePart") then
+				return pad.Position
+			end
+		end
+		return nil
+	end
+end
+
 local ARROW_RESOLVERS: { [string]: (ArrowSpec) -> () -> Vector3? } = {
 	UpgradeShopTrack = resolveUpgradeShopTrack,
 	NearestCoin = resolveNearestCoin,
 	CosmeticsShop = resolveCosmeticsShop,
+	FreeCratePad = resolveFreeCratePad,
 }
 
 --------------------------------------------------------------------------------
@@ -653,6 +666,33 @@ local function startScoreBalls(spec: CompletionSpec, onComplete: () -> ()): () -
 	end
 end
 
+-- The player's character stepping on the free-marble-box pad (any part tagged
+-- FreeCratePad). The touch alone completes — the claim/cooldown stays the pad's own
+-- business (CosmeticsShop), so this works even if the box was already claimed.
+local function startTouchFreeCratePad(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	local conns: { RBXScriptConnection } = {}
+	local function wire(inst: Instance)
+		if not inst:IsA("BasePart") then
+			return
+		end
+		table.insert(conns, inst.Touched:Connect(function(obj: Instance)
+			local char = player.Character
+			if char and obj:IsDescendantOf(char) then
+				onComplete()
+			end
+		end))
+	end
+	for _, inst in CollectionService:GetTagged(Config.Tags.FreeCratePad) do
+		wire(inst)
+	end
+	table.insert(conns, CollectionService:GetInstanceAddedSignal(Config.Tags.FreeCratePad):Connect(wire))
+	return function()
+		for _, c in conns do
+			c:Disconnect()
+		end
+	end
+end
+
 local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } = {
 	LaunchBalls = startLaunchBalls,
 	BuyUpgrade = startBuyUpgrade,
@@ -663,6 +703,7 @@ local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } 
 	OpenTuningMenu = startOpenTuningMenu,
 	OpenLoadout = startOpenLoadout,
 	EquipLoadoutSlot = startEquipLoadoutSlot,
+	TouchFreeCratePad = startTouchFreeCratePad,
 }
 
 --------------------------------------------------------------------------------

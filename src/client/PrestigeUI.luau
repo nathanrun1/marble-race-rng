@@ -361,8 +361,14 @@ function PrestigeUI.Init()
 	-- bespoke FX.
 	triggerButton = UIButton.bind(trigger, { onClick = open, pressOffset = 7, glowColor = Color3.fromRGB(237, 206, 135) })
 	overlay.Activated:Connect(close)
-	closeBtn.Activated:Connect(close)
-	goFace.Activated:Connect(onPrestigePressed)
+	closeBtn.Activated:Connect(function()
+		SoundService.PlayClick()
+		close()
+	end)
+	goFace.Activated:Connect(function()
+		SoundService.PlayClick()
+		onPrestigePressed()
+	end)
 
 	attachPress(goFace, 7)
 

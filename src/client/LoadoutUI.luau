@@ -26,6 +26,7 @@ local BallSkins = require(RS.Shared.BallSkins)
 local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local StringUtils = require(RS.Shared.StringUtils)
 local UIButton = require(RS.Shared.UIButton)
+local SoundService = require(RS.Shared.SoundService)
 local Signal = require(RS.Shared.Signal)
 
 local LoadoutUI = {}
@@ -356,6 +357,7 @@ local function resolveUI()
 
 	local closeBtn = panel:WaitForChild("CloseButton") :: GuiButton
 	closeBtn.Activated:Connect(function()
+		SoundService.PlayClick()
 		LoadoutUI.Close()
 	end)
 
@@ -377,7 +379,7 @@ local function resolveUI()
 			LoadoutUI.EquipBestPressed:Fire()
 		end,
 		pressOffset = 3,
-		clickSound = Config.Sounds.UIClick,
+		clickSound = Config.Sounds.Toggle2,
 	})
 
 	local slotsRow = panel:WaitForChild("SlotsRow")
@@ -440,7 +442,6 @@ local function makeTrigger()
 				end
 			end,
 			pressOffset = 3,
-			clickSound = Config.Sounds.UIClick,
 			hoverScale = 1.08,
 		})
 	end)

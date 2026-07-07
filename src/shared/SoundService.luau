@@ -155,6 +155,17 @@ function SoundService.Play(spec: SoundSpec): Sound
 	return sound
 end
 
+-- The game's default UI click (Config.Sounds.DefaultClick, a full Play spec — sound id,
+-- pitch, etc. all tune there). Every UIButton without its own clickSound plays this,
+-- and hand-wired buttons call it directly. No-op while the spec's soundId is the ""
+-- silent placeholder.
+function SoundService.PlayClick()
+	local spec = Config.Sounds.DefaultClick :: SoundSpec?
+	if spec and type(spec.soundId) == "string" and spec.soundId ~= "" then
+		SoundService.Play(spec)
+	end
+end
+
 -- Optional: warm the audio cache (and seed the pool) for a set of sound ids so the
 -- very first play has no load latency. Yields; call on the CLIENT from a
 -- non-critical path (e.g. right after Init).
@@ -338,10 +349,14 @@ if RunService:IsClient() then
 
 		-- Warm the cache + seed the pool for every Config.Sounds entry so the first
 		-- play of each is latency-free. PreloadAsync yields, so do it off-thread.
+		-- Only string ids: Config.Sounds also carries spec TABLES (DefaultClick),
+		-- and "" placeholders aren't loadable.
 		task.spawn(function()
 			local ids = {}
 			for _, soundId in Config.Sounds do
-				table.insert(ids, soundId)
+				if type(soundId) == "string" and soundId ~= "" then
+					table.insert(ids, soundId)
+				end
 			end
 			SoundService.Preload(ids)
 		end)

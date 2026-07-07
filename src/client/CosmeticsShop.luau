@@ -403,7 +403,7 @@ function CosmeticsShop.buy(boxId: string)
 	end
 	if result.ok then
 		WarnUI.WarnLocal("📦 Marble Box added to your stash!", GOLD, 3)
-		SoundService.Play({ soundId = Config.Sounds.Collect2 })
+		SoundService.Play({ soundId = Config.Sounds.Toggle2 })
 		CurrencyFlyUI.Play("Crate")
 	elseif result.reason == "insufficient_cc" then
 		WarnUI.WarnLocal("Not enough Diamonds!", Color3.fromRGB(255, 120, 120))
@@ -617,6 +617,7 @@ end
 --------------------------------------------------------------------------------
 local function makeTabButton(parent: Instance, text: string, order: number): TextButton
 	local btn = Instance.new("TextButton")
+	btn.Activated:Connect(SoundService.PlayClick)
 	btn.Name = text
 	btn.Size = UDim2.new(1, 0, 0, 0)
 	btn.AutomaticSize = Enum.AutomaticSize.None
@@ -707,6 +708,7 @@ local function buildCrateCard(parent: Instance, order: number, name: string, cos
 
 	local function actionButton(x: number, w: number, text: string, bg: Color3): TextButton
 		local btn = Instance.new("TextButton")
+		btn.Activated:Connect(SoundService.PlayClick) -- the game's default click, on top of per-action stings
 		btn.Size = UDim2.fromScale(w, 0.18)
 		btn.Position = UDim2.fromScale(x, 0.76)
 		btn.BackgroundColor3 = bg
@@ -913,6 +915,7 @@ local function build(surface: SurfaceGui)
 
 	local function makeFooterButton(): TextButton
 		local btn = Instance.new("TextButton")
+		btn.Activated:Connect(SoundService.PlayClick)
 		btn.Size = UDim2.fromScale(0.48, 0.7)
 		btn.Position = UDim2.fromScale(0.50, 0.15)
 		btn.Text = ""

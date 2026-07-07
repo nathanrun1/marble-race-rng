@@ -574,8 +574,14 @@ task.spawn(function()
     end
 end)
 
-UI.purchaseBtn.Activated:Connect(onBuyPressed)
-UI.closeBtn.Activated:Connect(ShopUI.CloseShop)
+UI.purchaseBtn.Activated:Connect(function()
+	SoundService.PlayClick()
+	onBuyPressed()
+end)
+UI.closeBtn.Activated:Connect(function()
+	SoundService.PlayClick()
+	ShopUI.CloseShop()
+end)
 
 -- 3× instant-tiers button: same host structure as the tool buttons (no MuteIcon).
 -- Momentary — hover lift + press squash, click prompts the boost for the loaded track.

@@ -16,11 +16,22 @@ Config.Sounds = {
 	Fire = "rbxassetid://105137237689649",
 	Cold = "rbxassetid://116320134099218",
 	Prestige = "rbxassetid://84051226507785",
-	UIClick = "", -- PLACEHOLDER: generic UI click (menu open / equip). Empty = silent until set.
 	Music = "rbxassetid://9043887120",
-	Confirmation2 = "rbxassetid://87535825628082",
-	Confirmation3 = "rbxassetid://124879887650269",
-	Confirmation4 = "rbxassetid://80527877392020"
+	Confirmation3 = "rbxassetid://87535825628082",
+	Confirmation2 = "rbxassetid://124879887650269",
+	Confirmation4 = "rbxassetid://80527877392020",
+	Toggle2 = "rbxassetid://120678299885068",
+	Switch2 = "rbxassetid://138551870543599"
+}
+
+-- The game's default UI click, played by SoundService.PlayClick(): every UIButton
+-- without its own clickSound, plus the hand-wired shop/panel buttons. A full
+-- SoundService.Play spec, so volume/pitch/jitter all tune here globally.
+-- ("" soundId = silent, same placeholder convention as before.)
+Config.Sounds.DefaultClick = {
+	soundId = Config.Sounds.Switch2,
+	pitch = 2.2,   -- PlaybackSpeed
+	volume = 0.125, -- half the SoundService default (0.5)
 }
 
 Config.BackgroundPlaylist = {
@@ -807,7 +818,7 @@ Config.GroupReward = {
 -- to SunsetTime over DayMinutes of real time, then SunsetTime back round to SunriseTime over
 -- NightMinutes — so the two halves can last different real durations. Servers start at sunrise.
 Config.DayNight = {
-	Enabled      = true, -- Whether day/night cycle is enabled
+	Enabled      = false, -- Whether day/night cycle is enabled
 	DayMinutes   = 9,   -- real minutes for the day half (sunrise -> sunset)
 	NightMinutes = 3,   -- real minutes for the night half (sunset -> sunrise)
 	SunriseTime  = 6,   -- ClockTime (hour, 0-24) the day starts at
@@ -896,6 +907,8 @@ Config.Podium = {
 --                                                                     none are currently active
 --                   { Kind = "CosmeticsShop" }                     -- the part carrying the
 --                                                                     CosmeticsGui-tagged storefront
+--                   { Kind = "FreeCratePad" }                      -- the free-marble-box claim pad
+--                                                                     (first FreeCratePad-tagged part)
 --   complete    : REQUIRED — what finishes the step. Kinds:
 --                   { Kind = "LaunchBalls", Count = number } -- N of the player's own marbles launch
 --                   { Kind = "BuyUpgrade", Track = string }  -- that track's upgrade tier increases
@@ -903,6 +916,7 @@ Config.Podium = {
 --                   { Kind = "ScoreBalls", Count = number? } -- N of the player's own marbles bank/score (default 1)
 --                   { Kind = "BuySkin" }                      -- any skin gets ADDED to the owned set (bought or otherwise earned)
 --                   { Kind = "OpenTuningMenu" }               -- the ball-tuning menu gets opened
+--                   { Kind = "TouchFreeCratePad" }            -- the player steps on the free-box pad
 -- Adding a new arrow/complete Kind is one handler function + one registry entry in
 -- TutorialService — nothing else in the stepping/rendering logic changes.
 --
@@ -940,6 +954,12 @@ Config.Tutorial = {
 			text = "Launch two more marbles.",
 			highlight = { Position = UDim2.fromOffset(960, 986), Size = UDim2.fromOffset(528,183), HighlightDim = 0.9 },
 			complete = { Kind = "LaunchBalls", Count = 2 },
+			boxPosition = UDim2.fromScale(0.5, 0.62)
+		},
+		{
+			text = "Step on the pad to claim your FREE marble box!",
+			arrow = { Kind = "FreeCratePad" },
+			complete = { Kind = "TouchFreeCratePad" },
 			boxPosition = UDim2.fromScale(0.5, 0.62)
 		}
 	},
