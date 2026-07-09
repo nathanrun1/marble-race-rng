@@ -349,7 +349,14 @@ end
 local function loadLock(lock: LockView)
 	UI.name.Text = "🔒 LOCKED"
 	applyLockChrome(true)
-	UI.desc.Text = LOCK_DESC
+	-- Sell the goal: name the tracks behind the lock instead of a pure "???" mystery
+	-- (upgrade tracks and axis tracks live in different Config tables).
+	local names = {}
+	for _, track in lock.tracks do
+		local def = (Config.Upgrades :: any)[track] or (Config.Axes :: any)[track]
+		table.insert(names, if type(def) == "table" and type(def.Name) == "string" then def.Name else track)
+	end
+	UI.desc.Text = if #names > 0 then "Unlocks: " .. table.concat(names, ", ") else LOCK_DESC
 	UI.icon.Text = LOCK_ICON
 	UI.tiers.Text = LOCK_TIER
 	UI.price.Text = "$" .. StringUtils.FormatShort(lock.price)
@@ -468,8 +475,37 @@ function onBuyPressed()
     end
 end
 
+-- Walk-away auto-close: the shop opens by standing on a kiosk/lock pad, so once the
+-- player wanders off it shouldn't sit in screen center until they find the X. Anchor
+-- to where the character stood at open time and close past a short leash.
+local WALK_AWAY_DISTANCE = 16 -- studs
+local walkAwayWatch = 0 -- generation counter: bumping it retires any older watcher loop
+
+local function watchWalkAway()
+	walkAwayWatch += 1
+	local generation = walkAwayWatch
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not (root and root:IsA("BasePart")) then
+		return
+	end
+	local anchor = root.Position
+	task.spawn(function()
+		while generation == walkAwayWatch and ShopGui.Enabled do
+			local c = player.Character
+			local r = c and c:FindFirstChild("HumanoidRootPart")
+			if r and r:IsA("BasePart") and (r.Position - anchor).Magnitude > WALK_AWAY_DISTANCE then
+				ShopUI.CloseShop()
+				break
+			end
+			task.wait(0.25)
+		end
+	end)
+end
+
 -- Invoked when close button pressed
 function ShopUI.CloseShop()
+	walkAwayWatch += 1 -- retire the watcher
 	if activeTween then activeTween:Cancel() end
 	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_RIGHT })
 	activeTween = t
@@ -488,6 +524,7 @@ function ShopUI.OpenShop(track: string)
 	loadShop(track)
 	ShopFrame.Position = POS_RIGHT
 	ShopGui.Enabled = true
+	watchWalkAway()
 	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_OPEN })
 	activeTween = t
 	t:Play()
@@ -499,6 +536,7 @@ function ShopUI.OpenLock(lock: LockView)
 	loadLock(lock)
 	ShopFrame.Position = POS_RIGHT
 	ShopGui.Enabled = true
+	watchWalkAway()
 	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_OPEN })
 	activeTween = t
 	t:Play()
@@ -520,6 +558,11 @@ function ShopUI.LoadTrack(track: string)
 		return -- already showing it; balance/tier refreshes re-render via the pushes below
 	end
 	loadShop(track)
+	-- Re-anchor the walk-away leash: switching kiosks while open means the player moved
+	-- to a new pad, and the leash should measure from there, not the first kiosk.
+	if ShopGui.Enabled then
+		watchWalkAway()
+	end
 end
 
 -- Whole-shop snapshot computed from the local caches — same shape the server's

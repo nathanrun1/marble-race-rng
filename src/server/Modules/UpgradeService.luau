@@ -96,14 +96,11 @@ function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	CurrencyService.AddPoints(player, -price, "Upgrade: " .. track)
 	ProfileService.SetUpgradeTier(player, track, tier + 1)
 	StatsService.AddUpgradesPurchased(player, 1)
-	-- MaxBet raises the ceiling of the bet ladder; jump the player's SELECTED bet tier to the
-	-- rung they just bought too (matching the "just click max after upgrading" habit from
-	-- before the raise/lower system existed), regardless of which UI bought it — the shop's
-	-- buy button or BallLaunchUI's own unlock flow (which also does this locally, redundantly
-	-- but harmlessly, since SetBetTier is idempotent at the same tier).
-	if track == "MaxBet" then
-		ProfileService.SetBetTier(player, tier + 1)
-	end
+	-- MaxBet raises the CEILING only — the selected bet tier stays put. BallLaunchUI's
+	-- raise-arrow unlock flow re-selects the new rung itself (the player explicitly asked
+	-- for that tier); the shop kiosk deliberately does not, so a new player who buys the
+	-- tutorial's Max Bet tier keeps betting the starter amount instead of being silently
+	-- bumped to a 4x bet the board can eat.
 	return { ok = true, upgrades = UpgradeService.GetAllInfo(player) }
 end
 

@@ -37,6 +37,13 @@ local ProfileChangedRE = Remote:WaitForChild("ProfileChanged") :: RemoteEvent
 local LOCK_ATTR = Config.Tags.UpgradeLock -- the attribute shares the tag's name
 local PRICE_ATTR = "Price"
 
+-- Display name for a gated track: upgrade tracks and axis tracks live in different
+-- Config tables, and lock attributes may list either kind.
+local function trackDisplayName(track: string): string
+	local def = (Config.Upgrades :: any)[track] or (Config.Axes :: any)[track]
+	return if type(def) == "table" and type(def.Name) == "string" then def.Name else track
+end
+
 -- Matches UpgradeShop's billboard palette.
 local AFFORD_COLOR = Color3.fromRGB(64, 200, 99)
 local DENY_COLOR   = Color3.fromRGB(214, 74, 64)
@@ -83,7 +90,7 @@ end
 ----------------------------------------------------------------------------------
 -- Pad billboard (same look as UpgradeShop's kiosk readouts: name + price chip)
 ----------------------------------------------------------------------------------
-local function makeBillboard(pad: BasePart, price: number): (BillboardGui, Frame)
+local function makeBillboard(pad: BasePart, price: number, tracks: { string }): (BillboardGui, Frame)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "UnlockInfo"
 	bb.Adornee = pad
@@ -125,8 +132,27 @@ local function makeBillboard(pad: BasePart, price: number): (BillboardGui, Frame
 	nameConstraint.MaxTextSize = 32
 	nameConstraint.Parent = nameLabel
 
+	-- What's inside: the gated tracks by display name, so the lock reads as a goal
+	-- ("Unlocks: Combo, Heat Sense…") instead of a grey mystery.
+	local names = {}
+	for _, track in tracks do
+		table.insert(names, trackDisplayName(track))
+	end
+	local contents = Instance.new("TextLabel")
+	contents.LayoutOrder = 2
+	contents.BackgroundTransparency = 1
+	contents.Size = UDim2.new(1, 0, 0, 40)
+	contents.Font = Enum.Font.GothamMedium
+	contents.TextSize = 16
+	contents.TextWrapped = true
+	contents.TextColor3 = Color3.fromRGB(235, 235, 235)
+	contents.TextStrokeColor3 = Color3.new(0, 0, 0)
+	contents.TextStrokeTransparency = 0.35
+	contents.Text = "Unlocks: " .. table.concat(names, ", ")
+	contents.Parent = root
+
 	local priceChip = Instance.new("Frame")
-	priceChip.LayoutOrder = 2
+	priceChip.LayoutOrder = 3
 	priceChip.Size = UDim2.fromOffset(0, 34)
 	priceChip.AutomaticSize = Enum.AutomaticSize.X
 	priceChip.BackgroundColor3 = DENY_COLOR
@@ -270,7 +296,7 @@ local function setupLock(inst: Instance)
 			warn(("UpgradeLocks: %s has no Pad part — lock renders but can't be bought"):format(inst:GetFullName()))
 			return
 		end
-		local bb, chip = makeBillboard(pad, price)
+		local bb, chip = makeBillboard(pad, price, tracks)
 		st.bb = bb
 		st.chip = chip
 		refreshChips()
