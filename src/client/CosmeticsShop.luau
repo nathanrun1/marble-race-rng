@@ -356,6 +356,11 @@ local function presentRoll(result: RollResult)
 		elseif rarity >= 4 then Config.Sounds.Confirmation3
 		else Config.Sounds.Confirmation2
 	SoundService.Play({ soundId = sting })
+	-- The won marble flies home: ONE colour swatch (rarity ring) into LOADOUT — it's a
+	-- single marble, not a currency pile.
+	if skin then
+		CurrencyFlyUI.PlayMarble(skin.data.color, BallSkins.RarityColor(rarity), 1)
+	end
 	CosmeticsShop.select(result.skinId)
 end
 
@@ -404,7 +409,7 @@ function CosmeticsShop.buy(boxId: string)
 	if result.ok then
 		WarnUI.WarnLocal("📦 Marble Box added to your stash!", GOLD, 3)
 		SoundService.Play({ soundId = Config.Sounds.Toggle2 })
-		CurrencyFlyUI.Play("Crate")
+		CurrencyFlyUI.Play("Crate", 1) -- one box bought = one 📦 flying
 	elseif result.reason == "insufficient_cc" then
 		WarnUI.WarnLocal("Not enough Diamonds!", Color3.fromRGB(255, 120, 120))
 		DiamondsShopUI.Open() -- the fix is one purchase away

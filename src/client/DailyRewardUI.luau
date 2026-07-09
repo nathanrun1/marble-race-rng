@@ -395,11 +395,11 @@ local function finishSpin(result: RewardResult)
 	if textFn then
 		WarnUI.WarnLocal(textFn(result), GOLD, WARN_LIFETIME)
 	end
-	-- Currencies fly to their balances; a banked box flies 📦 to the LOADOUT trigger.
+	-- Currencies fly to their balances; a banked box flies ONE 📦 to the LOADOUT trigger.
 	if result.Kind == "Cash" or result.Kind == "Diamonds" then
 		CurrencyFlyUI.Play(result.Kind)
 	elseif result.Kind == "Crate" then
-		CurrencyFlyUI.Play("Crate")
+		CurrencyFlyUI.Play("Crate", 1)
 	end
 end
 

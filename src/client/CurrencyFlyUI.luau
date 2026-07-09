@@ -112,35 +112,30 @@ local function pulseTarget(icon: GuiObject)
 	up:Play()
 end
 
--- One emoji: pop in at (spawnX, spawnY) — absolute screen coords, which ARE this container's
--- offset coords (the container sits at absolute (0, 0)) — hold, then fly into the icon.
-local function flyOne(parent: Frame, icon: GuiObject, emoji: string, spawnX: number, spawnY: number, holdDelay: number)
+-- One flying visual (an emoji label or a marble swatch): pop in at (spawnX, spawnY) —
+-- absolute screen coords, which ARE this container's offset coords (the container sits
+-- at absolute (0, 0)) — hold, then fly into the icon.
+local function flyOne(parent: Frame, icon: GuiObject, visual: GuiObject, spawnX: number, spawnY: number, holdDelay: number)
 	-- The container works in raw AbsolutePosition coords (no UIScale — the flight targets
-	-- are absolute screen positions), so the emoji SIZE scales by the viewport factor.
+	-- are absolute screen positions), so the visual's SIZE scales by the viewport factor.
 	local vs = AutoScale.GetScale()
-	local label = Instance.new("TextLabel")
-	label.Name = "FlyEmoji"
-	label.BackgroundTransparency = 1
-	label.AnchorPoint = Vector2.new(0.5, 0.5)
-	label.Position = UDim2.fromOffset(spawnX, spawnY)
-	label.Size = UDim2.fromOffset(0, 0) -- grows to full via the pop tween
-	label.Rotation = (math.random() - 0.5) * 50
-	label.Font = Enum.Font.FredokaOne
-	label.TextScaled = true
-	label.Text = emoji
-	label.Parent = parent
+	visual.AnchorPoint = Vector2.new(0.5, 0.5)
+	visual.Position = UDim2.fromOffset(spawnX, spawnY)
+	visual.Size = UDim2.fromOffset(0, 0) -- grows to full via the pop tween
+	visual.Rotation = (math.random() - 0.5) * 50
+	visual.Parent = parent
 
-	TweenService:Create(label, POP_TWEEN, { Size = UDim2.fromOffset(math.floor(EMOJI_SIZE * vs + 0.5), math.floor(EMOJI_SIZE * vs + 0.5)) }):Play()
+	TweenService:Create(visual, POP_TWEEN, { Size = UDim2.fromOffset(math.floor(EMOJI_SIZE * vs + 0.5), math.floor(EMOJI_SIZE * vs + 0.5)) }):Play()
 
 	task.delay(holdDelay, function()
-		if not label:IsDescendantOf(game) then
+		if not visual:IsDescendantOf(game) then
 			return
 		end
 		-- Target position read at takeoff (not spawn), so a reflowing LeftBar still gets hit.
 		local center = icon.AbsolutePosition + icon.AbsoluteSize * 0.5
 		local endSize = math.floor(EMOJI_SIZE * vs * FLY_END_SCALE + 0.5)
 		local fly = TweenService:Create(
-			label,
+			visual,
 			TweenInfo.new(FLY_TIME + math.random() * FLY_JITTER, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{
 				Position = UDim2.fromOffset(center.X, center.Y),
@@ -149,8 +144,8 @@ local function flyOne(parent: Frame, icon: GuiObject, emoji: string, spawnX: num
 			}
 		)
 		fly.Completed:Once(function()
-			label:Destroy()
-			-- One collect ding PER landing emoji. SoundService pools instances per sound id
+			visual:Destroy()
+			-- One collect ding PER landing visual. SoundService pools instances per sound id
 			-- (the ball-SFX system), so each play gets its own Sound and overlapping dings
 			-- stack instead of restarting each other; the pitch jitter keeps the stacked
 			-- copies from landing sample-aligned (which would read as one louder ding).
@@ -161,28 +156,73 @@ local function flyOne(parent: Frame, icon: GuiObject, emoji: string, spawnX: num
 	end)
 end
 
--- Fire the celebration toward `kind`'s balance icon. count defaults to a random 7-11.
-function CurrencyFlyUI.Play(kind: Kind, count: number?)
+local function newEmojiVisual(emoji: string): GuiObject
+	local label = Instance.new("TextLabel")
+	label.Name = "FlyEmoji"
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.Text = emoji
+	return label
+end
+
+-- A marble swatch in the shared UI style (colour-filled circle with a rarity ring),
+-- matching the cosmetics shop / overhead billboard swatches.
+local function newSwatchVisual(color: Color3, ringColor: Color3): GuiObject
+	local swatch = Instance.new("Frame")
+	swatch.Name = "FlySwatch"
+	swatch.BackgroundColor3 = color
+	swatch.BorderSizePixel = 0
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.5, 0)
+	corner.Parent = swatch
+	local ring = Instance.new("UIStroke")
+	ring.Color = ringColor
+	ring.Thickness = 2
+	ring.Parent = swatch
+	return swatch
+end
+
+-- Shared spawn loop: makes n visuals popping around screen centre, flying into `icon`.
+local function playVisuals(icon: GuiObject, count: number?, makeVisual: () -> GuiObject)
 	local parent = container
 	if not parent then
 		return -- Init hasn't run; a claim should still just work without the flourish
 	end
+	local n = math.clamp(count or math.random(7, 11), 1, MAX_COUNT)
+	local centerX = parent.AbsoluteSize.X * 0.5
+	local centerY = parent.AbsoluteSize.Y * 0.5
+	local vs = AutoScale.GetScale() -- spread scales with the viewport like the visual size
+	for _ = 1, n do
+		local spawnX = centerX + (math.random() - 0.5) * 2 * SPREAD_X * vs
+		local spawnY = centerY + (math.random() - 0.5) * 2 * SPREAD_Y * vs
+		local holdDelay = POP_TIME + HOLD_MIN + math.random() * HOLD_JITTER
+		flyOne(parent, icon, makeVisual(), spawnX, spawnY, holdDelay)
+	end
+end
+
+-- Fire the celebration toward `kind`'s balance icon. count defaults to a random 7-11.
+function CurrencyFlyUI.Play(kind: Kind, count: number?)
 	local icon = resolveTarget(kind)
 	if not icon then
 		return
 	end
 	local emoji = EMOJI[kind]
-	local n = math.clamp(count or math.random(7, 11), 1, MAX_COUNT)
+	playVisuals(icon, count, function()
+		return newEmojiVisual(emoji)
+	end)
+end
 
-	local centerX = parent.AbsoluteSize.X * 0.5
-	local centerY = parent.AbsoluteSize.Y * 0.5
-	local vs = AutoScale.GetScale() -- spread scales with the viewport like the emoji size
-	for _ = 1, n do
-		local spawnX = centerX + (math.random() - 0.5) * 2 * SPREAD_X * vs
-		local spawnY = centerY + (math.random() - 0.5) * 2 * SPREAD_Y * vs
-		local holdDelay = POP_TIME + HOLD_MIN + math.random() * HOLD_JITTER
-		flyOne(parent, icon, emoji, spawnX, spawnY, holdDelay)
+-- A rolled marble flying home: circular colour swatches (the skin's colour, ringed in
+-- its rarity colour) stream into the LOADOUT trigger — where a new marble matters.
+function CurrencyFlyUI.PlayMarble(color: Color3, ringColor: Color3, count: number?)
+	local icon = resolveTarget("Crate") -- the LOADOUT trigger (same home as bought boxes)
+	if not icon then
+		return
 	end
+	playVisuals(icon, count, function()
+		return newSwatchVisual(color, ringColor)
+	end)
 end
 
 function CurrencyFlyUI.Init()
