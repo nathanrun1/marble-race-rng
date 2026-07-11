@@ -20,6 +20,7 @@ local CollectionService = game:GetService("CollectionService")
 
 local Config = require(RS.Shared.Config)
 local UpgradeInfo = require(RS.Shared.UpgradeInfo)
+local Signal = require(RS.Shared.Signal)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 
@@ -27,6 +28,9 @@ local UpgradeLockService = {}
 
 export type LockDef = { price: number, tracks: { string } }
 export type PurchaseResult = { ok: boolean, reason: string? } -- "invalid_lock" | "already_unlocked" | "cannot_afford"
+
+-- (player, lockId, price, tracks) — fired on a successful purchase only.
+UpgradeLockService.Purchased = Signal.new()
 
 local locks: { [string]: LockDef } = {}
 -- track -> every lock id listing it. A track listed by SEVERAL locks stays locked
@@ -92,6 +96,7 @@ function UpgradeLockService.Purchase(player: Player, lockId: string): PurchaseRe
 	end
 	CurrencyService.AddPoints(player, -lock.price, "Upgrade lock: " .. lockId)
 	ProfileService.SetLockUnlocked(player, lockId)
+	UpgradeLockService.Purchased:Fire(player, lockId, lock.price, lock.tracks)
 	return { ok = true }
 end
 

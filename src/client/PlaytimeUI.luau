@@ -483,6 +483,22 @@ function openPlaytimePanel()
 	end
 end
 
+-- Public open/close query, mirroring LoadoutUI.IsOpen/Close — lets other systems (the
+-- Loadout tutorial step) force this panel shut when it would otherwise sit on top of the
+-- LoadoutTriggerHost it shares TriggerQuad with.
+function PlaytimeUI.IsOpen(): boolean
+	return isOpen
+end
+
+function PlaytimeUI.Close()
+	if isOpen and leftBarRef and triggerHostRef then
+		local panel = leftBarRef:FindFirstChild("Playtime") :: GuiObject?
+		if panel then
+			closeMenu(triggerHostRef, panel)
+		end
+	end
+end
+
 ----------------------------------------------------------------
 -- Init
 ----------------------------------------------------------------

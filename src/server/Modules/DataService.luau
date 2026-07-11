@@ -29,6 +29,7 @@ local SSS = game:GetService("ServerScriptService")
 
 local RS = game:GetService("ReplicatedStorage")
 local Signal = require(RS.Shared.Signal)
+local Config = require(RS.Shared.Config)
 local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
 local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
@@ -36,6 +37,7 @@ local StatsService = require(SSS.Scripts.Modules.StatsService)
 local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
 local QuestService = require(SSS.Scripts.Modules.QuestService)
+local StarterQuestService = require(SSS.Scripts.Modules.StarterQuestService)
 local DailyRewardService = require(SSS.Scripts.Modules.DailyRewardService)
 
 local DataService = {}
@@ -139,6 +141,7 @@ export type PlayerBlob = {
 	playtime: PlaytimeBonusService.PlaytimeData?,
 	cosmetics: CosmeticService.CosmeticData?,
 	quests: QuestService.QuestData?,
+	starterQuest: StarterQuestService.ChainSave?,
 	dailyReward: DailyRewardService.DailyRewardData?,
 }
 
@@ -189,6 +192,7 @@ local function applyBlob(player: Player, blob: PlayerBlob?)
 	PlaytimeBonusService.ApplyData(player, blob and blob.playtime)
 	CosmeticService.ApplyData(player, blob and blob.cosmetics)
 	QuestService.ApplyData(player, blob and blob.quests)
+	StarterQuestService.ApplyData(player, blob and blob.starterQuest)
 	DailyRewardService.ApplyData(player, blob and blob.dailyReward)
 end
 
@@ -201,6 +205,7 @@ local function serializeBlob(player: Player): PlayerBlob
 		playtime = PlaytimeBonusService.SerializeData(player),
 		cosmetics = CosmeticService.SerializeData(player),
 		quests = QuestService.SerializeData(player),
+		starterQuest = StarterQuestService.SerializeData(player),
 		dailyReward = DailyRewardService.SerializeData(player),
 	}
 end
@@ -462,7 +467,9 @@ local function onPlayerAdded(player: Player)
 	if not persistenceEnabled then
 		-- No persistence (Studio): defaults are the final state and are already applied,
 		-- so the player is "loaded" now — fire Loaded so post-load work (game-pass
-		-- ownership grants, etc.) still runs here.
+		-- ownership grants, etc.) still runs here. Every Studio test session counts as
+		-- "brand new", which is harmless (it's just a benign testing perk).
+		StatsService.GrantCashBoost(player, Config.BeginnersLuck.Mult, Config.BeginnersLuck.Seconds)
 		DataService.Loaded:Fire(player)
 		return
 	end
@@ -482,6 +489,11 @@ local function onPlayerAdded(player: Player)
 	end
 	if data then
 		applyBlob(player, data)
+	else
+		-- No saved blob at all: a genuinely brand-new account, never seen before. One-time
+		-- Beginner's Luck window (see Config.BeginnersLuck) — never re-granted on any later
+		-- session, since `data` will exist from here on.
+		StatsService.GrantCashBoost(player, Config.BeginnersLuck.Mult, Config.BeginnersLuck.Seconds)
 	end
 	loaded[player.UserId] = true
 	DataService.Loaded:Fire(player)
@@ -497,6 +509,7 @@ local function onPlayerRemoving(player: Player)
 	PlaytimeBonusService.Clear(player)
 	CosmeticService.Clear(player)
 	QuestService.Clear(player)
+	StarterQuestService.Clear(player)
 	DailyRewardService.Clear(player)
 end
 

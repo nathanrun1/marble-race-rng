@@ -29,6 +29,7 @@ local CoinService = require(SSS.Scripts.Modules.CoinService)
 local DestroyTargetService = require(SSS.Scripts.Modules.DestroyTargetService)
 local DevService = require(SSS.Scripts.Modules.DevService)
 local QuestService = require(SSS.Scripts.Modules.QuestService)
+local StarterQuestService = require(SSS.Scripts.Modules.StarterQuestService)
 local GoldenPegService = require(SSS.Scripts.Modules.GoldenPegService)
 local DailyRewardService = require(SSS.Scripts.Modules.DailyRewardService)
 local MetricsService = require(SSS.Scripts.Modules.MetricsService)
@@ -53,6 +54,10 @@ PlaytimeBonusService.Init()
 -- QuestService before DataService (another passive data service): creates its remotes and
 -- connects its metric hooks so quest progress starts counting from the first ApplyData.
 QuestService.Init()
+-- StarterQuestService (the one-time Getting Started chain): same before-DataService ordering
+-- as QuestService, for the same reason — its remotes/hooks must exist before the first
+-- ApplyData.
+StarterQuestService.Init()
 -- DailyRewardService before DataService (another passive data service): creates its remotes
 -- so the first ApplyData has something to push into.
 DailyRewardService.Init()

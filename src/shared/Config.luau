@@ -725,6 +725,19 @@ Config.StarterPack = {
 	PostPrestigeFreeTier = 1,  -- free tier on all tracks after each prestige (owners only)
 }
 
+-- Beginner's Luck: a one-time, free timed cash boost for brand-new accounts only (granted by
+-- DataService.onPlayerAdded the moment it finds no saved data at all — never re-granted on a
+-- later session). Reuses the same timed-boost slot as Config.StarterPack.Boost
+-- (StatsService.GrantCashBoost/GetCashBoost) rather than a separate mechanism; a real
+-- starter-pack purchase during the window simply overwrites it (last grant wins), which is
+-- fine since a first-minute player won't have bought it yet. Exists to nudge a fresh default
+-- build's board EV (~0.95-1.0x) just over 1.0x so the first autonomous minutes aren't a
+-- coinflip that ends most sessions before the player is invested.
+Config.BeginnersLuck = {
+	Mult = 1.15,        -- multiplier on banked cash while active
+	Seconds = 15 * 60,  -- window length from first join
+}
+
 -- Cosmetics (ball skins) economy. Skins themselves live in shared/BallSkins; this holds the
 -- currency tuning. CC (Cosmetic Coins) is earned by rebirthing — RebirthCCRatio × the RP spent on
 -- each rebirth — and spent on skins. The yellow-themed shop lives on a SurfaceGui tagged
@@ -852,6 +865,7 @@ table.freeze(Config.GoldenPegs)
 table.freeze(Config.Quests)
 table.freeze(Config.Quests.Templates)
 table.freeze(Config.StarterPack)
+table.freeze(Config.BeginnersLuck)
 table.freeze(Config.Cosmetics)
 table.freeze(Config.Crates)
 
@@ -934,7 +948,12 @@ Config.Tutorial = {
 			boxPosition = UDim2.fromScale(0.5, 0.62)
 		},
 		{
-			text = "Watch where the marble drops...",
+			-- Nudges toward the board-camera toggle (MainGui.LeftBar.Tools.CamButtonHost,
+			-- CameraService.Toggle) without forcing the view switch ourselves — a soft
+			-- highlight so a player who wants to actually see the drop can find the button,
+			-- but the step still completes on its own via ScoreBalls either way.
+			text = "Watch where the marble drops... (try the camera button!)",
+			highlight = { Element = "MainGui.LeftBar.Tools.CamButtonHost", Padding = 6 },
 			complete = { Kind = "ScoreBalls", Count = 1 },
 			boxPosition = UDim2.fromScale(0.75, 0.80)
 		},

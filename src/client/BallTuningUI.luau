@@ -367,6 +367,7 @@ local TUNE_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDi
 local tuningOpen = false
 local tuningTween: Tween? = nil
 local tuningRestScale = 1   -- resting Scale captured at open (AutoScale-driven, or 1)
+local tuningTriggerHost: GuiObject? = nil -- set in initTuningMenu; used by Controller.Close
 
 -- Fires () each time the tuning menu opens. TutorialService's OpenTuningMenu completion
 -- waits on it (with IsMenuOpen covering "already open when the step started").
@@ -422,11 +423,20 @@ local function closeTuning(triggerHost: GuiObject)
 	BallTuningPreview.SetVisible(false)
 end
 
+-- Force the menu shut, mirroring LoadoutUI/PlaytimeUI.Close — lets the tutorial close this
+-- panel before highlighting a trigger it shares TriggerQuad with.
+function Controller.Close()
+	if tuningOpen and tuningTriggerHost then
+		closeTuning(tuningTriggerHost)
+	end
+end
+
 local function initTuningMenu()
 	local leftBar = Controller.root.Parent
 	local triggerHost = (leftBar:WaitForChild("TriggerQuad") :: Instance):FindFirstChild("TuneTriggerHost", true) :: GuiObject
 	local closeBtn = Controller.root:WaitForChild("UIListIgnore"):WaitForChild("CloseButton") :: GuiButton
 
+	tuningTriggerHost = triggerHost
 	Controller.root.Visible = false   -- closed by default
 	triggerHost.Visible = true
 	UIButton.bind(triggerHost, { onClick = function() openTuning(triggerHost) end, hoverScale = 1.08 })

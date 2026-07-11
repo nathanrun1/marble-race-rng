@@ -39,6 +39,8 @@ local BalanceUIController = require(PlayerScripts:WaitForChild("BalanceUIControl
 local BoardAppearanceView = require(PlayerScripts:WaitForChild("BoardAppearanceView"))
 local PegHeatView = require(PlayerScripts:WaitForChild("PegHeatView"))
 local DailyRewardUI = require(PlayerScripts:WaitForChild("DailyRewardUI"))
+local RetentionTimersUI = require(PlayerScripts:WaitForChild("RetentionTimersUI"))
+local StarterQuestUI = require(PlayerScripts:WaitForChild("StarterQuestUI"))
 local Config = require(RS.Shared:WaitForChild("Config"))
 
 print("Bootstrapping services...")
@@ -77,6 +79,8 @@ BalanceUIController.Init()
 BoardAppearanceView.Init()
 PegHeatView.Init()
 DailyRewardUI.Init()
+RetentionTimersUI.Init()
+StarterQuestUI.Init()
 
 -- Start shuffle-play background music on join (each track once per cycle, then reshuffle).
 SoundService.SetBackgroundPlaylist(Config.BackgroundPlaylist)

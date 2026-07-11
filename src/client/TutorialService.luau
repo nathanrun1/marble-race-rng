@@ -37,6 +37,8 @@ local CoinPickups = require(PlayerScripts:WaitForChild("CoinPickups"));
 local BallTuningUI = require(PlayerScripts:WaitForChild("BallTuningUI"));
 local LoadoutUI = require(PlayerScripts:WaitForChild("LoadoutUI"));
 local CrateRollUI = require(PlayerScripts:WaitForChild("CrateRollUI"));
+local PlaytimeUI = require(PlayerScripts:WaitForChild("PlaytimeUI"));
+local QuestUI = require(PlayerScripts:WaitForChild("QuestUI"));
 local BallSkins = require(RS.Shared.BallSkins)
 
 -- Matches UpgradeShop.luau's own (bare, not-in-Config.Attributes) TRACK_ATTR local constant —
@@ -710,11 +712,24 @@ local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } 
 -- Lifecycle
 --------------------------------------------------------------------------------
 
+-- LeftBar.TriggerQuad is shared by several panels (Playtime/Tuning/Quest/Loadout), each of
+-- which hides the WHOLE quad while open (see PlaytimeUI/BallTuningUI/QuestUI openMenu). A step
+-- that highlights a TriggerQuad element can get stuck if a different panel is already covering
+-- it, so force them all shut before laying out this step's highlight.
+local function closeTriggerQuadPanels()
+	PlaytimeUI.Close()
+	BallTuningUI.Close()
+	QuestUI.Close()
+	-- LoadoutUI is deliberately excluded: the Loadout tutorial's own OpenLoadout completion
+	-- would otherwise be self-defeating if a later step ever needed to re-highlight it while open.
+end
+
 local function applyStep(index: number)
 	currentIndex = index
 	stepToken += 1
 	local myToken = stepToken
 	local step = activeSteps[index]
+	closeTriggerQuadPanels()
 
 	-- Move the box (if the step repositions it) and cross-fade the text.
 	TweenService:Create(box, TRANSITION, { Position = step.boxPosition or DEFAULT_BOX_POS }):Play()
