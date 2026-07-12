@@ -19,8 +19,8 @@ local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 local SoundSrv = game:GetService("SoundService")
 
-local Config = require(RS.Shared.Config)
-
+local SoundsConfig = require(RS.Shared.Config.Sounds)
+local FxNet = require(RS.Shared.Remote.FxNet)
 local SoundService = {}
 
 -- One sound to play. soundId is a "rbxassetid://..." (or asset URL) string.
@@ -155,13 +155,13 @@ function SoundService.Play(spec: SoundSpec): Sound
 	return sound
 end
 
--- The game's default UI click (Config.Sounds.DefaultClick, a full Play spec — sound id,
+-- The game's default UI click (SoundsConfig.DefaultClick, a full Play spec — sound id,
 -- pitch, etc. all tune there). Every UIButton without its own clickSound plays this,
 -- and hand-wired buttons call it directly. No-op while the spec's soundId is the ""
 -- silent placeholder.
 function SoundService.PlayClick()
-	local spec = Config.Sounds.DefaultClick :: SoundSpec?
-	if spec and type(spec.soundId) == "string" and spec.soundId ~= "" then
+	local spec: SoundSpec = SoundsConfig.DefaultClick :: any -- sealed config literal -> open spec (old-solver width limits)
+	if spec.soundId ~= "" then
 		SoundService.Play(spec)
 	end
 end
@@ -317,24 +317,17 @@ end
 -- Server-only: fan a Play(spec) out to clients over a RemoteEvent
 ----------------------------------------------------------------------------------
 if RunService:IsServer() then
-	local soundRemote: RemoteEvent? = nil
-
 	-- Play `spec` on a single client.
 	function SoundService.PlayForClient(player: Player, spec: SoundSpec)
-		(soundRemote :: RemoteEvent):FireClient(player, spec)
+		FxNet.PlaySound:FireClient(player, spec)
 	end
 
 	-- Play `spec` on every client.
 	function SoundService.PlayForAll(spec: SoundSpec)
-		(soundRemote :: RemoteEvent):FireAllClients(spec)
+		FxNet.PlaySound:FireAllClients(spec)
 	end
 
-	function SoundService.Init()
-		local re = Instance.new("RemoteEvent")
-		re.Name = "PlaySound"
-		re.Parent = RS.Remote
-		soundRemote = re
-	end
+	function SoundService.Init() end -- remotes live in FxNet; nothing to set up
 end
 
 ----------------------------------------------------------------------------------
@@ -342,18 +335,17 @@ end
 ----------------------------------------------------------------------------------
 if RunService:IsClient() then
 	function SoundService.Init()
-		local remote = RS.Remote:WaitForChild("PlaySound") :: RemoteEvent
-		remote.OnClientEvent:Connect(function(spec: SoundSpec)
+		FxNet.PlaySound.OnClientEvent:Connect(function(spec: SoundSpec)
 			SoundService.Play(spec)
 		end)
 
-		-- Warm the cache + seed the pool for every Config.Sounds entry so the first
+		-- Warm the cache + seed the pool for every SoundsConfig entry so the first
 		-- play of each is latency-free. PreloadAsync yields, so do it off-thread.
-		-- Only string ids: Config.Sounds also carries spec TABLES (DefaultClick),
+		-- Only string ids: SoundsConfig also carries spec TABLES (DefaultClick),
 		-- and "" placeholders aren't loadable.
 		task.spawn(function()
 			local ids = {}
-			for _, soundId in Config.Sounds do
+			for _, soundId in SoundsConfig do
 				if type(soundId) == "string" and soundId ~= "" then
 					table.insert(ids, soundId)
 				end

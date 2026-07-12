@@ -7,6 +7,8 @@
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 
+local FxNet = require(RS.Shared.Remote.FxNet)
+
 local WarnUI = {}
 
 local DEFAULT_COLOR = Color3.fromRGB(255, 95, 70)
@@ -15,19 +17,12 @@ local DEFAULT_COLOR = Color3.fromRGB(255, 95, 70)
 -- Server-only: RemoteEvent creation + Warn
 ----------------------------------------------------------------------------------
 if RunService:IsServer() then
-	local warnRemote: RemoteEvent? = nil
-
 	-- lifetime: seconds the banner stays fully visible before fading (defaults to DISPLAY_TIME).
 	function WarnUI.Warn(player: Player, text: string, color: Color3?, lifetime: number?)
-		(warnRemote :: RemoteEvent):FireClient(player, text, color, lifetime)
+		FxNet.WarnMessage:FireClient(player, text, color, lifetime)
 	end
 
-	function WarnUI.Init()
-		local re = Instance.new("RemoteEvent")
-		re.Name = "WarnMessage"
-		re.Parent = RS.Remote
-		warnRemote = re
-	end
+	function WarnUI.Init() end -- remotes live in FxNet; nothing to set up
 end
 
 ----------------------------------------------------------------------------------
@@ -36,15 +31,14 @@ end
 if RunService:IsClient() then
 	local TweenService = game:GetService("TweenService")
 	local Players = game:GetService("Players")
-	local AutoScale = require(RS.Shared.AutoScale)
-	local Config = require(RS.Shared.Config)
+	local AutoScale = require(RS.Shared.Utility.AutoScale)
 
 	local POP_IN     = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 	local FADE_OUT   = TweenInfo.new(0.4,  Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	local DISPLAY_TIME = 1.2  -- seconds each banner stays fully visible before fading
 	local MSG_GAP      = 0.05 -- pacing between queued banners appearing (ScoreUI-style)
 	local HOST_Y       = 0.62 -- where the NEWEST banner sits — a bit below centre
-	local MAX_STACK    = Config.WarnUI.MaxStack
+	local MAX_STACK    = 5 -- banners visible at once; older ones are pruned to keep this cap (like ScoreUI)
 
 	local bannerHost: Frame? = nil
 	local bannerCounter = 0
@@ -168,8 +162,7 @@ if RunService:IsClient() then
 		local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 		createUI(playerGui)
 
-		local remote = RS.Remote:WaitForChild("WarnMessage") :: RemoteEvent
-		remote.OnClientEvent:Connect(function(text: string, color: Color3?, lifetime: number?)
+		FxNet.WarnMessage.OnClientEvent:Connect(function(text: string, color: Color3?, lifetime: number?)
 			table.insert(messageQueue, { text = text, color = color, lifetime = lifetime })
 			processQueue()
 		end)

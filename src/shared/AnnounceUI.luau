@@ -7,25 +7,20 @@
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 
+local FxNet = require(RS.Shared.Remote.FxNet)
+
 local AnnounceUI = {}
 
 ----------------------------------------------------------------------------------
 -- Server-only: RemoteEvent creation + Announce
 ----------------------------------------------------------------------------------
 if RunService:IsServer() then
-	local annRemote: RemoteEvent? = nil
-
 	-- lifetime: seconds the banner stays fully visible before fading (defaults to DISPLAY_TIME).
 	function AnnounceUI.Announce(player: Player, text: string, color: Color3?, lifetime: number?)
-		(annRemote :: RemoteEvent):FireClient(player, text, color, lifetime)
+		FxNet.AnnounceMessage:FireClient(player, text, color, lifetime)
 	end
 
-	function AnnounceUI.Init()
-		local re = Instance.new("RemoteEvent")
-		re.Name = "AnnounceMessage"
-		re.Parent = RS.Remote
-		annRemote = re
-	end
+	function AnnounceUI.Init() end -- remotes live in FxNet; nothing to set up
 end
 
 ----------------------------------------------------------------------------------
@@ -34,7 +29,7 @@ end
 if RunService:IsClient() then
 	local TweenService = game:GetService("TweenService")
 	local Players = game:GetService("Players")
-	local AutoScale = require(RS.Shared.AutoScale)
+	local AutoScale = require(RS.Shared.Utility.AutoScale)
 
 	-- Pop in with a slight overshoot, hold, then fade + drift up on the way out.
 	local POP_IN     = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -136,8 +131,7 @@ if RunService:IsClient() then
 		local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 		createUI(playerGui)
 
-		local remote = RS.Remote:WaitForChild("AnnounceMessage") :: RemoteEvent
-		remote.OnClientEvent:Connect(function(text: string, color: Color3?, lifetime: number?)
+		FxNet.AnnounceMessage.OnClientEvent:Connect(function(text: string, color: Color3?, lifetime: number?)
 			table.insert(messageQueue, { text = text, color = color, lifetime = lifetime })
 			processQueue()
 		end)

@@ -13,8 +13,9 @@
 --   local stats = ProfileStats.GetMaxBet(ProfileService.GetUpgrades(player))
 
 local RS = game:GetService("ReplicatedStorage")
-local Config = require(RS.Shared.Config)
-local StringUtils = require(RS.Shared.StringUtils)
+local EconomyConfig = require(RS.Shared.Config.Economy)
+local UpgradesConfig = require(RS.Shared.Config.Upgrades)
+local StringUtils = require(RS.Shared.Utility.StringUtils)
 
 local ProfileStats = {}
 
@@ -33,9 +34,9 @@ end
 --   betSize(t >= 1) = Economy.StartMaxBet * PerTier^(t - 1)   (tier 1 = 40, the old tier 0)
 function ProfileStats.GetBetSizeAtTier(tier: number): number
 	if tier <= 0 then
-		return Config.Economy.StartBetSize
+		return EconomyConfig.StartBetSize
 	end
-	return Config.Economy.StartMaxBet * (Config.Upgrades.MaxBet.PerTier ^ (tier - 1))
+	return EconomyConfig.StartMaxBet * (UpgradesConfig.Tracks.MaxBet.PerTier ^ (tier - 1))
 end
 
 -- Effective max bet: the bet size at the tier the player actually OWNS (cap for
@@ -48,40 +49,40 @@ end
 
 -- V_JACK: value a single ball must carry to clear the jackpot gate (§1.3).
 function ProfileStats.GetVJack(upgrades: Upgrades): number
-	return Config.Economy.VJackFraction * ProfileStats.GetMaxBet(upgrades)
+	return EconomyConfig.VJackFraction * ProfileStats.GetMaxBet(upgrades)
 end
 
 -- Flat points paid per qualifying peg bounce (§1.4), output-scaling track.
 function ProfileStats.GetFlatPerBounce(upgrades: Upgrades): number
-	local track = Config.Upgrades.FlatRate
+	local track = UpgradesConfig.Tracks.FlatRate
 	return track.Base * (track.PerTier ^ tier(upgrades, "FlatRate"))
 end
 
 -- Additive bonus fraction on final slot payout (§2), output-scaling track.
 function ProfileStats.GetBaseAdditive(upgrades: Upgrades): number
 	local t = tier(upgrades, "BaseAdditive")
-	return Config.Upgrades.BaseAdditive.Base + Config.Upgrades.BaseAdditive.C1 * t + Config.Upgrades.BaseAdditive.C2 * t^2 + Config.Upgrades.BaseAdditive.C3 * t^3
+	return UpgradesConfig.Tracks.BaseAdditive.Base + UpgradesConfig.Tracks.BaseAdditive.C1 * t + UpgradesConfig.Tracks.BaseAdditive.C2 * t^2 + UpgradesConfig.Tracks.BaseAdditive.C3 * t^3
 end
 
 -- Cap on ball count N unlocked at the current frequency tier (§3 axis A). The
 -- ceiling, not the chosen N (that is loadout.BallCount, ≤ this).
 -- function ProfileStats.GetBallCountCap(upgrades: Upgrades): number
--- 	local caps = Config.Upgrades.Frequency.Caps
+-- 	local caps = UpgradesConfig.Tracks.Frequency.Caps
 -- 	return caps[math.clamp(tier(upgrades, "Frequency") + 1, 1, #caps)]
 -- end
 
 -- Delay between ball launches. UNUSED by the current core loop (BallLaunchService now
--- launches a fixed-window batch — Config.Launcher.BatchDelay — of every equipped ball
+-- launches a fixed-window batch — LauncherConfig.BatchDelay — of every equipped ball
 -- rather than metering single launches off Frequency); kept rather than deleted per the
 -- ongoing core-loop prototyping.
 function ProfileStats.GetLaunchDelay(upgrades: Upgrades): number
-	return math.max(1/60, Config.Upgrades.Frequency.Base * (Config.Upgrades.Frequency.PerTier ^ tier(upgrades, "Frequency")))
+	return math.max(1/60, UpgradesConfig.Tracks.Frequency.Base * (UpgradesConfig.Tracks.Frequency.PerTier ^ tier(upgrades, "Frequency")))
 end
 
 -- Equip slots unlocked by the Frequency tier (CORE LOOP REWORK: Frequency now raises how
 -- many of your loadout balls launch each batch, instead of shrinking a launch cooldown).
 function ProfileStats.GetMaxSlots(upgrades: Upgrades): number
-	local track = Config.Upgrades.Frequency
+	local track = UpgradesConfig.Tracks.Frequency
 	return track.BaseSlots + track.SlotsPerTier * tier(upgrades, "Frequency")
 end
 
@@ -90,7 +91,7 @@ end
 -- (LuckGrowth^t - 1) because effective tail-rarity odds scale ~(luck+1): each tier bought
 -- multiplies your rare-hit rate by LuckGrowth, instead of adding a vanishing sliver.
 function ProfileStats.GetLuck(upgrades: Upgrades): number
-	local track = Config.Upgrades.Luck
+	local track = UpgradesConfig.Tracks.Luck
 	return track.LuckGrowth ^ tier(upgrades, "Luck") - 1
 end
 
@@ -107,12 +108,12 @@ end
 -- Sensitivity to accumulated peg heat (§1.5, simplified). 0 at tier 0 (heat does
 -- nothing); banked payout is scaled by (1 + accumulatedHeat * this).
 function ProfileStats.GetPegHeatFactor(upgrades: Upgrades): number
-	return Config.Upgrades.PegHeat.PerTier * tier(upgrades, "PegHeat")
+	return UpgradesConfig.Tracks.PegHeat.PerTier * tier(upgrades, "PegHeat")
 end
 
 -- [Min,Max] a continuous axis (Weight, Size, ...) may move within, from its tier.
 function ProfileStats.GetAxisRange(upgrades: Upgrades, axis: string): (number, number)
-	local def = Config.Axes[axis]
+	local def = UpgradesConfig.Axes[axis]
 	assert(def, "GetAxisRange: unknown axis '" .. tostring(axis) .. "'")
 	local range = def.Ranges[math.clamp(tier(upgrades, axis) + 1, 1, #def.Ranges)]
 	return range.Min, range.Max
@@ -120,7 +121,7 @@ end
 
 -- Trickle income this batch (§1.2), scaled to current ceiling.
 function ProfileStats.GetTrickle(upgrades: Upgrades): number
-	return Config.Economy.TrickleFraction * ProfileStats.GetMaxBet(upgrades)
+	return EconomyConfig.TrickleFraction * ProfileStats.GetMaxBet(upgrades)
 end
 
 -- Human-readable value string for a given upgrade track at a given tier. Intended
@@ -156,7 +157,7 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 		return string.format("%.2f×", ProfileStats.GetPegHeatFactor(u))
 	else
 		-- Axis tracks (Weight, Size, ...)
-		if Config.Axes[track] then
+		if UpgradesConfig.Axes[track] then
 			local min, max = ProfileStats.GetAxisRange(u, track)
 			if ANGLE_AXES[track] then
 				return string.format("%d° – %d°", math.round(math.deg(min)), math.round(math.deg(max)))

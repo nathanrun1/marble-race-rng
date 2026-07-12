@@ -1,5 +1,5 @@
 --!strict
--- Shared $/marble weighting math (see Config.BallAverage for the tuning rationale): an
+-- Shared $/marble weighting math (see BallAverageConfig for the tuning rationale): an
 -- exponentially-weighted average over only the most recent Window balls banked, with a ball
 -- older than that dropped entirely rather than merely decayed small. Both StatsService
 -- (authoritative, server-side) and MoneyPerBallUI (mirroring the same recentBalls list the
@@ -7,8 +7,7 @@
 
 local RS = game:GetService("ReplicatedStorage")
 
-local Config = require(RS.Shared.Config)
-
+local BallAverageConfig = require(RS.Shared.Config.BallAverage)
 local BallAverage = {}
 
 -- recentBalls is oldest-first, newest LAST (see Push below).
@@ -23,16 +22,16 @@ function BallAverage.Compute(recentBalls: { number }): number
 	for i = n, 1, -1 do
 		weightedSum += recentBalls[i] * weight
 		totalWeight += weight
-		weight *= Config.BallAverage.Decay
+		weight *= BallAverageConfig.Decay
 	end
 	return weightedSum / totalWeight
 end
 
 -- Append a newly-banked value, evicting the oldest entry once the window is full — so a ball
--- past Config.BallAverage.Window bankings ago carries exactly zero weight, not just a small one.
+-- past BallAverageConfig.Window bankings ago carries exactly zero weight, not just a small one.
 function BallAverage.Push(recentBalls: { number }, value: number)
 	table.insert(recentBalls, value)
-	if #recentBalls > Config.BallAverage.Window then
+	if #recentBalls > BallAverageConfig.Window then
 		table.remove(recentBalls, 1)
 	end
 end

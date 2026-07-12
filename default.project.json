@@ -5,7 +5,9 @@
 
     "StarterPlayer": {
       "StarterPlayerScripts": {
-        "$path": "src/client"
+        "Main": {
+          "$path": "src/client"
+        }
       }
     },
 

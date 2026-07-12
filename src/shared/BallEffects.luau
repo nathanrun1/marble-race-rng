@@ -13,15 +13,19 @@ local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 
-local Config = require(RS.Shared.Config)
-local StringUtils = require(RS.Shared.StringUtils)
+local AttributesConfig = require(RS.Shared.Config.Attributes)
+local ScoringConfig = require(RS.Shared.Config.Scoring)
+local SoundsConfig = require(RS.Shared.Config.Sounds)
+local TagsConfig = require(RS.Shared.Config.Tags)
+local StringUtils = require(RS.Shared.Utility.StringUtils)
 local SoundService = require(RS.Shared.SoundService)
-local AutoScale = require(RS.Shared.AutoScale)
+local AutoScale = require(RS.Shared.Utility.AutoScale)
 local BallSkins = require(RS.Shared.BallSkins)
+local FxNet = require(RS.Shared.Remote.FxNet)
+local ScoringNet = require(RS.Shared.Remote.ScoringNet)
 
 local BallEffects = {}
 
-local GetEffectiveBallValueRF = RS.Remote.GetEffectiveBallValue 
 
 ----------------------------------------------------------------------------------
 -- Constants
@@ -54,12 +58,12 @@ local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
 local HEAT_COLOR_POS     = Color3.fromRGB(255, 140, 0)
 local HEAT_COLOR_NEG     = Color3.fromRGB(80, 160, 255)
--- Combo POPUP gating (the combo still PAYS from Config.Scoring.MinCombo; these only
+-- Combo POPUP gating (the combo still PAYS from ScoringConfig.MinCombo; these only
 -- govern the on-screen celebration so low combos stay silent and the FX tracks real
 -- payout). Show the popup a few over the pay gate; "hot combo" (bigger popup + Combo2)
 -- a bit higher still.
-local MIN_COMBO_TO_SHOW  = Config.Scoring.MinCombo + 3
-local HIGH_COMBO         = Config.Scoring.MinCombo + 8
+local MIN_COMBO_TO_SHOW  = ScoringConfig.MinCombo + 3
+local HIGH_COMBO         = ScoringConfig.MinCombo + 8
 -- Exponential follow rate for the value-UI anchor (higher = snappier / less lag,
 -- lower = smoother). Frame-rate independent via 1 - exp(-rate * dt).
 local VALUE_FOLLOW_RATE  = 30
@@ -72,7 +76,7 @@ local MULT_COLORS = {
 	[2.0]  = Color3.fromRGB(98, 37, 209),
 	[3.0]  = Color3.fromRGB(255, 0, 191),
 	[6.0]  = Color3.fromRGB(255, 255, 255),
-	[Config.Scoring.JackpotMultiplier] = Color3.fromRGB(255, 255, 255)
+	[ScoringConfig.JackpotMultiplier] = Color3.fromRGB(255, 255, 255)
 }
 
 -- Per-ball base color resolved at spawn (server-populated; client reads default).
@@ -316,7 +320,7 @@ function BallEffects.ApplyHeat(ball: BasePart, heat: number, heatFactor: number)
 	if heatFactor == nil then heatFactor = 1 end
 	heat = (heat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
 	local base = baseColors[ball] or DEFAULT_BASE_COLOR
-	local weight = (ball:GetAttribute(Config.Attributes.Weight) :: number?) or 0.5
+	local weight = (ball:GetAttribute(AttributesConfig.Weight) :: number?) or 0.5
 	applyColor(ball, base, heat)
 	applyHeatMatAndSound(ball, weight, heat)
 	applyHeatParticles(ball, heat)
@@ -356,7 +360,7 @@ function BallEffects.ApplyAppearance(ball: BasePart, appearance: Appearance)
 		applyHighlight(ball, hl, skin.data.color)
 	end
 	if appearance.weight ~= nil then
-		ball:SetAttribute(Config.Attributes.Weight, appearance.weight)
+		ball:SetAttribute(AttributesConfig.Weight, appearance.weight)
 	end
 	if appearance.sizeScale and appearance.baseSize then
 		ball.Size = appearance.baseSize * appearance.sizeScale
@@ -421,11 +425,11 @@ function BallEffects.PlayHeatSound(ball: BasePart, prevHeat: number, curHeat: nu
 	prevHeat = (prevHeat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
 	curHeat = (curHeat / heatFactor) * HEAT_EFFECT_SCALE_BY_FACTOR
 	if prevHeat < HEAT_NEON_AT and curHeat >= HEAT_NEON_AT then
-		SoundService.Play({ soundId = Config.Sounds.Hot, position = ball.CFrame.Position, volume = 1.5 })
+		SoundService.Play({ soundId = SoundsConfig.Hot, position = ball.CFrame.Position, volume = 1.5 })
 	elseif prevHeat < HEAT_FIRE_AT and curHeat >= HEAT_FIRE_AT then
-		SoundService.Play({ soundId = Config.Sounds.Fire, position = ball.CFrame.Position, volume = 1.5 })
+		SoundService.Play({ soundId = SoundsConfig.Fire, position = ball.CFrame.Position, volume = 1.5 })
 	elseif prevHeat >= HEAT_NEON_AT and curHeat < HEAT_NEON_AT then
-		SoundService.Play({ soundId = Config.Sounds.Cold, position = ball.CFrame.Position, volume = 1.5})
+		SoundService.Play({ soundId = SoundsConfig.Cold, position = ball.CFrame.Position, volume = 1.5})
 	end
 end
 
@@ -480,7 +484,7 @@ function BallEffects.AttachValueUI(ball: BasePart?, opts: ValueUIOptions?): Base
 	-- Tinted to the ball's skin rarity (via the SkinId attribute stamped at spawn): same
 	-- hue/saturation as the rarity colour, dimmed to V=0.5 so it reads as a label against
 	-- the white stroke rather than glowing like the rarity highlight itself.
-	local skinId = ball:GetAttribute(Config.Attributes.SkinId)
+	local skinId = ball:GetAttribute(AttributesConfig.SkinId)
 	local skin = if type(skinId) == "string" then BallSkins.Get(skinId) else nil
 	local h, s, _ = BallSkins.RarityColor(if skin then skin.rarity else 1):ToHSV()
 	label.TextColor3 = Color3.fromHSV(h, s, 0.25)
@@ -579,7 +583,7 @@ local COMBO_STROKE_COLOR_HOT = Color3.fromRGB(252, 205, 35)
 
 function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: number, flatRate: number)
 	if RunService:IsClient() then
-		SoundService.Play({ soundId = Config.Sounds.Bounce, position = cframe.Position, jitter = 0.06, volume = 1.5 })
+		SoundService.Play({ soundId = SoundsConfig.Bounce, position = cframe.Position, jitter = 0.06, volume = 1.5 })
 	end
 
 	if combo < MIN_COMBO_TO_SHOW then return end
@@ -589,11 +593,11 @@ function BallEffects.ShowComboPopup(ball: BasePart?, cframe: CFrame, combo: numb
 	local comboSoundId: string
 	if combo < HIGH_COMBO then
 		color = COMBO_COLOR_NORMAL
-		comboSoundId = Config.Sounds.Combo
+		comboSoundId = SoundsConfig.Combo
 	else
 		color = COMBO_COLOR_HOT
 		strokeColor = COMBO_STROKE_COLOR_HOT
-		comboSoundId = Config.Sounds.Combo2
+		comboSoundId = SoundsConfig.Combo2
 	end
 	BallEffects.ShowValuePopup(ball, cframe, "COMBO x"..combo.."! (+"..StringUtils.FormatMoney(combo * flatRate)..")", color, strokeColor)
 	if RunService:IsClient() then
@@ -625,7 +629,7 @@ local HIGH_POINT_MAX_LIFETIME   = 1.5
 function BallEffects.ShowPointFX(ball: BasePart?, cframe: CFrame, multiplier: number)
 	if not (cframe and multiplier) then return end
 
-	local isJackpot = multiplier == Config.Scoring.JackpotMultiplier
+	local isJackpot = multiplier == ScoringConfig.JackpotMultiplier
 
 	-- Honest juice: only a real GAIN is celebrated. A non-positive slot (<= 1x — you broke
 	-- even or lost) plays no sound and throws no particles; the "x0.3" value popup (posted
@@ -637,12 +641,12 @@ function BallEffects.ShowPointFX(ball: BasePart?, cframe: CFrame, multiplier: nu
 	-- Lower positive (1x .. SpecialFXMin): a quiet collect, no particle burst. Higher
 	-- positive: the second collect sound + burst. Jackpot: the jackpot sound + burst.
 	if isJackpot then
-		SoundService.Play({ soundId = Config.Sounds.Jackpot, position = cframe.Position, volume = 2.5})
-	elseif multiplier < Config.Scoring.SpecialFXMinMultiplier then
-		SoundService.Play({ soundId = Config.Sounds.Collect1, position = cframe.Position, volume = 1.5 })
+		SoundService.Play({ soundId = SoundsConfig.Jackpot, position = cframe.Position, volume = 2.5})
+	elseif multiplier < ScoringConfig.SpecialFXMinMultiplier then
+		SoundService.Play({ soundId = SoundsConfig.Collect1, position = cframe.Position, volume = 1.5 })
 		return
 	else
-		SoundService.Play({ soundId = Config.Sounds.Collect2, position = cframe.Position, volume = 1.5 })
+		SoundService.Play({ soundId = SoundsConfig.Collect2, position = cframe.Position, volume = 1.5 })
 	end
 
 	local anchor = Instance.new("Part")
@@ -707,41 +711,28 @@ end
 -- Server-only: lifecycle + client dispatch
 ----------------------------------------------------------------------------------
 if RunService:IsServer() then
-	local Players = game:GetService("Players")
-	local SSS = game:GetService("ServerScriptService")
-	local ProfileService = require(SSS.Scripts.Modules.ProfileService)
-	local BallService = require(SSS.Scripts.Modules.BallService)
-
-	local effectRemote: RemoteEvent? = nil
-
 	-- Fires a named effect function on the given player's client for a specific
 	-- ball. The client Init listener calls BallEffects[effect](ball, ...).
 	function BallEffects.DoClientEffect(player: Player, effect: string, ball: BasePart, ...: any)
-		(effectRemote :: RemoteEvent):FireClient(player, effect, ball, ...)
+		FxNet.BallEffect:FireClient(player, effect, ball, ...)
 	end
 
-	local function onBallSpawn(ball: BasePart)
-		local ownerId = ball:GetAttribute(Config.Attributes.OwnerUserId) :: number?
-		local player = if ownerId then Players:GetPlayerByUserId(ownerId) else nil
-		baseColors[ball] = if player then DEFAULT_BASE_COLOR else DEFAULT_BASE_COLOR
+	-- Explicit spawn-time paint: called by BallService.Spawn at the one place balls are
+	-- created (no signal/tag trigger, no handler-order dependence). Defaults first; the
+	-- ball's skin is applied on top by the same caller.
+	function BallEffects.ApplySpawnDefaults(ball: BasePart)
+		baseColors[ball] = DEFAULT_BASE_COLOR
 		-- Default everyone sees; the owning client overrides to opaque (see client block).
 		ball.Transparency = UNOWNED_TRANSPARENCY
 		BallEffects.ApplyHeat(ball, 0)
 	end
 
-	local function onBallDespawn(ball: BasePart)
+	-- Explicit despawn cleanup — called by BallService.Despawn.
+	function BallEffects.ClearSpawnState(ball: BasePart)
 		baseColors[ball] = nil
 	end
 
-	function BallEffects.Init()
-		local re = Instance.new("RemoteEvent")
-		re.Name = "BallEffect"
-		re.Parent = RS.Remote
-		effectRemote = re
-
-		BallService.BallSpawned:Connect(onBallSpawn)
-		BallService.BallDespawned:Connect(onBallDespawn)
-	end
+	function BallEffects.Init() end -- spawn paint is explicit (BallService.Spawn); nothing to wire
 end
 
 ----------------------------------------------------------------------------------
@@ -757,7 +748,7 @@ local TouchInputService = game:GetService("TouchInputService")
 	local localUserId = Players.LocalPlayer.UserId
 
 	local function isOwnBall(ball: BasePart): boolean
-		return ball:GetAttribute(Config.Attributes.OwnerUserId) == localUserId
+		return ball:GetAttribute(AttributesConfig.OwnerUserId) == localUserId
 	end
 
 	-- Ball-hide toggle (the "ball visible" button). When on, every OTHER player's ball
@@ -795,7 +786,7 @@ local TouchInputService = game:GetService("TouchInputService")
 	end
 
 	-- Public (client-only): register a NON-"Ball"-tagged ball for the per-frame orbit/shape
-	-- positioning loop below. Everything tagged Config.Tags.Ball gets this automatically via
+	-- positioning loop below. Everything tagged TagsConfig.Ball gets this automatically via
 	-- onBallTagged; client-local cosmetic balls that deliberately shed the tag (BallPlotService's
 	-- plot balls) need to opt in here or their skin's shape/orbit parts never move with them.
 	BallEffects.TrackOrbits = trackOrbits
@@ -810,7 +801,7 @@ local TouchInputService = game:GetService("TouchInputService")
 			-- Our own ball: make it fully opaque for us (local-only; others keep 0.5).
 			ball.Transparency = OWNED_TRANSPARENCY
 			BallEffects.AttachValueUI(ball)
-			local effectiveValue = GetEffectiveBallValueRF:InvokeServer(ball)
+			local effectiveValue = ScoringNet.GetEffectiveBallValue:InvokeServer(ball)
 			if effectiveValue then
 				BallEffects.SetValueUI(ball, effectiveValue)
 			end
@@ -824,7 +815,7 @@ local TouchInputService = game:GetService("TouchInputService")
 	function BallEffects.SetBallsHidden(hidden: boolean)
 		ballsHidden = hidden
 		if hidden then
-			for _, ball in CollectionService:GetTagged(Config.Tags.Ball) do
+			for _, ball in CollectionService:GetTagged(TagsConfig.Ball) do
 				if ball:IsA("BasePart") and not isOwnBall(ball) then
 					hideBall(ball)
 				end
@@ -837,25 +828,24 @@ local TouchInputService = game:GetService("TouchInputService")
 	end
 
 	function BallEffects.Init()
-		local remote = RS.Remote:WaitForChild("BallEffect") :: RemoteEvent
-		remote.OnClientEvent:Connect(function(effect: string, ball: BasePart?, ...: any)
+		FxNet.BallEffect.OnClientEvent:Connect(function(effect: string, ball: BasePart?, ...: any)
 			local fn = (BallEffects :: any)[effect]
 			if fn then fn(ball, ...) end
 		end)
 
 		-- Attach to our own balls already present, and any that appear later (and
 		-- destroy them instead while the hide toggle is on).
-		for _, ball in CollectionService:GetTagged(Config.Tags.Ball) do
+		for _, ball in CollectionService:GetTagged(TagsConfig.Ball) do
 			if ball:IsA("BasePart") then
 				onBallTagged(ball)
 			end
 		end
-		CollectionService:GetInstanceAddedSignal(Config.Tags.Ball):Connect(function(inst)
+		CollectionService:GetInstanceAddedSignal(TagsConfig.Ball):Connect(function(inst)
 			if inst:IsA("BasePart") then
 				onBallTagged(inst)
 			end
 		end)
-		CollectionService:GetInstanceRemovedSignal(Config.Tags.Ball):Connect(function(inst)
+		CollectionService:GetInstanceRemovedSignal(TagsConfig.Ball):Connect(function(inst)
 			orbitBalls[inst :: BasePart] = nil
 		end)
 

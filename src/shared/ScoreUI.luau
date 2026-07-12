@@ -6,24 +6,19 @@
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 
+local FxNet = require(RS.Shared.Remote.FxNet)
+
 local ScoreUI = {}
 
 ----------------------------------------------------------------------------------
 -- Server-only: RemoteEvent creation + PostMessage
 ----------------------------------------------------------------------------------
 if RunService:IsServer() then
-	local msgRemote: RemoteEvent? = nil
-
 	function ScoreUI.PostMessage(player: Player, text: string, color: Color3?)
-		(msgRemote :: RemoteEvent):FireClient(player, text, color)
+		FxNet.ScoreMessage:FireClient(player, text, color)
 	end
 
-	function ScoreUI.Init()
-		local re = Instance.new("RemoteEvent")
-		re.Name = "ScoreMessage"
-		re.Parent = RS.Remote
-		msgRemote = re
-	end
+	function ScoreUI.Init() end -- remotes live in FxNet; nothing to set up
 end
 
 ----------------------------------------------------------------------------------
@@ -32,7 +27,7 @@ end
 if RunService:IsClient() then
 	local TweenService = game:GetService("TweenService")
 	local Players = game:GetService("Players")
-	local AutoScale = require(RS.Shared.AutoScale)
+	local AutoScale = require(RS.Shared.Utility.AutoScale)
 
 	local FADE_IN    = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	local FADE_OUT   = TweenInfo.new(0.4,  Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -136,8 +131,7 @@ if RunService:IsClient() then
 		local playerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 		createUI(playerGui)
 
-		local remote = RS.Remote:WaitForChild("ScoreMessage") :: RemoteEvent
-		remote.OnClientEvent:Connect(function(text: string, color: Color3?)
+		FxNet.ScoreMessage.OnClientEvent:Connect(function(text: string, color: Color3?)
 			table.insert(messageQueue, { text = text, color = color, t = os.clock() })
 			processQueue()
 		end)

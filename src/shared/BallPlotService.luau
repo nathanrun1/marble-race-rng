@@ -2,7 +2,7 @@
 -- Plot balls: when a dropped marble banks at a destroy target, a claimable "ghost" copy of it
 -- (same appearance, same final value) spawns at the player's plot for them to walk over and
 -- collect. PLACEHOLDER: everyone's plot balls spawn at the single part tagged
--- Config.Tags.TestPlotSpawn for now (no real per-player plots yet).
+-- TagsConfig.TestPlotSpawn for now (no real per-player plots yet).
 --
 -- Split (one file, two entry points — call the one matching context):
 --   BallPlotService.InitServer() — hooks ScoreHandler.BallBanked, tracks each player's currently
@@ -24,10 +24,16 @@ local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local PhysicsService = game:GetService("PhysicsService")
 
-local Config = require(RS.Shared.Config)
+local AttributesConfig = require(RS.Shared.Config.Attributes)
+local BallConfig = require(RS.Shared.Config.Ball)
+local BallPlotConfig = require(RS.Shared.Config.BallPlot)
+local SoundsConfig = require(RS.Shared.Config.Sounds)
+local TagsConfig = require(RS.Shared.Config.Tags)
 local BallSkins = require(RS.Shared.BallSkins)
 local BallEffects = require(RS.Shared.BallEffects)
 local SoundService = require(RS.Shared.SoundService)
+local FxNet = require(RS.Shared.Remote.FxNet)
+local PlotNet = require(RS.Shared.Remote.PlotNet)
 
 local BallPlotService = {}
 
@@ -40,25 +46,13 @@ local PLOT_VALUE_FRACTION = 1 / 3 -- a plot ball is only worth a third of what i
 local PLOT_BALL_GROUP = "PlotBall"
 local PLAYER_GROUP = "Player" -- matches CollisionService.luau's PLAYER_GROUP string
 
-local function getRemote(name: string, class: string): Instance
-	local remoteFolder = RS:WaitForChild("Remote")
-	local existing = remoteFolder:FindFirstChild(name)
-	if existing then
-		return existing
-	end
-	local r = Instance.new(class)
-	r.Name = name
-	r.Parent = remoteFolder
-	return r
-end
-
 --------------------------------------------------------------------------------
 -- Server
 --------------------------------------------------------------------------------
 function BallPlotService.InitServer()
 	local SSS = game:GetService("ServerScriptService")
-	local ScoreHandler = require(SSS.Scripts.Modules.ScoreHandler)
-	local CurrencyService = require(SSS.Scripts.Modules.CurrencyService)
+	local ScoreHandler = require(SSS.Scripts.Services.ScoreHandler)
+	local CurrencyService = require(SSS.Scripts.Services.CurrencyService)
 
 	-- Collision group registration/rules are a server-only API (they're part of the shared
 	-- physics rules, which replicate to every client automatically — same reason
@@ -71,8 +65,8 @@ function BallPlotService.InitServer()
 	PhysicsService:CollisionGroupSetCollidable(PLOT_BALL_GROUP, PLOT_BALL_GROUP, false)
 	PhysicsService:CollisionGroupSetCollidable(PLOT_BALL_GROUP, PLAYER_GROUP, false)
 
-	local spawnRE = getRemote("SpawnPlotBall", "RemoteEvent") :: RemoteEvent
-	local claimRE = getRemote("ClaimPlotBall", "RemoteEvent") :: RemoteEvent
+	local spawnRE = PlotNet.SpawnPlotBall
+	local claimRE = PlotNet.ClaimPlotBall
 
 	-- Per-player claimable balls: id -> what it's actually worth/wearing. The server never
 	-- re-derives this from the client; a claim either matches an entry here or it's ignored.
@@ -83,7 +77,7 @@ function BallPlotService.InitServer()
 		if amount <= 0 then
 			return
 		end
-		local rawSkinId = ball:GetAttribute(Config.Attributes.SkinId)
+		local rawSkinId = ball:GetAttribute(AttributesConfig.SkinId)
 		local skinId: string = if type(rawSkinId) == "string" and BallSkins.Get(rawSkinId)
 			then rawSkinId
 			else BallSkins.GetDefaultId()
@@ -127,8 +121,8 @@ function BallPlotService.InitServer()
 			return
 		end
 		CurrencyService.AddPoints(player, total, "Plot ball claimed")
-		local flyRE = RS.Remote:FindFirstChild("PlayCurrencyFly")
-		if flyRE and flyRE:IsA("RemoteEvent") then
+		local flyRE = FxNet.PlayCurrencyFly
+		if flyRE then
 			-- A small fixed count: plot claims happen constantly while walking the plot, so the
 			-- default 7-11 icon celebration is too loud a beat for them.
 			flyRE:FireClient(player, "Cash", 3)
@@ -148,8 +142,8 @@ end
 function BallPlotService.InitClient()
 	local TweenService = game:GetService("TweenService")
 
-	local spawnRE = RS.Remote:WaitForChild("SpawnPlotBall") :: RemoteEvent
-	local claimRE = RS.Remote:WaitForChild("ClaimPlotBall") :: RemoteEvent
+	local spawnRE = PlotNet.SpawnPlotBall
+	local claimRE = PlotNet.ClaimPlotBall
 
 	-- Every id (its own spawn id, or any id later merged into it) that a given physical ball
 	-- currently represents — claiming that ball claims all of them in one remote call.
@@ -163,7 +157,7 @@ function BallPlotService.InitClient()
 	local plotBalls: { [number]: BasePart } = {}
 
 	local function resolvePlotPart(): BasePart?
-		for _, inst in CollectionService:GetTagged(Config.Tags.TestPlotSpawn) do
+		for _, inst in CollectionService:GetTagged(TagsConfig.TestPlotSpawn) do
 			if inst:IsA("BasePart") then
 				return inst
 			end
@@ -279,7 +273,7 @@ function BallPlotService.InitClient()
 		playClaimBurst(ball.Position, ball.Color)
 		-- Collect SFX on the touch itself (same sound coin pickups use), not on the server's
 		-- credit round trip — the feedback has to land the instant the marble disappears.
-		SoundService.Play({ soundId = Config.Sounds.Collect3 })
+		SoundService.Play({ soundId = SoundsConfig.Collect3 })
 		ball:Destroy() -- optimistic: gone locally the instant it's touched
 		claimRE:FireServer(ids)
 	end
@@ -293,7 +287,7 @@ function BallPlotService.InitClient()
 		-- Already at the cap for this skin: merge into a random existing ball of it instead of
 		-- spawning a new physical ball.
 		local list = getSkinList(skinId)
-		if #list >= Config.BallPlot.MaxPerSkin then
+		if #list >= BallPlotConfig.MaxPerSkin then
 			local target = list[math.random(#list)]
 			table.insert(ballIds[target], id)
 			ballValue[target] += value
@@ -308,18 +302,18 @@ function BallPlotService.InitClient()
 			return
 		end
 
-		local ball = (Config.Templates.Ball :: BasePart):Clone()
+		local ball = (BallConfig.Prefab :: BasePart):Clone()
 		ball.Name = "PlotBall"
 		ball.Anchored = false
 		ball.CanCollide = true
 		ball.CanQuery = true
 		ball.CanTouch = true
 		ball.CollisionGroup = PLOT_BALL_GROUP
-		ball:RemoveTag(Config.Tags.Ball) -- never scored/hidden as a real live ball
+		ball:RemoveTag(TagsConfig.Ball) -- never scored/hidden as a real live ball
 		-- Stamped like real board balls get at spawn (CosmeticService.onBallSpawn), so anything
 		-- reading a ball's cosmetic identity generically — e.g. AttachValueUI's rarity-tinted
 		-- value text — works on plot balls too.
-		ball:SetAttribute(Config.Attributes.SkinId, skinId)
+		ball:SetAttribute(AttributesConfig.SkinId, skinId)
 		ball.CFrame = CFrame.new(plotPart.Position + Vector3.new(0, plotPart.Size.Y / 2 + ball.Size.Y, 0))
         ball.AssemblyLinearVelocity = Vector3.new(math.random(-SPAWN_VEL_RANGE, SPAWN_VEL_RANGE), 0, math.random(-SPAWN_VEL_RANGE, SPAWN_VEL_RANGE))
 		ball.Parent = workspace

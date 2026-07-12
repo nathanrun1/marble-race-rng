@@ -18,6 +18,8 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
 
+local DevNet = require(RS.Shared.Remote.DevNet)
+
 local PolicyGate = {}
 
 local cache: { [number]: boolean } = {}
@@ -68,20 +70,13 @@ function PolicyGate.SetOverride(player: Player, restricted: boolean?)
 	end
 end
 
--- Receive the server's /policy override mirror (remote created by DevService.Init;
--- absent in a production server without DevService, hence the soft timeout).
+-- Receive the server's /policy override mirror (DevNet; fired by DevService).
 if RunService:IsClient() then
-	task.spawn(function()
-		local remote = RS:WaitForChild("Remote")
-		local re = remote:WaitForChild("DevPolicyOverride", 120)
-		if re and re:IsA("RemoteEvent") then
-			re.OnClientEvent:Connect(function(restricted: any)
-				PolicyGate.SetOverride(
-					Players.LocalPlayer,
-					if type(restricted) == "boolean" then restricted else nil
-				)
-			end)
-		end
+	DevNet.DevPolicyOverride.OnClientEvent:Connect(function(restricted: any)
+		PolicyGate.SetOverride(
+			Players.LocalPlayer,
+			if type(restricted) == "boolean" then restricted else nil
+		)
 	end)
 end
 

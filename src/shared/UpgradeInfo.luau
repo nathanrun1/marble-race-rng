@@ -12,11 +12,10 @@
 
 local RS = game:GetService("ReplicatedStorage")
 
-local Config = require(RS.Shared.Config)
-
+local UpgradesConfig = require(RS.Shared.Config.Upgrades)
 local UpgradeInfo = {}
 
--- Loose indexer view of a Config.Upgrades / Config.Axes entry: only the fields relevant
+-- Loose indexer view of a UpgradesConfig.Tracks / UpgradesConfig.Axes entry: only the fields relevant
 -- to pricing, caps, and display (the precise structs stay available to ProfileStats).
 export type UpgradeDef = {
 	Cost: { Initial: number?, Base: number, Growth: number },
@@ -45,14 +44,14 @@ export type Info = {
 	-- or opened until its lock is purchased.
 }
 
--- Everything purchasable: the idle/scoring tracks (Config.Upgrades) AND the continuous
--- axes (Config.Axes), whose tier unlocks a wider range. Tiers for both already live
+-- Everything purchasable: the idle/scoring tracks (UpgradesConfig.Tracks) AND the continuous
+-- axes (UpgradesConfig.Axes), whose tier unlocks a wider range. Tiers for both already live
 -- together in the profile's upgrades table, so they sell the same way.
 local Defs: { [string]: UpgradeDef } = {}
-for name, def in (Config.Upgrades :: any) do
+for name, def in (UpgradesConfig.Tracks :: any) do
 	Defs[name] = def
 end
-for name, def in (Config.Axes :: any) do
+for name, def in (UpgradesConfig.Axes :: any) do
 	Defs[name] = def
 end
 

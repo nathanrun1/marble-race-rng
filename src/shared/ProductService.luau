@@ -10,7 +10,7 @@
 --           decides *when* to prompt (e.g. "can't afford this upgrade") — this module
 --           only carries out and fulfils the purchase.
 --
--- Product ids live in Config.Products (shared) so client and server agree on them.
+-- Product ids live in Config/Monetization (shared) so client and server agree on them.
 
 local RunService = game:GetService("RunService")
 local RS = game:GetService("ReplicatedStorage")
@@ -27,7 +27,7 @@ if RunService:IsServer() then
 	-- DataService owns all DataStore access (player data + receipt dedup) and the
 	-- Studio/persistence gating, so receipt persistence goes through it rather than
 	-- this module touching DataStoreService directly.
-	local DataService = require(SSS.Scripts.Modules.DataService)
+	local DataService = require(SSS.Scripts.Services.DataService)
 
 	-- Apply a product's reward to the buyer and return whether it was granted. Return
 	-- false to make Roblox retry later (the service only ever calls a handler for a
@@ -139,8 +139,9 @@ end
 ----------------------------------------------------------------------------------
 if RunService:IsClient() then
 	local Players = game:GetService("Players")
-	local Signal = require(RS.Shared.Signal)
-	local Config = require(RS.Shared.Config)
+	local Signal = require(RS.Shared.Utility.Signal)
+	local CratesConfig = require(RS.Shared.Config.Crates)
+	local MonetizationConfig = require(RS.Shared.Config.Monetization)
 	local PolicyGate = require(RS.Shared.PolicyGate)
 
 	local localPlayer = Players.LocalPlayer
@@ -152,13 +153,13 @@ if RunService:IsClient() then
 	-- never promptable for a paid-random-items-restricted player. Second line of defense
 	-- behind the UIs hiding these buttons (and the server refusing the receipts).
 	local policyGatedIds: { [number]: boolean } = {}
-	for _, pack in Config.DiamondPacks do
+	for _, pack in MonetizationConfig.DiamondPacks do
 		local id = tonumber(pack.Product)
 		if id and id ~= 0 then
 			policyGatedIds[id] = true
 		end
 	end
-	for _, box in Config.Crates.Boxes do
+	for _, box in CratesConfig.Boxes do
 		local id = tonumber(box.Product)
 		if id and id ~= 0 then
 			policyGatedIds[id] = true

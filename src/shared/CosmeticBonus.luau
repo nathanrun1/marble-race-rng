@@ -1,22 +1,22 @@
 --!strict
 -- Skin power math, shared by server (CosmeticService applies the loadout multiplier at
 -- banking, EquipBest fills slots) and client (LoadoutUI / CosmeticsShop show stars and
--- bonus percentages). Pure functions of Config.Cosmetics + BallSkins + a copies table —
+-- bonus percentages). Pure functions of CosmeticsConfig + BallSkins + a copies table —
 -- no player objects, no yielding.
 --
 --   copies[skinId] = total copies rolled/owned (>= 1 once owned). Duplicates star the
---   skin up (Config.Cosmetics.StarDupes); each skin in the loadout contributes
+--   skin up (CosmeticsConfig.StarDupes); each skin in the loadout contributes
 --   RarityBonus[rarity] × StarMults[star], and the total is one global money multiplier
 --   ×(1 + sum) applied at banking.
 
 local RS = game:GetService("ReplicatedStorage")
 
-local Config = require(RS.Shared.Config)
+local CosmeticsConfig = require(RS.Shared.Config.Cosmetics)
 local BallSkins = require(RS.Shared.BallSkins)
 
 local CosmeticBonus = {}
 
-local MAX_STAR = #Config.Cosmetics.StarDupes
+local MAX_STAR = #CosmeticsConfig.StarDupes
 
 -- Star level (1..MAX_STAR) for a total copy count (0 copies -> 0, i.e. not owned).
 function CosmeticBonus.StarOf(copies: number): number
@@ -26,7 +26,7 @@ function CosmeticBonus.StarOf(copies: number): number
 	local dupes = copies - 1
 	local star = 1
 	for k = MAX_STAR, 1, -1 do
-		if dupes >= Config.Cosmetics.StarDupes[k] then
+		if dupes >= CosmeticsConfig.StarDupes[k] then
 			star = k
 			break
 		end
@@ -41,7 +41,7 @@ function CosmeticBonus.DupesToNextStar(copies: number): number?
 		return nil
 	end
 	local dupes = math.max(copies - 1, 0)
-	return Config.Cosmetics.StarDupes[star + 1] - dupes
+	return CosmeticsConfig.StarDupes[star + 1] - dupes
 end
 
 -- Money bonus contributed by one skin at `copies` (0 if unknown skin or not owned).
@@ -51,14 +51,14 @@ function CosmeticBonus.SkinBonus(skinId: string, copies: number): number
 	if not skin or star == 0 then
 		return 0
 	end
-	return Config.Cosmetics.RarityBonus[skin.rarity] * Config.Cosmetics.StarMults[star]
+	return CosmeticsConfig.RarityBonus[skin.rarity] * CosmeticsConfig.StarMults[star]
 end
 
 -- Total bonus (the "+X%" sum) for a loadout: slot array of skin ids (holes allowed).
 function CosmeticBonus.LoadoutBonus(loadout: { [number]: string? }, copies: { [string]: number }): number
 	local sum = 0
 	local seen: { [string]: boolean } = {}
-	for slot = 1, Config.Cosmetics.LoadoutSlots do
+	for slot = 1, CosmeticsConfig.LoadoutSlots do
 		local id = loadout[slot]
 		if id and not seen[id] then -- a skin only counts once even if duped into two slots
 			seen[id] = true
@@ -90,7 +90,7 @@ function CosmeticBonus.BestLoadout(copies: { [string]: number }): { string }
 		return a.id < b.id
 	end)
 	local out: { string } = {}
-	for i = 1, math.min(#entries, Config.Cosmetics.LoadoutSlots) do
+	for i = 1, math.min(#entries, CosmeticsConfig.LoadoutSlots) do
 		out[i] = entries[i].id
 	end
 	return out
