@@ -38,11 +38,15 @@ export type SpawnOptions = {
 	initialValue: number?, -- initial ball value
 	weight: number?,       -- 0 (light) .. 1 (heavy); sets density/elasticity
 	size: number?,         -- scale factor applied to the prefab's base size
+	skinId: string?,       -- which equipped-loadout skin this ball is; nil = caller has no
+	                       -- opinion (CosmeticService falls back to the player's single
+	                       -- VISUAL equipped skin)
 }
 
 export type BallInfo = {
 	ownerUserId: number?,
-	initialValue: number?
+	initialValue: number?,
+	skinId: string?,
 }
 
 function BallService.Spawn(position: Vector3, options: SpawnOptions?): BasePart
@@ -84,7 +88,8 @@ function BallService.Spawn(position: Vector3, options: SpawnOptions?): BasePart
 
 	local ballInfo: BallInfo = {
 		ownerUserId = opts.ownerUserId,
-		initialValue = opts.initialValue
+		initialValue = opts.initialValue,
+		skinId = opts.skinId,
 	}
 	
 	BallService.BallSpawned:Fire(ball, ballInfo)

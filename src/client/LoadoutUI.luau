@@ -44,6 +44,8 @@ local PlayerGui = player:WaitForChild("PlayerGui") :: PlayerGui
 local Remote = RS:WaitForChild("Remote")
 local getInfoRF = Remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
 local changedRE = Remote:WaitForChild("CosmeticChanged") :: RemoteEvent
+local getLoadoutInfoRF = Remote:WaitForChild("GetLoadoutInfo") :: RemoteFunction
+local loadoutChangedRE = Remote:WaitForChild("LoadoutChanged") :: RemoteEvent
 local setSlotRE = Remote:WaitForChild("SetLoadoutSlot") :: RemoteEvent
 local equipBestRE = Remote:WaitForChild("EquipBestLoadout") :: RemoteEvent
 local equipRE = Remote:WaitForChild("EquipCosmetic") :: RemoteEvent
@@ -66,13 +68,17 @@ type Info = {
 	selected: string,
 	owned: { [string]: boolean },
 	copies: { [string]: number },
-	loadout: { [string]: string },
 	pity: { [string]: number },
-	loadoutBonus: number,
 	freeCrateIn: number,
 }
 
+type LoadoutInfo = {
+	loadout: { [string]: string },
+	loadoutBonus: number,
+}
+
 local info: Info? = nil
+local loadoutInfo: LoadoutInfo? = nil
 
 -- What's armed for the next skin click: a slot number, "visual" (appearance square), or nil.
 local selection: (number | "visual")? = nil
@@ -113,19 +119,19 @@ end
 -- Slot -> skin id array from the pushed keyed table.
 local function loadoutArray(): { [number]: string? }
 	local arr: { [number]: string? } = {}
-	if info then
+	if loadoutInfo then
 		for slot = 1, SLOTS do
-			arr[slot] = info.loadout[tostring(slot)]
+			arr[slot] = loadoutInfo.loadout[tostring(slot)]
 		end
 	end
 	return arr
 end
 
 local function isInLoadout(id: string): boolean
-	if not info then
+	if not loadoutInfo then
 		return false
 	end
-	for _, sid in info.loadout do
+	for _, sid in loadoutInfo.loadout do
 		if sid == id then
 			return true
 		end
@@ -264,7 +270,10 @@ local function refresh()
 		paintSwatchButton(visualButton, info.equipped)
 	end
 	if bonusLabel then
-		bonusLabel.Text = ("+%s%%"):format(StringUtils.FormatShort((info.loadoutBonus or 0) * 100))
+		-- CORE LOOP REWORK: ball value now comes from rarity, not this loadout %-bonus, so it's
+		-- no longer shown as a real quantity to the player (the underlying multiplier still
+		-- applies server-side at banking — see LoadoutService.GetMult — just not surfaced here).
+		bonusLabel.Text = ""
 	end
 
 	-- Rebuild the owned grid (prototype-simple; ~30 tiles max).
@@ -457,11 +466,24 @@ function LoadoutUI.Init()
 			refresh()
 		end
 	end)
+	loadoutChangedRE.OnClientEvent:Connect(function(newLoadoutInfo: LoadoutInfo)
+		if newLoadoutInfo then
+			loadoutInfo = newLoadoutInfo
+			refresh()
+		end
+	end)
 
 	task.spawn(function()
 		local got = getInfoRF:InvokeServer()
 		if got and not info then
 			info = got
+			refresh()
+		end
+	end)
+	task.spawn(function()
+		local got = getLoadoutInfoRF:InvokeServer()
+		if got and not loadoutInfo then
+			loadoutInfo = got
 			refresh()
 		end
 	end)

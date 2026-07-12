@@ -237,9 +237,10 @@ local function onLaunchClicked()
 	end
 	RequestLaunchRE:FireServer()
 
-	-- Client-authored countdown: the delay derives from the cached upgrades (kept fresh by
-	-- ProfileChanged) instead of blocking on a GetProfile round trip every single launch.
-	local delay = ProfileStats.GetLaunchDelay(latestUpgrades)
+	-- Client-authored countdown, mirroring the server's fixed batch window (CORE LOOP REWORK:
+	-- launches are now whole-loadout batches over Config.Launcher.BatchDelay — Frequency no
+	-- longer shrinks a per-launch delay, it raises equip-slot count).
+	local delay = Config.Launcher.BatchDelay
 	local start = os.clock()
 	while os.clock() - start < delay do
 		launchWordLabel.Text = string.format("%.1f", delay - (os.clock() - start))

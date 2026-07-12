@@ -20,7 +20,7 @@ local ProfileService = require(SSS.Scripts.Modules.ProfileService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local GoldenPegService = require(SSS.Scripts.Modules.GoldenPegService)
-local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
+local LoadoutService = require(SSS.Scripts.Modules.LoadoutService)
 
 local ScoreHandler = {}
 
@@ -61,8 +61,14 @@ export type BallState = {
 	lastBounceBurst: number?, -- os.clock() of the last cosmetic bounce-burst (debounce)
 }
 
--- (ball, info) — banked at a DestroyTarget, just before despawn.
+-- (ball, info) — banked at a DestroyTarget, just before despawn. NOTE: info.banked at fire
+-- time is the PRE-multiplier base (Prestige/CashMult/CashBoost/loadout haven't been applied
+-- yet) — see BallBanked below if you need the truly final credited amount.
 ScoreHandler.BallScored = Signal.new()
+-- (player, ball, finalAmount) — fired once ALL multipliers are applied, right before the ball
+-- is despawned (ball is still valid here). finalAmount is exactly what CurrencyService.AddPoints
+-- is about to credit.
+ScoreHandler.BallBanked = Signal.new()
 -- (ball, effectiveValue) — after each non-destroying hit.
 ScoreHandler.EffectiveValueChanged = Signal.new()
 
@@ -198,12 +204,14 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	end
 
 	-- Skin loadout bonus (crate progression): ×(1 + sum of slotted skins' bonuses).
-	local skinMult = CosmeticService.GetLoadoutMult(player)
+	local skinMult = LoadoutService.GetMult(player)
 	if skinMult > 1 then
 		local skinBonus = info.banked * (skinMult - 1)
 		info.banked += skinBonus
 		ScoreUI.PostMessage(player, string.format("Marble Bonus! +%s (×%s)", StringUtils.FormatMoney(skinBonus), StringUtils.FormatShort(skinMult)), Color3.fromRGB(255, 120, 220))
 	end
+
+	ScoreHandler.BallBanked:Fire(player, ball, info.banked)
 
 	PrestigeService.AddLifetimeBanked(player, info.banked)
 	BallService.Despawn(ball)

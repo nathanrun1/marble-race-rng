@@ -253,9 +253,9 @@ function CurrencyFlyUI.Init()
 		local remote = RS:WaitForChild("Remote")
 		local re = remote:WaitForChild("PlayCurrencyFly", 60)
 		if re and re:IsA("RemoteEvent") then
-			re.OnClientEvent:Connect(function(kind: any)
+			re.OnClientEvent:Connect(function(kind: any, count: any)
 				if type(kind) == "string" and EMOJI[kind] then
-					CurrencyFlyUI.Play(kind :: Kind)
+					CurrencyFlyUI.Play(kind :: Kind, if type(count) == "number" then count else nil)
 				end
 			end)
 		end

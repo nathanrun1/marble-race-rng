@@ -14,6 +14,8 @@
 --   /diamonds <n>          alias of /cc (Diamonds IS the cosmetics currency)
 --   /skin <name>           grant + equip a marble by display name or id (case-insensitive,
 --                          partial matches OK; repeat for extra copies/stars)
+--   /loadout <slot> <name|clear>  put an owned skin in a bonus-loadout/launch-batch slot (or
+--                          clear it); slot count is LoadoutService.GetMaxSlots (Frequency tier)
 --   /policy [on|off|clear] force ArePaidRandomItemsRestricted for you (no arg = toggle;
 --                          clear = back to the real policy) — server + your client both flip
 --   /avgball <n>           force lifetime avg $/marble (drives luck rank, leaderstats,
@@ -49,6 +51,7 @@ local BallLaunchService = require(SSS.Scripts.Modules.BallLaunchService)
 local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
+local LoadoutService = require(SSS.Scripts.Modules.LoadoutService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local MetricsService = require(SSS.Scripts.Modules.MetricsService)
 local BallSkins = require(RS.Shared.BallSkins)
@@ -164,9 +167,24 @@ local function showState(player: Player)
 		print(string.format("  %s: tier %d", track, up[track] or 0))
 	end
 	local lo = ProfileService.GetLoadout(player)
-	print(string.format("-- Loadout -- bet=%.1f", lo.Bet))
+	print(string.format("-- Loadout -- bet=%.1f (bet sizing disabled — ball value now comes from rarity)", lo.Bet))
 	for axis, v in lo.axes do
 		print(string.format("  axis %s = %.2f", axis, v))
+	end
+	local maxSlots = LoadoutService.GetMaxSlots(player)
+	local loadout = LoadoutService.GetInfo(player).loadout
+	local filled = 0
+	for slot = 1, maxSlots do
+		if loadout[tostring(slot)] then
+			filled += 1
+		end
+	end
+	print(string.format("-- Ball loadout (batch slots) -- luck=%.2f, %d/%d slots filled", ProfileStats.GetLuck(up), filled, maxSlots))
+	for slot = 1, maxSlots do
+		local skinId = loadout[tostring(slot)]
+		if skinId then
+			print(string.format("  slot %d = %s", slot, skinId))
+		end
 	end
 	print(string.format("-- Balance -- %.0f", CurrencyService.GetPoints(player)))
 end
@@ -972,7 +990,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, cc, diamonds, skin, policy, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
+		return "commands: tier, maxall, bet, axis, money, cc, diamonds, skin, loadout, policy, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -1046,6 +1064,42 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		local skin = BallSkins.Get(matchId)
 		return string.format("granted + equipped %s (%s, %s)", matchName, matchId,
 			BallSkins.RarityName(if skin then skin.rarity else 1))
+	elseif cmd == "loadout" then
+		local slot = tonumber(a2)
+		if not slot then
+			return "usage: /loadout <slot> <name|clear>  (slots 1.." .. LoadoutService.GetMaxSlots(player) .. ")"
+		end
+		if a3 and a3:lower() == "clear" then
+			if not LoadoutService.SetSlot(player, slot, nil) then
+				return "clear failed (invalid slot, or it's your only equipped ball)"
+			end
+			return string.format("loadout slot %d -> cleared", slot)
+		end
+		local query = a3 and a3:lower()
+		if not query or query == "" then
+			return "usage: /loadout <slot> <name|clear>  (slots 1.." .. LoadoutService.GetMaxSlots(player) .. ")"
+		end
+		local matchId: string? = nil
+		for id, s in BallSkins.GetAll() do
+			local idL, nameL = id:lower(), s.name:lower()
+			if idL == query or nameL == query then
+				matchId = id
+				break
+			end
+			if not matchId and (string.find(nameL, query, 1, true) or string.find(idL, query, 1, true)) then
+				matchId = id
+			end
+		end
+		if not matchId then
+			return "no marble matches '" .. a3 .. "'"
+		end
+		if not CosmeticService.IsOwned(player, matchId) then
+			CosmeticService.GrantSkin(player, matchId)
+		end
+		if not LoadoutService.SetSlot(player, slot, matchId) then
+			return string.format("set failed (slot out of range 1..%d?)", LoadoutService.GetMaxSlots(player))
+		end
+		return string.format("loadout slot %d -> %s", slot, matchId)
 	elseif cmd == "policy" then
 		local mode = a2 and a2:lower()
 		local newVal: boolean?

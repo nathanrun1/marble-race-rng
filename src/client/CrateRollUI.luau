@@ -53,6 +53,27 @@ for id, skin in BallSkins.GetAll() do
 	table.insert(list, id)
 end
 
+-- The player's live Luck stat, kept fresh from ProfileChanged. Server rolls are luck-biased
+-- (CosmeticService rollRarity's inverse-CDF sampling), so the fillers apply the same skew —
+-- the strip honestly previews the player's OWN odds, not a luckless player's.
+local luck = 0
+task.spawn(function()
+	local ProfileStats = require(RS.Shared.ProfileStats)
+	local remote = RS:WaitForChild("Remote")
+	local function adopt(profile: any)
+		if type(profile) == "table" and type(profile.upgrades) == "table" then
+			luck = ProfileStats.GetLuck(profile.upgrades)
+		end
+	end
+	;(remote:WaitForChild("ProfileChanged") :: RemoteEvent).OnClientEvent:Connect(adopt)
+	local ok, profile = pcall(function()
+		return (remote:WaitForChild("GetProfile") :: RemoteFunction):InvokeServer()
+	end)
+	if ok then
+		adopt(profile)
+	end
+end)
+
 local function rollFillerSkin(weights: { number }): string
 	local total = 0
 	for rarity, w in weights do
@@ -60,7 +81,8 @@ local function rollFillerSkin(weights: { number }): string
 			total += w
 		end
 	end
-	local pick = math.random() * total
+	-- Same luck skew as the server roll: pick = total * u^(1/(l+1)); luck 0 = plain uniform.
+	local pick = total * (math.random() ^ (1 / (luck + 1)))
 	for rarity, w in weights do
 		if skinsByRarity[rarity] then
 			pick -= w

@@ -31,6 +31,7 @@ local PolicyGate = require(RS.Shared.PolicyGate)
 local CrateRollUI = require(script.Parent:WaitForChild("CrateRollUI"))
 local DiamondsShopUI = require(script.Parent:WaitForChild("DiamondsShopUI"))
 local CurrencyFlyUI = require(script.Parent:WaitForChild("CurrencyFlyUI"))
+local FreeRollBallSample = require(script.Parent:WaitForChild("FreeRollBallSample"))
 
 local CosmeticsShop = {}
 
@@ -60,10 +61,8 @@ type Info = {
 	selected: string,
 	owned: { [string]: boolean },
 	copies: { [string]: number },
-	loadout: { [string]: string },
 	pity: { [string]: number },
 	boxes: { [string]: number },
-	loadoutBonus: number,
 	freeCrateIn: number,
 }
 
@@ -100,10 +99,8 @@ local info: Info = {
 	selected = BallSkins.GetDefaultId(),
 	owned = {},
 	copies = {},
-	loadout = {},
 	pity = {},
 	boxes = {},
-	loadoutBonus = 0,
 	freeCrateIn = math.huge,
 }
 
@@ -373,18 +370,23 @@ local function boxWeights(boxId: string): { number }?
 	return nil
 end
 
--- Shared roll flow: invoke, play the reel reveal on success (yields until it lands),
--- then banner the result. `rolling` stays held for the whole reel so a second click
--- can't start a spin over the running one.
-local function runRoll(weights: { number }?, invoke: () -> RollResult)
+-- Shared roll flow: invoke, play a reveal on success (yields until it lands), then banner
+-- the result. `rolling` stays held for the whole reveal so a second click can't start a
+-- spin over the running one. `reveal` defaults to the CrateRollUI reel; the free box passes
+-- its own (the MarbleRoll ball sample rolling in-world instead of a screen overlay).
+local function runRoll(weights: { number }?, invoke: () -> RollResult, reveal: ((RollResult) -> ())?)
 	if rolling then
 		return
 	end
 	rolling = true
 	local ok, result = pcall(invoke)
 	if ok and type(result) == "table" then
-		if result.ok and weights then
-			CrateRollUI.Play(weights, result)
+		if result.ok then
+			if reveal then
+				reveal(result)
+			elseif weights then
+				CrateRollUI.Play(weights, result)
+			end
 		end
 		presentRoll(result)
 	end
@@ -419,7 +421,7 @@ end
 function CosmeticsShop.claimFree()
 	runRoll(Config.Crates.Free.Weights, function()
 		return claimFreeRF:InvokeServer() :: RollResult
-	end)
+	end, FreeRollBallSample.PlayRoll)
 end
 
 --------------------------------------------------------------------------------
@@ -492,14 +494,23 @@ local PAD_TOUCH_DEBOUNCE = 1.5
 local padLastTouch: { [Instance]: number } = {}
 
 local function setupFreeCratePad(inst: Instance)
-	if not inst:IsA("BasePart") or padLastTouch[inst] ~= nil then
+	-- The tagged instance is the "MarbleRoll" part (the ball sample floats above it); the
+	-- actual touchable floor part is its child "Pad" — same shape as UpgradeLock's tagged
+	-- Model + child "Pad". Check for that child FIRST (MarbleRoll is itself a BasePart, so it
+	-- would otherwise short-circuit and never look for Pad); fall back to the tagged instance
+	-- itself only if it has no "Pad" child (legacy shape).
+	local padChild = inst:FindFirstChild("Pad")
+	local pad = if padChild and padChild:IsA("BasePart") then padChild
+		elseif inst:IsA("BasePart") then inst
+		else nil
+	if not pad or padLastTouch[pad] ~= nil then
 		return
 	end
-	padLastTouch[inst] = 0 -- doubles as the "already wired" marker
+	padLastTouch[pad] = 0 -- doubles as the "already wired" marker
 
-	-- The billboard SHELL is Studio-authored (FreeCratePad.Billboard.BillboardGui,
-	-- positioned in-world by hand); this only fills in the title + live timer labels.
-	local holder = inst:FindFirstChild("Billboard")
+	-- The billboard SHELL is Studio-authored (Billboard.BillboardGui, positioned in-world by
+	-- hand, on either the pad or the tagged instance); this only fills in the title + timer.
+	local holder = pad:FindFirstChild("Billboard") or inst:FindFirstChild("Billboard")
 	local bb = holder and holder:FindFirstChild("BillboardGui")
 	if bb and bb:IsA("BillboardGui") then
 		if not bb:FindFirstChild("FreeCrateTitle") then
@@ -534,16 +545,16 @@ local function setupFreeCratePad(inst: Instance)
 	end
 
 	local player = Players.LocalPlayer
-	inst.Touched:Connect(function(obj: Instance)
+	pad.Touched:Connect(function(obj: Instance)
 		local char = player.Character
 		if not char or not obj:IsDescendantOf(char) then
 			return
 		end
 		local now = os.clock()
-		if now - (padLastTouch[inst] or 0) < PAD_TOUCH_DEBOUNCE then
+		if now - (padLastTouch[pad] or 0) < PAD_TOUCH_DEBOUNCE then
 			return
 		end
-		padLastTouch[inst] = now
+		padLastTouch[pad] = now
 		if freeReadyAt - os.clock() <= 0 then
 			CosmeticsShop.claimFree()
 		end

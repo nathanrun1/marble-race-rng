@@ -129,6 +129,9 @@ local function setupGroups()
 	PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PASS_GROUP, false)
 	PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, BLOCKED_GROUP, false)
 	PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PEG_GROUP, false)
+	-- Every player character is in PLAYER_GROUP; turning off its self-collidability means
+	-- players phase through each other too, not just through marbles/pegs.
+	PhysicsService:CollisionGroupSetCollidable(PLAYER_GROUP, PLAYER_GROUP, false)
 	-- Gate physics: over-threshold balls (PASS_GROUP) phase through; under-threshold
 	-- balls (BLOCKED_GROUP) are stopped. Both groups still collide with the world
 	-- (Default) — pegs and walls — since cross-group collidability defaults to true.

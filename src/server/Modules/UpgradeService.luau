@@ -39,9 +39,15 @@ local UpgradeDefs = UpgradeInfo.Defs
 export type Info = UpgradeInfo.Info
 export type PurchaseResult = {
 	ok: boolean,
-	reason: string?,               -- "invalid_track" | "locked" | "maxed" | "cannot_afford"
+	reason: string?,               -- "invalid_track" | "locked" | "maxed" | "cannot_afford" | "disabled"
 	upgrades: { [string]: Info }?, -- fresh snapshot for the UI to re-render
 }
+
+-- CORE LOOP REWORK: bet sizing is no longer a real concept (ball value now comes from the
+-- rolled skin's rarity — see Config.Cosmetics.RarityValue / BallLaunchService), so MaxBet
+-- purchases are gated off here rather than deleted (still prototyping this rework; the
+-- track/UI/pricing code stays intact and inert).
+local DISABLED_TRACKS: { [string]: boolean } = { MaxBet = true }
 
 local maxTierOf = UpgradeInfo.MaxTierOf
 local priceAt = UpgradeInfo.PriceAt
@@ -78,6 +84,9 @@ end
 function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	if UpgradeDefs[track] == nil then
 		return { ok = false, reason = "invalid_track" }
+	end
+	if DISABLED_TRACKS[track] then
+		return { ok = false, reason = "disabled", upgrades = UpgradeService.GetAllInfo(player) }
 	end
 	-- A track behind an unbought world lock can't be purchased at all (the client
 	-- greys its kiosk out; this is the authority behind that).
@@ -148,6 +157,9 @@ end
 function UpgradeService.RequestBoost(player: Player, track: string): number?
 	local def = UpgradeDefs[track]
 	if not def then
+		return nil
+	end
+	if DISABLED_TRACKS[track] then
 		return nil
 	end
 	if not BOOST_PRODUCT_ID then

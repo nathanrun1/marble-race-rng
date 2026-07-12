@@ -4,6 +4,11 @@
 -- BallEffects.ApplyAppearance paints them. CC is earned by rebirthing (PrestigeService grants it)
 -- and spent here. Passive data service: DataService owns the lifecycle (ApplyData/SerializeData/
 -- Clear), this just holds state, mutates it, and pushes changes to the owning client.
+--
+-- NOTE: the bonus-slot LOADOUT system (which owned skins sit in the N bonus slots, and the
+-- money multiplier that pays) lives in the separate LoadoutService — it's a distinct concept
+-- from `equipped` here (the single VISUAL skin your marbles wear). LoadoutService depends on
+-- this module only for CosmeticService.IsOwned/GetCopies.
 
 local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
@@ -15,22 +20,20 @@ local BallEffects = require(RS.Shared.BallEffects)
 local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local Signal = require(RS.Shared.Signal)
 local BallService = require(SSS.Scripts.Modules.BallService)
+local ProfileService = require(SSS.Scripts.Modules.ProfileService)
+local ProfileStats = require(RS.Shared.ProfileStats)
 -- NOTE: ProductService is required lazily in Init — it requires DataService, which
 -- requires this module, so a top-level require here is a cycle.
 
 local CosmeticService = {}
 
 local DEFAULT_SKIN = BallSkins.GetDefaultId()
-local LOADOUT_SLOTS = Config.Cosmetics.LoadoutSlots
 
 export type CosmeticData = {
 	cc: number,                   -- Cosmetic Coin balance
 	owned: { [string]: boolean }, -- owned skin ids (the default skin is always owned)
 	equipped: string,             -- VISUAL skin id (what the marbles wear; independent of loadout)
 	copies: { [string]: number }, -- total copies per owned skin (dupes star it up — CosmeticBonus)
-	-- Bonus loadout: slot -> skin id, keyed by STRING slot number ("1".."LoadoutSlots")
-	-- so DataStore round trips never mangle a sparse array.
-	loadout: { [string]: string },
 	pity: { [string]: number },   -- per-crate rolls since the last MinRarity+ hit
 	boxes: { [string]: number },  -- unopened boxes held per crate id (bought to hoard)
 }
@@ -41,10 +44,8 @@ export type CosmeticInfo = {
 	selected: string,             -- skin highlighted in the shop (sample ball + buy-button target)
 	owned: { [string]: boolean },
 	copies: { [string]: number },
-	loadout: { [string]: string },
 	pity: { [string]: number },
 	boxes: { [string]: number },  -- unopened boxes held per crate id
-	loadoutBonus: number,         -- current total bonus (the +X% the loadout pays)
 	freeCrateIn: number,          -- seconds until the free box is claimable (0 = ready)
 }
 
@@ -78,7 +79,6 @@ local function defaults(): CosmeticData
 		owned = { [DEFAULT_SKIN] = true },
 		equipped = DEFAULT_SKIN,
 		copies = { [DEFAULT_SKIN] = 1 },
-		loadout = {},
 		pity = {},
 		boxes = {},
 	}
@@ -86,15 +86,6 @@ end
 
 local function get(userId: number): CosmeticData
 	return data[userId] or defaults()
-end
-
--- Loadout as a numeric slot array (holes allowed) for CosmeticBonus.
-local function loadoutArray(d: CosmeticData): { [number]: string? }
-	local arr: { [number]: string? } = {}
-	for slot = 1, LOADOUT_SLOTS do
-		arr[slot] = d.loadout[tostring(slot)]
-	end
-	return arr
 end
 
 local function buildInfo(player: Player): CosmeticInfo
@@ -105,10 +96,8 @@ local function buildInfo(player: Player): CosmeticInfo
 		selected = selected[player.UserId] or d.equipped,
 		owned = d.owned,
 		copies = d.copies,
-		loadout = d.loadout,
 		pity = d.pity,
 		boxes = d.boxes,
-		loadoutBonus = CosmeticBonus.LoadoutBonus(loadoutArray(d), d.copies),
 		freeCrateIn = math.max(0, math.ceil((freeDue[player.UserId] or (os.clock() + Config.Crates.Free.FirstDelay)) - os.clock())),
 	}
 end
@@ -241,7 +230,17 @@ end
 
 -- Roll a rarity from weights, optionally clamped to >= minRarity (pity). Rarities with
 -- no skins defined are skipped regardless of weight.
-local function rollRarity(weights: { number }, minRarity: number?): number
+--
+-- `luck` (l, default 0) biases the pick toward rarer rarities WITHOUT changing the displayed
+-- base odds (the weights themselves, and thus "1 in X", are untouched — only which number
+-- gets drawn shifts). Standard weighted sampling draws a uniform pick in [0,total] and walks
+-- rarities common->rare, subtracting each weight, until the pick goes <= 0 (whichever rarity's
+-- subtraction crosses zero wins — larger picks survive past the bulk common/uncommon weight
+-- and land on rarer buckets). Luck skews the pick via inverse-CDF sampling of
+-- F(x) = (x/total)^(l+1): draw u ~ Uniform(0,1), pick = total * u^(1/(l+1)). l=0 recovers
+-- the exact original uniform draw (u^1 = u); l>0 makes u^(1/(l+1)) >= u, pushing the pick
+-- toward `total` and thus toward rarer rarities.
+local function rollRarity(weights: { number }, minRarity: number?, luck: number?): number
 	local floor = minRarity or 1
 	local total = 0
 	for rarity = floor, #weights do
@@ -259,7 +258,9 @@ local function rollRarity(weights: { number }, minRarity: number?): number
 		end
 		return 1
 	end
-	local pick = math.random() * total
+	local l = luck or 0
+	local u = math.random()
+	local pick = total * (u ^ (1 / (l + 1)))
 	for rarity = floor, #weights do
 		if skinsByRarity[rarity] then
 			pick -= weights[rarity]
@@ -285,7 +286,8 @@ local function rollFrom(player: Player, d: CosmeticData, box: BoxDef): RollResul
 	local pity = box.Pity
 	local count = d.pity[box.Id] or 0
 	local forced = pity ~= nil and (count + 1) >= pity.Every
-	local rarity = rollRarity(box.Weights, if forced and pity then pity.MinRarity else nil)
+	local luck = ProfileStats.GetLuck(ProfileService.GetUpgrades(player))
+	local rarity = rollRarity(box.Weights, (if forced and pity then pity.MinRarity else nil), luck)
 	if pity then
 		d.pity[box.Id] = if rarity >= pity.MinRarity then 0 else count + 1
 	end
@@ -316,7 +318,11 @@ function CosmeticService.RollCrate(player: Player, boxId: string): RollResult
 	end
 	local held = d.boxes[box.Id] or 0
 	if held > 0 then
-		d.boxes[box.Id] = if held > 1 then held - 1 else nil
+		if held > 1 then
+			d.boxes[box.Id] = held - 1
+		else
+			d.boxes[box.Id] = nil
+		end
 	else
 		local cost = box.Cost or 0
 		if d.cc < cost then
@@ -397,42 +403,12 @@ function CosmeticService.ClaimFreeCrate(player: Player): RollResult
 end
 
 --------------------------------------------------------------------------------
--- Loadout (bonus slots) + visual equip
+-- Visual equip (the bonus-slot LOADOUT itself lives in LoadoutService)
 --------------------------------------------------------------------------------
--- Put an owned skin in a loadout slot (clears it from any other slot), or clear the
--- slot with skinId = nil.
-function CosmeticService.SetLoadoutSlot(player: Player, slot: number, skinId: string?): boolean
-	local d = data[player.UserId]
-	if not d or slot ~= math.floor(slot) or slot < 1 or slot > LOADOUT_SLOTS then
-		return false
-	end
-	if skinId ~= nil and d.owned[skinId] ~= true then
-		return false
-	end
-	if skinId then
-		for s, id in d.loadout do
-			if id == skinId then
-				d.loadout[s] = nil
-			end
-		end
-	end
-	d.loadout[tostring(slot)] = skinId
-	announce(player)
-	return true
-end
-
--- Fill the loadout with the highest-bonus owned skins (CosmeticBonus.BestLoadout).
-function CosmeticService.EquipBest(player: Player)
-	local d = data[player.UserId]
-	if not d then
-		return
-	end
-	local best = CosmeticBonus.BestLoadout(d.copies)
-	d.loadout = {}
-	for slot, id in best do
-		d.loadout[tostring(slot)] = id
-	end
-	announce(player)
+-- Every copy count a player has (dupes star it up — CosmeticBonus). LoadoutService reads this
+-- for EquipBest (CosmeticBonus.BestLoadout) and its money-multiplier calc (CosmeticBonus.LoadoutBonus).
+function CosmeticService.GetCopies(player: Player): { [string]: number }
+	return get(player.UserId).copies
 end
 
 -- Set the VISUAL skin (what marbles wear) — independent of the bonus loadout.
@@ -446,23 +422,20 @@ function CosmeticService.SetEquipped(player: Player, skinId: string): boolean
 	return true
 end
 
--- Global banked multiplier from the loadout: ×(1 + sum of slotted skins' bonuses).
--- Applied by ScoreHandler at banking, alongside the prestige/cash multipliers.
-function CosmeticService.GetLoadoutMult(player: Player): number
-	local d = data[player.UserId]
-	if not d then
-		return 1
-	end
-	return 1 + CosmeticBonus.LoadoutBonus(loadoutArray(d), d.copies)
-end
-
 --------------------------------------------------------------------------------
 -- Ball spawn paint
 --------------------------------------------------------------------------------
 local function onBallSpawn(ball: BasePart, ballInfo: BallService.BallInfo)
 	local ownerId = ballInfo.ownerUserId
 	local d = if ownerId then data[ownerId] else nil
-	CosmeticService.ApplySkin(ball, if d then d.equipped else DEFAULT_SKIN)
+	-- ballInfo.skinId is which LOADOUT slot's ball this actually is (CORE LOOP REWORK —
+	-- BallLaunchService's round-robin batch); falls back to the single VISUAL equipped skin
+	-- for any spawn path that doesn't specify one (dev/test launches, Robux ball-drop perk).
+	local skinId = ballInfo.skinId or (if d then d.equipped else DEFAULT_SKIN)
+	-- Stamped so anything reading the ball LATER (e.g. BallPlotService, at banking time) can
+	-- reconstruct this specific ball's appearance even if the player's loadout has since changed.
+	ball:SetAttribute(Config.Attributes.SkinId, skinId)
+	CosmeticService.ApplySkin(ball, skinId)
 end
 
 --------------------------------------------------------------------------------
@@ -488,14 +461,6 @@ function CosmeticService.ApplyData(player: Player, saved: CosmeticData?)
 			for id, n in saved.copies do
 				if type(n) == "number" and n >= 1 and BallSkins.Get(id) then
 					d.copies[id] = math.floor(n)
-				end
-			end
-		end
-		if type(saved.loadout) == "table" then
-			for slotStr, id in saved.loadout do
-				local slot = tonumber(slotStr)
-				if slot and slot >= 1 and slot <= LOADOUT_SLOTS and d.owned[id] == true then
-					d.loadout[tostring(slot)] = id
 				end
 			end
 		end
@@ -587,16 +552,9 @@ function CosmeticService.Init()
 		return CosmeticService.BuyCrate(player, boxId)
 	end
 
-	-- Loadout + visual equip (fire-and-forget: the CosmeticChanged push carries the
-	-- authoritative state either way).
-	;(getRemote("SetLoadoutSlot", "RemoteEvent") :: RemoteEvent).OnServerEvent:Connect(function(player: Player, slot: any, skinId: any)
-		if type(slot) == "number" and (skinId == nil or type(skinId) == "string") then
-			CosmeticService.SetLoadoutSlot(player, slot, skinId)
-		end
-	end)
-	;(getRemote("EquipBestLoadout", "RemoteEvent") :: RemoteEvent).OnServerEvent:Connect(function(player: Player)
-		CosmeticService.EquipBest(player)
-	end)
+	-- Visual equip (fire-and-forget: the CosmeticChanged push carries the authoritative state
+	-- either way). The bonus-slot LOADOUT remotes (SetLoadoutSlot/EquipBestLoadout) are owned
+	-- by LoadoutService now.
 	;(getRemote("EquipCosmetic", "RemoteEvent") :: RemoteEvent).OnServerEvent:Connect(function(player: Player, skinId: any)
 		if type(skinId) == "string" then
 			CosmeticService.SetEquipped(player, skinId)

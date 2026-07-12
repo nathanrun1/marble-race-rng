@@ -36,6 +36,7 @@ local PrestigeService = require(SSS.Scripts.Modules.PrestigeService)
 local StatsService = require(SSS.Scripts.Modules.StatsService)
 local PlaytimeBonusService = require(SSS.Scripts.Modules.PlaytimeBonusService)
 local CosmeticService = require(SSS.Scripts.Modules.CosmeticService)
+local LoadoutService = require(SSS.Scripts.Modules.LoadoutService)
 local QuestService = require(SSS.Scripts.Modules.QuestService)
 local StarterQuestService = require(SSS.Scripts.Modules.StarterQuestService)
 local DailyRewardService = require(SSS.Scripts.Modules.DailyRewardService)
@@ -140,6 +141,7 @@ export type PlayerBlob = {
 	stats: StatsService.Stats?,
 	playtime: PlaytimeBonusService.PlaytimeData?,
 	cosmetics: CosmeticService.CosmeticData?,
+	loadout: LoadoutService.LoadoutData?,
 	quests: QuestService.QuestData?,
 	starterQuest: StarterQuestService.ChainSave?,
 	dailyReward: DailyRewardService.DailyRewardData?,
@@ -191,6 +193,9 @@ local function applyBlob(player: Player, blob: PlayerBlob?)
 	StatsService.ApplyData(player, blob and blob.stats)
 	PlaytimeBonusService.ApplyData(player, blob and blob.playtime)
 	CosmeticService.ApplyData(player, blob and blob.cosmetics)
+	-- LoadoutService after CosmeticService: it validates slotted skins are owned via
+	-- CosmeticService.IsOwned, which needs CosmeticService's data already applied.
+	LoadoutService.ApplyData(player, blob and blob.loadout)
 	QuestService.ApplyData(player, blob and blob.quests)
 	StarterQuestService.ApplyData(player, blob and blob.starterQuest)
 	DailyRewardService.ApplyData(player, blob and blob.dailyReward)
@@ -204,6 +209,7 @@ local function serializeBlob(player: Player): PlayerBlob
 		stats = StatsService.SerializeData(player),
 		playtime = PlaytimeBonusService.SerializeData(player),
 		cosmetics = CosmeticService.SerializeData(player),
+		loadout = LoadoutService.SerializeData(player),
 		quests = QuestService.SerializeData(player),
 		starterQuest = StarterQuestService.SerializeData(player),
 		dailyReward = DailyRewardService.SerializeData(player),
@@ -508,6 +514,7 @@ local function onPlayerRemoving(player: Player)
 	StatsService.Clear(player)
 	PlaytimeBonusService.Clear(player)
 	CosmeticService.Clear(player)
+	LoadoutService.Clear(player)
 	QuestService.Clear(player)
 	StarterQuestService.Clear(player)
 	DailyRewardService.Clear(player)

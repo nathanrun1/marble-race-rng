@@ -1,16 +1,18 @@
 --!strict
--- Small always-visible HUD chips surfacing two countdowns that otherwise sit hidden inside
--- panels players have to open: time until the free marble box is claimable again, and time
--- until the next playtime-bonus rung unlocks. Both are classic "just a couple more minutes"
--- retention hooks, but only work as one if the player can actually see them ticking without
--- digging into a menu.
+-- Small always-visible HUD chip surfacing a countdown that otherwise sits hidden inside a
+-- panel players have to open: time until the next playtime-bonus rung unlocks. A classic
+-- "just a couple more minutes" retention hook, but only works as one if the player can
+-- actually see it ticking without digging into a menu.
 --
--- Data sources (both already pushed for other UIs, no new remotes):
---   Free box   — CosmeticInfo.freeCrateIn (seconds remaining, 0 = ready), via GetCosmeticInfo /
---                CosmeticChanged (see CosmeticsShop.luau's own countdown for the same field).
---   Playtime   — PlaytimeBonusService's Info.total / Info.nextTime (nextTime is the NEXT rung's
---                cumulative-seconds threshold, not a countdown — remaining = nextTime - total),
---                via GetPlaytimeInfo / PlaytimeChanged.
+-- (The free-box countdown used to live here too, but Config.Crates.Free.Interval is now just
+-- a ~2s anti-spam floor rather than a real wait — a chip counting that down would just flash
+-- "READY!" constantly, so it's not worth surfacing here anymore. CosmeticsShop's own claim
+-- button/pad still show it.)
+--
+-- Data source (already pushed for other UIs, no new remotes):
+--   Playtime — PlaytimeBonusService's Info.total / Info.nextTime (nextTime is the NEXT rung's
+--              cumulative-seconds threshold, not a countdown — remaining = nextTime - total),
+--              via GetPlaytimeInfo / PlaytimeChanged.
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -20,16 +22,12 @@ local AutoScale = require(RS.Shared:WaitForChild("AutoScale"))
 
 local RetentionTimersUI = {}
 
-local GOLD = Color3.fromRGB(255, 214, 92)
 local BLUE = Color3.fromRGB(120, 190, 255)
 
-local freeBoxLabel: TextLabel? = nil
 local playtimeLabel: TextLabel? = nil
 
--- freeReadyAt/nextBonusAt are local os.clock() deadlines re-derived from each server push,
--- the same shape CosmeticsShop.luau uses for its own free-box countdown — lets the chip tick
--- smoothly every frame between the (infrequent) server pushes.
-local freeReadyAt: number? = nil
+-- nextBonusAt is a local os.clock() deadline re-derived from each server push — lets the
+-- chip tick smoothly every frame between the (infrequent) server pushes.
 local nextBonusAt: number? = nil
 local playtimeExhausted = false -- all rungs claimed: hide the chip instead of showing "—"
 
@@ -38,13 +36,6 @@ local function formatSeconds(s: number): string
 	local m = s // 60
 	local sec = s % 60
 	return string.format("%d:%02d", m, sec)
-end
-
-local function onCosmeticInfo(info: any)
-	if type(info) ~= "table" or type(info.freeCrateIn) ~= "number" then
-		return
-	end
-	freeReadyAt = os.clock() + info.freeCrateIn
 end
 
 local function onPlaytimeInfo(info: any)
@@ -61,14 +52,6 @@ local function onPlaytimeInfo(info: any)
 end
 
 local function step()
-	if freeBoxLabel then
-		if freeReadyAt then
-			local remaining = freeReadyAt - os.clock()
-			freeBoxLabel.Text = if remaining > 0
-				then "🎁 Free Box: " .. formatSeconds(remaining)
-				else "🎁 Free Box: READY!"
-		end
-	end
 	if playtimeLabel then
 		if playtimeExhausted then
 			playtimeLabel.Visible = false
@@ -130,8 +113,7 @@ local function createUI(playerGui: PlayerGui)
 		return lbl
 	end
 
-	freeBoxLabel = makeRow("FreeBoxTimer", 1, GOLD, "🎁 Free Box: —")
-	playtimeLabel = makeRow("PlaytimeTimer", 2, BLUE, "⏱️ Next Bonus: —")
+	playtimeLabel = makeRow("PlaytimeTimer", 1, BLUE, "⏱️ Next Bonus: —")
 	playtimeLabel.Visible = false -- until the first PlaytimeChanged/GetPlaytimeInfo push lands
 
 	AutoScale.Apply(container)
@@ -143,18 +125,6 @@ function RetentionTimersUI.Init()
 	createUI(playerGui)
 
 	local remote = RS:WaitForChild("Remote")
-
-	local cosmeticChangedRE = remote:WaitForChild("CosmeticChanged") :: RemoteEvent
-	cosmeticChangedRE.OnClientEvent:Connect(onCosmeticInfo)
-	local getCosmeticInfoRF = remote:WaitForChild("GetCosmeticInfo") :: RemoteFunction
-	task.spawn(function()
-		local ok, info = pcall(function()
-			return getCosmeticInfoRF:InvokeServer()
-		end)
-		if ok then
-			onCosmeticInfo(info)
-		end
-	end)
 
 	local playtimeChangedRE = remote:WaitForChild("PlaytimeChanged") :: RemoteEvent
 	playtimeChangedRE.OnClientEvent:Connect(onPlaytimeInfo)

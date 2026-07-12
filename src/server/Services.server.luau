@@ -33,6 +33,8 @@ local StarterQuestService = require(SSS.Scripts.Modules.StarterQuestService)
 local GoldenPegService = require(SSS.Scripts.Modules.GoldenPegService)
 local DailyRewardService = require(SSS.Scripts.Modules.DailyRewardService)
 local MetricsService = require(SSS.Scripts.Modules.MetricsService)
+local BallPlotService = require(RS.Shared.BallPlotService)
+local LoadoutService = require(SSS.Scripts.Modules.LoadoutService)
 
 -- ProfileService before gameplay services that read upgrade/loadout state.
 CurrencyService.Init()
@@ -92,6 +94,9 @@ BallService.Init()
 -- runs FIRST), so connecting CosmeticService first makes its equipped-skin paint run LAST — winning
 -- over BallEffects' default base colour instead of being overwritten by it.
 CosmeticService.Init()
+-- LoadoutService after CosmeticService: it depends on CosmeticService.IsOwned/GetCopies
+-- (both need CosmeticService's remotes/state set up first).
+LoadoutService.Init()
 -- BallEffects self-connects to BallSpawned to paint each ball (heat/material + default base colour).
 BallEffects.Init()
 ScoreUI.Init()
@@ -113,6 +118,9 @@ GroupRewardService.Init()
 -- CoinService after Currency/WarnUI/Sound: owns per-player collectible-coin availability and
 -- claiming (grants through Currency, announces via WarnUI, plays a collect SFX).
 CoinService.Init()
+-- BallPlotService.InitServer after Currency: hooks ScoreHandler.BallBanked (fired from within
+-- ScoringService's collision loop) and validates plot-ball claims through Currency.
+BallPlotService.InitServer()
 -- MetricsService is standalone (own DataStore, PlayerAdded/Removing hooks only); order-
 -- independent, so it goes last. Records on live servers; /metrics prints the report.
 MetricsService.Init()

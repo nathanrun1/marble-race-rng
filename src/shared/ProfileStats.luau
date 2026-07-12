@@ -70,9 +70,28 @@ end
 -- 	return caps[math.clamp(tier(upgrades, "Frequency") + 1, 1, #caps)]
 -- end
 
--- Delay between ball launches
+-- Delay between ball launches. UNUSED by the current core loop (BallLaunchService now
+-- launches a fixed-window batch — Config.Launcher.BatchDelay — of every equipped ball
+-- rather than metering single launches off Frequency); kept rather than deleted per the
+-- ongoing core-loop prototyping.
 function ProfileStats.GetLaunchDelay(upgrades: Upgrades): number
 	return math.max(1/60, Config.Upgrades.Frequency.Base * (Config.Upgrades.Frequency.PerTier ^ tier(upgrades, "Frequency")))
+end
+
+-- Equip slots unlocked by the Frequency tier (CORE LOOP REWORK: Frequency now raises how
+-- many of your loadout balls launch each batch, instead of shrinking a launch cooldown).
+function ProfileStats.GetMaxSlots(upgrades: Upgrades): number
+	local track = Config.Upgrades.Frequency
+	return track.BaseSlots + track.SlotsPerTier * tier(upgrades, "Frequency")
+end
+
+-- Luck: biases crate/free-roll rarity sampling toward rarer results (CosmeticService's
+-- rollRarity) without changing the displayed base "1 in X" odds. Exponential in tier
+-- (LuckGrowth^t - 1) because effective tail-rarity odds scale ~(luck+1): each tier bought
+-- multiplies your rare-hit rate by LuckGrowth, instead of adding a vanishing sliver.
+function ProfileStats.GetLuck(upgrades: Upgrades): number
+	local track = Config.Upgrades.Luck
+	return track.LuckGrowth ^ tier(upgrades, "Luck") - 1
 end
 
 -- Launcher swivel angle (radians) for a given phase. The launcher sweeps its aim
@@ -129,7 +148,10 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 	elseif track == "BaseAdditive" then
 		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
 	elseif track == "Frequency" then
-		return string.format("%.1f/s", 1 / ProfileStats.GetLaunchDelay(u))
+		return string.format("%d balls/batch", ProfileStats.GetMaxSlots(u))
+	elseif track == "Luck" then
+		-- Shown as the effective rare-odds multiplier (P(thin tail) ≈ (luck+1) × base).
+		return "×" .. StringUtils.FormatShort(ProfileStats.GetLuck(u) + 1)
 	elseif track == "PegHeat" then
 		return string.format("%.2f×", ProfileStats.GetPegHeatFactor(u))
 	else

@@ -68,9 +68,11 @@ Config.Tags = {
 	BoardFloor = "BoardFloor",           -- The floor parts marbles roll on (darker default; see Config.BoardAppearance)
 	BoardSide = "BoardSide",             -- The barrier/side parts (lighter default; see Config.BoardAppearance)
 	QuestUI = "QuestUI",                 -- A SurfaceGui the daily-quest panel is also built into (client QuestUI)
-	FreeCratePad = "FreeCratePad",       -- A pad that claims the free Marble Box on touch (client CosmeticsShop builds its billboard/timer)
+	FreeCratePad = "MarbleRoll",         -- The free-roll part (e.g. "BallRoll"); child "Pad" claims the free Marble Box on touch (client CosmeticsShop builds its billboard/timer, FreeRollBallSample floats the roll sample above it)
 	DailyRewardPad = "DailyReward",      -- A pad that claims the daily reward on touch (client DailyRewardUI fills its authored Billboard.BillboardGui Title/Timer)
 	UpgradeLock = "UpgradeLock",         -- A world lock Model gating upgrade tracks: attribute "UpgradeLock" lists the tracks, "Price" is the cash unlock cost, child "Pad" is the unlock pad (server UpgradeLockService + client UpgradeLocks)
+	TestPlotSpawn = "TestPlotSpawn",     -- PLACEHOLDER: a part where every player's claimable plot balls spawn (client-only, one shared spot for now; see BallPlotService)
+	Slot = "Slot",                       -- A loadout-slot Model; attribute "SlotNum" is its slot index, child "Platform" is where the equipped marble's sample ball floats (client LoadoutDisplay)
 }
 
 Config.Attributes = {
@@ -86,6 +88,7 @@ Config.Attributes = {
 	Weight = "Weight",                 -- Weight slider 0 (light) .. 1 (heavy)
 	Size = "Size",                     -- Size slider
 	BatchId = "BatchId",               -- Batch this ball belongs to (per-player combo settlement)
+	SkinId = "SkinId",                 -- Cosmetic skin id this specific ball was spawned wearing (see CosmeticService.onBallSpawn); lets BallPlotService reconstruct its appearance after the ball itself is despawned
 
 	-- Obstacle Behaviour
 	ObstacleRotate = "ORotate",                     -- Obstacle rotates by given angles (Vector3)
@@ -368,13 +371,20 @@ Config.Upgrades = {
 		Name = "Mult Bonus", Short = "Base", Desc = "Boost the board's slot multipliers.",
 		Icon = "➕"
 	},
-	-- Minimum delay between launches. PerTier 0.67→0.82: gentler throughput ramp. Cost growth
-	-- 4.5→1.9: at 4.5 it was never ROI-positive (throughput investment was dead); now buyable.
+	-- CORE LOOP REWORK: Frequency no longer scales a launch-delay countdown (Base/PerTier below
+	-- are kept, unused, rather than deleted — see BaseSlots/SlotsPerTier for the live meaning).
+	-- A batch now launches ALL of a player's equipped loadout balls, round-robined evenly across
+	-- a fixed Config.Launcher.BatchDelay window; Frequency's tier instead raises how many equip
+	-- slots (ProfileStats.GetMaxSlots) the player gets to fill — more equipped balls = more balls
+	-- per batch = effectively higher throughput. (Also hard-ceilinged by Config.Cosmetics.
+	-- LoadoutSlots, since the Studio-authored loadout UI only has that many physical slot buttons.)
 	Frequency = {
-		Base = 2, PerTier = 0.82,
+		Base = 2, PerTier = 0.82, -- unused now; kept rather than deleted (see note above)
+		BaseSlots = 1,   -- equip slots at tier 0
+		SlotsPerTier = 1, -- +1 equip slot per tier purchased
 		MaxTier = 12,
 		Cost = { Base = 230, Growth = 1.9 },
-		Name = "Launch Frequency", Short = "Freq", Desc = "Increase marbles launched per second.",
+		Name = "Loadout Slots", Short = "Slots", Desc = "Equip one more ball into your launch batch.",
 		Icon = "🔄",
 	},
 	-- pegHeatFactor = PerTier * tier (additive). Sensitivity to peg heat (§1.5,
@@ -385,6 +395,18 @@ Config.Upgrades = {
 		Cost = { Base = 220, Growth = 1.7 },
 		Name = "Heat Sense", Short = "Heat", Desc = "Hot and cold obstacles affect you more strongly.",
 		Icon = "🔥"
+	},
+	-- luck = LuckGrowth^tier - 1 (see ProfileStats.GetLuck; tier 0 = 0, no bias). Biases
+	-- crate/free-roll rarity sampling toward rarer results (CosmeticService's rollRarity)
+	-- without changing the displayed base "1 in X" odds. EXPONENTIAL on purpose: for the
+	-- thin tail rarities, P(hit) ≈ (luck+1) × base odds, so a linear per-tier luck would
+	-- feel logarithmic (each tier a smaller relative gain) — doubling per tier makes every
+	-- tier double your effective tail odds instead. PLACEHOLDER magnitudes — tune in playtest.
+	Luck = {
+		LuckGrowth = 2,
+		Cost = { Base = 200, Growth = 1.8 },
+		Name = "Luck", Short = "Luck", Desc = "Improves your odds of rolling rarer balls.",
+		Icon = "🍀",
 	},
 }
 
@@ -539,6 +561,10 @@ Config.Launcher = {
 	-- the swivel rotates it about +Y. LaunchOrigin is where balls spawn / lines start.
 	BaseDirection = Vector3.new(0, 0, -1),
 	LaunchOrigin = Vector3.new(21.3205, 172.855, 295.361),
+	-- CORE LOOP REWORK: fixed seconds per launch batch (BallLaunchService round-robins every
+	-- equipped ball evenly across this window). No longer upgrade-scaled — see Config.Upgrades.
+	-- Frequency, which now raises equip-slot count instead.
+	BatchDelay = 3,
 }
 
 -- Ball-tuning preview (client, shown while the tuning menu is open): three aim lines
@@ -768,6 +794,11 @@ Config.Cosmetics = {
 	-- noticeable-but-small +10%; the 6-9 tiers (Mythic/Celestial/Divine/Transcendent)
 	-- are the whale-tail chase — Gold Box exclusive, tiny odds.
 	RarityBonus = { 0.02, 0.05, 0.12, 0.30, 0.75, 1.8, 4, 9, 20 },
+	-- CORE LOOP REWORK: base $ value a ball of this rarity (1..9) carries into ScoreHandler's
+	-- multiplier chain (replaces the old bet-tier/MaxBet ladder as the value input — see
+	-- BallLaunchService.spawnBall). PLACEHOLDER magnitudes, roughly ~2.4x per rarity like
+	-- RarityBonus above; tune in playtest.
+	RarityValue = { 10, 25, 60, 150, 375, 900, 2200, 5000, 12000 },
 	-- Duplicate copies star a skin up: ★k at StarDupes[k] DUPLICATES (copies beyond the
 	-- first). Triangular like the golden peg schedule: 0, 1, 3, 6, 10.
 	StarDupes = { 0, 1, 3, 6, 10 },
@@ -796,9 +827,13 @@ Config.Crates = {
 	Free = {
 		Id = "FreeBox",
 		Name = "Free Box",
-		Weights = { 75, 20, 4.5, 0.5, 0.08 },
+		-- Every rarity is reachable from the constant free roll (it IS the core loop now) — the
+		-- 6-9 tail is astronomically thin at base odds, but Luck compresses it into range.
+		Weights = { 75, 20, 4.5, 0.5, 0.08, 0.015, 0.004, 0.001, 0.0002 },
 		FirstDelay = 0, -- seconds after join until the FIRST free box (0 = instant hook)
-		Interval = 180, -- delay after every claim
+		-- Not really a "come back later" hook anymore — the delay is just an anti-spam floor,
+		-- short enough that claiming reads as "roll constantly" rather than waiting out a timer.
+		Interval = 2,
 	},
 	-- Crate-opening reel (CrateRollUI): slot-style strip of possible skins that decelerates
 	-- onto the rolled one. Fillers are drawn from the crate's OWN Weights, so what spins
@@ -815,6 +850,13 @@ Config.Crates = {
 Config.Obby = {
 	DefaultWalkSpeed = 32,  -- restored when a player leaves the obby area
 	ObbyWalkSpeed = 16,     -- forced while inside the Checkpoints.In volume
+}
+
+-- BallPlotService (client-side plot ball combining): once a player already has this many
+-- physical plot balls of a given skin, any further ball of that skin merges its value into a
+-- random existing one instead of spawning a new physical ball.
+Config.BallPlot = {
+	MaxPerSkin = 5,
 }
 
 -- Group reward (a part tagged Config.Tags.GroupReward, walked on to claim). Group
@@ -868,6 +910,7 @@ table.freeze(Config.StarterPack)
 table.freeze(Config.BeginnersLuck)
 table.freeze(Config.Cosmetics)
 table.freeze(Config.Crates)
+table.freeze(Config.BallPlot)
 
 Config.Animations = {
 	ElectroSwing = "81301976341047",

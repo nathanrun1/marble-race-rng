@@ -48,7 +48,7 @@ local BOUNCE_EMITTER_NAME = "SkinBounce"   -- burst-only emitter fired on bounce
 local ORBIT_PART_NAME    = "SkinOrbit"     -- cosmetic parts that revolve around the ball (skin.data.orbits)
 local SHAPE_PART_NAME    = "SkinShape"     -- cosmetic parts fixed to the ball (skin.data.shapes)
 local HIGHLIGHT_NAME     = "SkinHighlight" -- the glow on "good" (rarer) skins (skin.data.highlight)
-local HIGHLIGHT_MIN_RARITY = 3             -- rarity at/above which a skin auto-gets a glow
+local HIGHLIGHT_MIN_RARITY = 1             -- rarity at/above which a skin auto-gets a glow (1 = every skin)
 local POPUP_TWEEN        = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local POPUP_OFFSET_START = Vector3.new(0, 2.5, 0)
 local POPUP_OFFSET_END   = Vector3.new(0, 4.5, 0)
@@ -451,7 +451,13 @@ end
 -- self-destructs when the ball is gone. Idempotent: a second call replaces the
 -- existing follower. Returns the anchor, or nil if the ball isn't present (e.g. a
 -- DoClientEffect arrived before the ball replicated).
-function BallEffects.AttachValueUI(ball: BasePart?): BasePart?
+export type ValueUIOptions = {
+	studsOffset: Vector3?,   -- override the asset's billboard height (authored at (0, 5, 0))
+	extentsOffset: Vector3?, -- override the asset's extents offset (authored at (0, 6, 0))
+	strokeColor: Color3?,    -- override the label's text stroke (defaulted to white in code)
+}
+
+function BallEffects.AttachValueUI(ball: BasePart?, opts: ValueUIOptions?): BasePart?
 	if not ball or not ball.Parent then return nil end
 	removeValueFollower(ball)
 
@@ -467,9 +473,29 @@ function BallEffects.AttachValueUI(ball: BasePart?): BasePart?
 	anchor.Parent = workspace
 
 	local ui = (RS.Assets:WaitForChild("ValueUI") :: BillboardGui):Clone()
+	ui.LightInfluence = 0 -- fullbright: the readout shouldn't dim in shadow / tint with lighting
 	ui.Parent = anchor
 	local label = ui:FindFirstChild("TextLabel") :: TextLabel
 	label.Font = Enum.Font.FredokaOne -- match the runtime popups (the Studio asset is authored in Gotham)
+	-- Tinted to the ball's skin rarity (via the SkinId attribute stamped at spawn): same
+	-- hue/saturation as the rarity colour, dimmed to V=0.5 so it reads as a label against
+	-- the white stroke rather than glowing like the rarity highlight itself.
+	local skinId = ball:GetAttribute(Config.Attributes.SkinId)
+	local skin = if type(skinId) == "string" then BallSkins.Get(skinId) else nil
+	local h, s, _ = BallSkins.RarityColor(if skin then skin.rarity else 1):ToHSV()
+	label.TextColor3 = Color3.fromHSV(h, s, 0.25)
+	label.TextStrokeColor3 = Color3.new(1, 1, 1) -- white stroke on every value UI
+	if opts then
+		if opts.studsOffset then
+			ui.StudsOffset = opts.studsOffset
+		end
+		if opts.extentsOffset then
+			ui.ExtentsOffset = opts.extentsOffset
+		end
+		if opts.strokeColor then
+			label.TextStrokeColor3 = opts.strokeColor
+		end
+	end
 
 	-- RenderStepped on the client (smoothest, pre-render); Heartbeat on the server.
 	local stepped = if RunService:IsClient() then RunService.RenderStepped else RunService.Heartbeat
@@ -767,6 +793,12 @@ local TouchInputService = game:GetService("TouchInputService")
 		end
 		ball.ChildAdded:Connect(check)
 	end
+
+	-- Public (client-only): register a NON-"Ball"-tagged ball for the per-frame orbit/shape
+	-- positioning loop below. Everything tagged Config.Tags.Ball gets this automatically via
+	-- onBallTagged; client-local cosmetic balls that deliberately shed the tag (BallPlotService's
+	-- plot balls) need to opt in here or their skin's shape/orbit parts never move with them.
+	BallEffects.TrackOrbits = trackOrbits
 
 	local function onBallTagged(ball: BasePart)
 		local own = isOwnBall(ball)
