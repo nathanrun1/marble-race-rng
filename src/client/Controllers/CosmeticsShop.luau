@@ -1,16 +1,17 @@
 --!strict
--- Cosmetics shop, built into the world SurfaceGui tagged TagsConfig.CosmeticsGui.
+-- Marble shop, built into the world SurfaceGui tagged TagsConfig.CosmeticsGui.
 -- Two tabs (left column):
---   CRATES (primary) — the Marble Boxes: the free session box (countdown + CLAIM) and the
---     purchasable boxes from CratesConfig.Boxes, each with odds, a pity progress line, and
---     a ROLL button. Rolling is the main way to get skins now.
+--   LUCK (primary) — the Luck upgrade card: the Diamond-priced, rebirth-persistent Luck
+--     track (Config/Upgrades) that biases every roll toward rarer marbles. The free roll
+--     (the main way to get skins) is claimed at its WORLD pad (TagsConfig.FreeCratePad,
+--     billboard/countdown below), not from a shop card; the purchasable crates are
+--     retired — skins are a core bet-multiplier mechanic now, not loot to sell.
 --   INDEX — every marble in the collection grid. Locked ones render as a dark silhouette
 --     with a "???" name; owned ones read brighter (as before) and show their ★ star from
---     duplicate copies. The footer wears an owned marble (visual) or jumps to the crates
---     tab for a locked one — direct purchasing is retired; crates are the only unlock
---     path. Can't-afford rolls open the Diamonds shop. EXCEPTION: paid-random-items-
---     restricted players (PolicyGate) get no Robux crate/Diamond buttons at all, and
---     instead get the deterministic per-rarity R$ direct buy in the index footer.
+--     duplicate copies. The footer wears an owned marble (visual) or jumps to the LUCK
+--     tab for a locked one — rolling is the only unlock path. Can't-afford Luck buys open
+--     the Diamonds shop. EXCEPTION: paid-random-items-restricted players (PolicyGate)
+--     get the deterministic per-rarity R$ direct buy in the index footer.
 --
 -- Built locally into the shared surface, so each player sees their own Diamonds/owned state.
 
@@ -26,6 +27,8 @@ local SoundsConfig = require(RS.Shared.Config.Sounds)
 local TagsConfig = require(RS.Shared.Config.Tags)
 local BallSkins = require(RS.Shared.BallSkins)
 local CosmeticBonus = require(RS.Shared.CosmeticBonus)
+local ProfileStats = require(RS.Shared.ProfileStats)
+local UpgradeInfo = require(RS.Shared.UpgradeInfo)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
 local ProductService = require(RS.Shared.ProductService)
 local WarnUI = require(RS.Shared.WarnUI)
@@ -36,6 +39,8 @@ local DiamondsShopUI = require(script.Parent.DiamondsShopUI)
 local CurrencyFlyUI = require(script.Parent.CurrencyFlyUI)
 local FreeRollBallSample = require(script.Parent.FreeRollBallSample)
 local CosmeticsNet = require(RS.Shared.Remote.CosmeticsNet)
+local ProfileNet = require(RS.Shared.Remote.ProfileNet)
+local UpgradeNet = require(RS.Shared.Remote.UpgradeNet)
 
 local CosmeticsShop = {}
 
@@ -53,10 +58,9 @@ local GOLD        = Color3.fromRGB(255, 200, 40)
 local getInfoRF = CosmeticsNet.GetCosmeticInfo :: RemoteFunction
 local selectRE = CosmeticsNet.SelectCosmetic :: RemoteEvent
 local changedRE = CosmeticsNet.CosmeticChanged :: RemoteEvent
-local rollCrateRF = CosmeticsNet.RollCrate :: RemoteFunction
 local claimFreeRF = CosmeticsNet.ClaimFreeCrate :: RemoteFunction
-local buyCrateRF = CosmeticsNet.BuyCrate :: RemoteFunction
 local equipRE = CosmeticsNet.EquipCosmetic :: RemoteEvent
+local purchaseUpgradeRF = UpgradeNet.PurchaseUpgrade :: RemoteFunction
 
 type Info = {
 	cc: number,
@@ -115,18 +119,22 @@ local rows: { [string]: TextButton } = {}
 local ccLabel: TextLabel? = nil
 local buyButton: TextButton? = nil
 local selectedNameLabel: TextLabel? = nil
-local pityLabels: { [string]: TextLabel } = {}   -- boxId -> pity progress line
-local heldLabels: { [string]: TextLabel } = {}   -- boxId -> "📦 ×N held" badge
-local rollButtons: { [string]: TextButton } = {} -- boxId -> ROLL button (reads OPEN when holding)
-local freeButton: TextButton? = nil              -- free box CLAIM/countdown button
 local rolling = false                            -- one roll in flight at a time
-local openCratesTab: (() -> ())? = nil           -- set by build(); "UNLOCK FROM BOXES" jumps there
+local openLuckTab: (() -> ())? = nil             -- set by build(); "UNLOCK FROM ROLLS" jumps there
+
+-- Luck upgrade card state (LUCK tab): the tier comes from ProfileChanged pushes; price/
+-- affordability are recomputed locally from UpgradeInfo (same pure math the server prices
+-- with) against the Diamonds balance in `info.cc`.
+local luckTier = 0
+local luckTierLabel: TextLabel? = nil
+local luckEffectLabel: TextLabel? = nil
+local luckButton: TextButton? = nil
+local luckBuying = false -- one purchase in flight at a time
 
 -- Paid-random-items policy (PolicyGate): nil until the async fetch lands. Restricted
--- players get NO Robux route to crates ("R$" crate buttons hidden) — instead the index
--- footer offers the deterministic per-rarity direct skin purchase (RarityProducts).
+-- players get the deterministic per-rarity direct skin purchase (RarityProducts) in the
+-- index footer.
 local paidRandomRestricted: boolean? = nil
-local crateRobuxButtons: { TextButton } = {}     -- crate cards' "R$" buttons, to hide on late fetch
 local robuxBuyButton: TextButton? = nil          -- footer direct-buy (restricted players only)
 local robuxBuyProductId: number? = nil           -- product for the currently selected skin's rarity
 
@@ -297,39 +305,8 @@ local function refreshRow(id: string, skin: BallSkins.BallSkin)
 end
 
 --------------------------------------------------------------------------------
--- Crates tab helpers
+-- Luck tab helpers
 --------------------------------------------------------------------------------
--- Odds line for a weight table: "Common 60% • Rare 9% • ..." (nonzero rarities only).
-local function oddsText(weights: { number }): string
-	local total = 0
-	for _, w in weights do
-		total += w
-	end
-	local parts = {}
-	for rarity, w in weights do
-		if w > 0 then
-			table.insert(parts, ("%s %s%%"):format(BallSkins.RarityName(rarity), StringUtils.FormatShort(w / total * 100)))
-		end
-	end
-	return table.concat(parts, "  •  ")
-end
-
-local function pityText(boxId: string): string
-	local box
-	for _, b in CratesConfig.Boxes do
-		if b.Id == boxId then
-			box = b
-			break
-		end
-	end
-	if not box or not box.Pity then
-		return ""
-	end
-	local count = info.pity[boxId] or 0
-	local left = math.max(box.Pity.Every - count, 1)
-	return ("%s+ guaranteed within %d roll%s"):format(BallSkins.RarityName(box.Pity.MinRarity), left, if left == 1 then "" else "s")
-end
-
 -- Announce a roll result (banner colored by rarity) and select the skin so the sample
 -- ball + index highlight show what just came out of the box.
 local function presentRoll(result: RollResult)
@@ -396,29 +373,34 @@ local function runRoll(weights: { number }?, invoke: () -> RollResult, reveal: (
 	rolling = false
 end
 
-function CosmeticsShop.roll(boxId: string)
-	runRoll(boxWeights(boxId), function()
-		return rollCrateRF:InvokeServer(boxId) :: RollResult
-	end)
-end
-
--- Buy one box WITHOUT opening it (hoard to open later). ROLL consumes held boxes
--- before charging Diamonds, so stashed boxes are never dead weight.
-function CosmeticsShop.buy(boxId: string)
+-- Buy one Luck tier (Diamonds; server-authoritative through the ordinary upgrade
+-- purchase remote). The fresh tier lands via ProfileChanged and the new Diamonds
+-- balance via CosmeticChanged, but both are applied optimistically from the result
+-- snapshot so the card can't render stale between pushes.
+function CosmeticsShop.buyLuck()
+	if luckBuying then
+		return
+	end
+	luckBuying = true
 	local ok, result = pcall(function()
-		return buyCrateRF:InvokeServer(boxId) :: RollResult
+		return purchaseUpgradeRF:InvokeServer("Luck")
 	end)
+	luckBuying = false
 	if not ok or type(result) ~= "table" then
 		return
 	end
 	if result.ok then
-		WarnUI.WarnLocal("📦 Marble Box added to your stash!", GOLD, 3)
-		SoundService.Play({ soundId = SoundsConfig.Toggle2 })
-		CurrencyFlyUI.Play("Crate", 1) -- one box bought = one 📦 flying
-	elseif result.reason == "insufficient_cc" then
+		WarnUI.WarnLocal("🍀 Luck upgraded!", GREEN, 3)
+		SoundService.Play({ soundId = SoundsConfig.Upgrade })
+	elseif result.reason == "cannot_afford" then
 		WarnUI.WarnLocal("Not enough Diamonds!", Color3.fromRGB(255, 120, 120))
 		DiamondsShopUI.Open() -- the fix is one purchase away
 	end
+	local upgrades = result.upgrades
+	if type(upgrades) == "table" and type(upgrades.Luck) == "table" and type(upgrades.Luck.tier) == "number" then
+		luckTier = upgrades.Luck.tier
+	end
+	refresh()
 end
 
 function CosmeticsShop.claimFree()
@@ -442,13 +424,13 @@ function CosmeticsShop.select(id: string)
 end
 
 -- Footer button on the index tab: equips the selected skin when owned (visual skin;
--- server-validated); on a locked skin it reads "UNLOCK FROM BOXES" and jumps to the
--- crates tab (the Robux product button next to it is the direct-unlock path).
+-- server-validated); on a locked skin it reads "UNLOCK FROM ROLLS" and jumps to the
+-- LUCK tab (the Robux product button next to it is the direct-unlock path).
 function CosmeticsShop.equipSelected()
 	if info.owned[info.selected] == true then
 		equipRE:FireServer(info.selected)
-	elseif openCratesTab then
-		openCratesTab()
+	elseif openLuckTab then
+		openLuckTab()
 	end
 end
 
@@ -463,25 +445,11 @@ end
 -- Timer labels on the world free-crate pads (billboards), updated by the same ticker.
 local padTimerLabels: { TextLabel } = {}
 
--- One banner per readiness EDGE (re-arms while counting down, so every new free roll —
--- including the instant one at join — announces exactly once).
-local freeAnnounced = false
-
+-- No "free box available!" banner: the pad's READY billboard is the whole announcement —
+-- the roll interval is seconds, so a banner every cycle would be pure spam.
 local function refreshFreeButton()
 	local remaining = freeReadyAt - os.clock()
 	local ready = remaining <= 0
-	if ready and not freeAnnounced then
-		freeAnnounced = true
-		WarnUI.WarnLocal("🎁 Free marble box available!", GOLD, 4)
-	elseif not ready then
-		freeAnnounced = false
-	end
-	local btn = freeButton
-	if btn then
-		btn.Text = if ready then "CLAIM!" else formatCountdown(remaining)
-		btn.BackgroundColor3 = if ready then GREEN else Color3.fromRGB(70, 76, 96)
-		btn.Active = ready
-	end
 	for _, label in padTimerLabels do
 		label.Text = if ready then "READY — step on!" else formatCountdown(remaining)
 		label.TextColor3 = if ready then GREEN else TEXT
@@ -564,6 +532,36 @@ local function setupFreeCratePad(inst: Instance)
 	end)
 end
 
+-- Luck card: tier, current -> next roll-odds multiplier, and the buy button's price/
+-- affordability (against the Diamonds balance — same UpgradeInfo math the server uses).
+local function refreshLuck()
+	local luckInfo = UpgradeInfo.Build("Luck", luckTier, info.cc)
+	if not luckInfo then
+		return
+	end
+	if luckTierLabel then
+		luckTierLabel.Text = "Tier " .. luckInfo.tier
+	end
+	if luckEffectLabel then
+		local cur = ProfileStats.GetDisplayString("Luck", luckInfo.tier)
+		luckEffectLabel.Text = if luckInfo.maxed
+			then "Rare odds " .. cur
+			else ("Rare odds %s  ➜  %s"):format(cur, ProfileStats.GetDisplayString("Luck", luckInfo.tier + 1))
+	end
+	local btn = luckButton
+	if btn then
+		if luckInfo.maxed then
+			btn.Text = "MAXED"
+			btn.BackgroundColor3 = Color3.fromRGB(70, 76, 96)
+			btn.Active = false
+		else
+			btn.Text = ("UPGRADE  💎 %s"):format(StringUtils.FormatShort(luckInfo.price :: number))
+			btn.BackgroundColor3 = if luckInfo.canAfford then GREEN else Color3.fromRGB(70, 76, 96)
+			btn.Active = true
+		end
+	end
+end
+
 function refresh()
 	if ccLabel then
 		ccLabel.Text = "Balance: " .. StringUtils.FormatShort(info.cc) .. " 💎"
@@ -571,18 +569,7 @@ function refresh()
 	for _, entry in orderedSkins do
 		refreshRow(entry.id, entry.skin)
 	end
-	for boxId, label in pityLabels do
-		label.Text = pityText(boxId)
-	end
-	local boxes = info.boxes or {} -- older server pushes may predate the stash field
-	for boxId, label in heldLabels do
-		local held = boxes[boxId] or 0
-		label.Text = if held > 0 then ("📦 ×%d"):format(held) else ""
-	end
-	for boxId, btn in rollButtons do
-		local held = boxes[boxId] or 0
-		btn.Text = if held > 0 then ("OPEN (%d)"):format(held) else "ROLL"
-	end
+	refreshLuck()
 	refreshFreeButton()
 
 	local sel = BallSkins.Get(info.selected) or BallSkins.Get(BallSkins.GetDefaultId())
@@ -605,9 +592,9 @@ function refresh()
 			buyButton.Text = "WEAR (LOOKS ONLY)"
 			buyButton.BackgroundColor3 = GREEN
 		else
-			-- Locked: crates are the ONLY unlock path (direct purchase retired) — except
+			-- Locked: rolling is the ONLY unlock path (direct purchase retired) — except
 			-- for paid-random-items-restricted players, who get the R$ direct buy below.
-			buyButton.Text = "UNLOCK FROM BOXES"
+			buyButton.Text = "UNLOCK FROM ROLLS"
 			buyButton.BackgroundColor3 = BLUE
 		end
 
@@ -679,18 +666,9 @@ local function attachHoverScale(card: GuiObject)
 	end)
 end
 
--- The rarity a crate's frame is themed after: the pity guarantee's rarity (that's the
--- crate's headline), or common for the pity-less free box.
-local function boxThemeRarity(pity: { MinRarity: number }?): number
-	return if pity then pity.MinRarity else 1
-end
-
--- One SQUARE crate card in the 2×2 crates quad: name on top, big 📦 logo, cost, odds,
--- pity line, action button(s) at the bottom (ROLL + an "R$ BUY" prompt when the box has
--- a configured dev product). Frame colours follow the crate's theme rarity.
--- `boxId = nil` builds the free box card (claim/countdown button).
-local function buildCrateCard(parent: Instance, order: number, name: string, costText: string, weights: { number }, boxId: string?, themeRarity: number, productId: number?): TextButton
-	local themeColor = BallSkins.RarityColor(themeRarity)
+-- One SQUARE card in the LUCK tab's grid: name on top, big emoji logo, then caller-built
+-- body content. Returns the card and its full-width bottom action button.
+local function buildLuckTabCard(parent: Instance, order: number, name: string, logoText: string, themeColor: Color3): (Frame, TextButton, (text: string, y: number, h: number, color: Color3) -> TextLabel)
 	local card = Instance.new("Frame")
 	card.Name = name
 	card.LayoutOrder = order -- size comes from the page's UIGridLayout
@@ -711,80 +689,38 @@ local function buildCrateCard(parent: Instance, order: number, name: string, cos
 	end
 
 	centered(name, 0.03, 0.12, TEXT)
-	local logo = centered("📦", 0.15, 0.28, themeColor)
-	logo.TextTransparency = 0
-	centered(costText, 0.45, 0.10, YELLOW)
-	local oddsL = centered(oddsText(weights), 0.56, 0.07, SUBTLE)
-	oddsL.TextWrapped = true
-	if boxId then
-		pityLabels[boxId] = centered("", 0.64, 0.07, Color3.fromRGB(140, 200, 255))
-		-- Unopened-boxes badge, top-right over the logo; blank while holding none.
-		local held = makeLabel(card, "", UDim2.fromScale(0.42, 0.09), UDim2.fromScale(0.54, 0.16), GOLD)
-		held.TextScaled = true
-		held.TextXAlignment = Enum.TextXAlignment.Right
-		heldLabels[boxId] = held
-	end
+	centered(logoText, 0.15, 0.28, themeColor)
 
-	local function actionButton(x: number, w: number, text: string, bg: Color3): TextButton
-		local btn = Instance.new("TextButton")
-		btn.Activated:Connect(SoundService.PlayClick) -- the game's default click, on top of per-action stings
-		btn.Size = UDim2.fromScale(w, 0.18)
-		btn.Position = UDim2.fromScale(x, 0.76)
-		btn.BackgroundColor3 = bg
-		btn.Text = text
-		btn.TextColor3 = Color3.new(1, 1, 1)
-		btn.Font = Enum.Font.GothamBold
-		btn.TextScaled = true
-		btn.AutoButtonColor = true
-		btn.Parent = card
-		corner(btn, 10)
-		local pad = Instance.new("UIPadding")
-		pad.PaddingTop = UDim.new(0.18, 0)
-		pad.PaddingBottom = UDim.new(0.18, 0)
-		pad.Parent = btn
-		return btn
-	end
+	local btn = Instance.new("TextButton")
+	btn.Activated:Connect(SoundService.PlayClick) -- the game's default click, on top of per-action stings
+	btn.Size = UDim2.fromScale(0.6, 0.18)
+	btn.Position = UDim2.fromScale(0.2, 0.76)
+	btn.BackgroundColor3 = BLUE
+	btn.Text = ""
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextScaled = true
+	btn.AutoButtonColor = true
+	btn.Parent = card
+	corner(btn, 10)
+	local bpad = Instance.new("UIPadding")
+	bpad.PaddingTop = UDim.new(0.18, 0)
+	bpad.PaddingBottom = UDim.new(0.18, 0)
+	bpad.Parent = btn
 
-	-- Free box: one full-width claim button. Paid boxes get ROLL (open now) + BUY
-	-- (hoard unopened) side by side, plus an "R$" prompt when the box has a configured
-	-- dev product (placeholder "0" hides it).
-	if not boxId then
-		return actionButton(0.2, 0.6, "ROLL", BLUE)
-	end
-	local rollBtn
-	if productId then
-		local pid = productId :: number -- stable capture for the closures below
-		rollBtn = actionButton(0.04, 0.30, "ROLL", BLUE)
-		local buyBtn = actionButton(0.37, 0.30, "BUY", Color3.fromRGB(180, 140, 40))
-		local robuxBtn = actionButton(0.70, 0.26, "R$", GREEN)
-		-- Paid-random-items policy: no Robux route to a crate for restricted players.
-		-- Always built, only Visible toggles — so the dev /policy switch works both ways.
-		robuxBtn.Visible = paidRandomRestricted ~= true
-		table.insert(crateRobuxButtons, robuxBtn)
-		robuxBtn.Activated:Connect(function()
-			ProductService.Prompt(pid)
-		end)
-		-- Live Robux price on the button once the marketplace answers.
-		task.spawn(function()
-			local ok, prodInfo = pcall(function()
-				return MarketplaceService:GetProductInfo(pid, Enum.InfoType.Product)
-			end)
-			if ok and prodInfo and type(prodInfo.PriceInRobux) == "number" and robuxBtn.Parent then
-				robuxBtn.Text = "R$ " .. prodInfo.PriceInRobux
-			end
-		end)
-		buyBtn.Activated:Connect(function()
-			CosmeticsShop.buy(boxId)
-		end)
-	else
-		rollBtn = actionButton(0.08, 0.42, "ROLL", BLUE)
-		local buyBtn = actionButton(0.53, 0.39, "BUY", Color3.fromRGB(180, 140, 40))
-		buyBtn.Activated:Connect(function()
-			CosmeticsShop.buy(boxId)
-		end)
-	end
-	rollButtons[boxId] = rollBtn
-	return rollBtn
+	return card, btn, centered
+end
+
+-- The Luck upgrade card: tier, current -> next odds multiplier, Diamond-priced UPGRADE
+-- button (refreshLuck fills all three). Luck persists through rebirth — say so on the card.
+local function buildLuckCard(parent: Instance, order: number)
+	local _, btn, centered = buildLuckTabCard(parent, order, "LUCK", "🍀", GREEN)
+	luckTierLabel = centered("Tier 0", 0.45, 0.10, YELLOW)
+	luckEffectLabel = centered("", 0.56, 0.07, SUBTLE)
+	local keepL = centered("Boosts every roll • kept through Rebirth", 0.64, 0.07, Color3.fromRGB(140, 200, 255))
+	keepL.TextWrapped = true
+	btn.Activated:Connect(CosmeticsShop.buyLuck)
+	luckButton = btn
 end
 
 local function build(surface: SurfaceGui)
@@ -792,10 +728,6 @@ local function build(surface: SurfaceGui)
 	if existing then
 		existing:Destroy()
 	end
-	table.clear(pityLabels)
-	table.clear(heldLabels)
-	table.clear(rollButtons)
-	table.clear(crateRobuxButtons)
 	table.clear(rows)
 
 	local root = Instance.new("Frame")
@@ -813,7 +745,7 @@ local function build(surface: SurfaceGui)
 	pad.Parent = root
 
 	-- Header: title + Diamonds balance.
-	local title = makeLabel(root, "MARBLE BOXES", UDim2.new(0.55, 0, 0.09, 0), UDim2.fromScale(0, 0), TEXT)
+	local title = makeLabel(root, "MARBLES", UDim2.new(0.55, 0, 0.09, 0), UDim2.fromScale(0, 0), TEXT)
 	title.TextScaled = true
 	local cc = makeLabel(root, "Balance: 0 💎", UDim2.new(0.42, 0, 0.09, 0), UDim2.new(0.58, 0, 0, 0), YELLOW)
 	cc.TextScaled = true
@@ -832,16 +764,16 @@ local function build(surface: SurfaceGui)
 	tabsLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	tabsLayout.Parent = tabs
 
-	local cratesTabBtn = makeTabButton(tabs, "CRATES", 1)
+	local luckTabBtn = makeTabButton(tabs, "LUCK", 1)
 	local indexTabBtn = makeTabButton(tabs, "INDEX", 2)
 
 	-- Pages.
-	local cratesPage = Instance.new("Frame")
-	cratesPage.Name = "CratesPage"
-	cratesPage.Size = UDim2.fromScale(0.845, 0.86)
-	cratesPage.Position = UDim2.fromScale(0.155, 0.12)
-	cratesPage.BackgroundTransparency = 1
-	cratesPage.Parent = root
+	local luckPage = Instance.new("Frame")
+	luckPage.Name = "LuckPage"
+	luckPage.Size = UDim2.fromScale(0.845, 0.86)
+	luckPage.Position = UDim2.fromScale(0.155, 0.12)
+	luckPage.BackgroundTransparency = 1
+	luckPage.Parent = root
 
 	local indexPage = Instance.new("Frame")
 	indexPage.Name = "IndexPage"
@@ -851,47 +783,34 @@ local function build(surface: SurfaceGui)
 	indexPage.Visible = false
 	indexPage.Parent = root
 
-	local function selectTab(crates: boolean)
-		cratesPage.Visible = crates
-		indexPage.Visible = not crates
-		local cs = cratesTabBtn:FindFirstChildOfClass("UIStroke") :: UIStroke
+	local function selectTab(luck: boolean)
+		luckPage.Visible = luck
+		indexPage.Visible = not luck
+		local ls = luckTabBtn:FindFirstChildOfClass("UIStroke") :: UIStroke
 		local is = indexTabBtn:FindFirstChildOfClass("UIStroke") :: UIStroke
-		cs.Thickness = if crates then 2.5 else 0
-		is.Thickness = if crates then 0 else 2.5
-		cratesTabBtn.BackgroundColor3 = if crates then ROW_SELECT else ROW_BG
-		indexTabBtn.BackgroundColor3 = if crates then ROW_BG else ROW_SELECT
+		ls.Thickness = if luck then 2.5 else 0
+		is.Thickness = if luck then 0 else 2.5
+		luckTabBtn.BackgroundColor3 = if luck then ROW_SELECT else ROW_BG
+		indexTabBtn.BackgroundColor3 = if luck then ROW_BG else ROW_SELECT
 	end
-	cratesTabBtn.Activated:Connect(function() selectTab(true) end)
+	luckTabBtn.Activated:Connect(function() selectTab(true) end)
 	indexTabBtn.Activated:Connect(function() selectTab(false) end)
-	openCratesTab = function()
+	openLuckTab = function()
 		selectTab(true)
 	end
 
 	------------------------------------------------------------------
-	-- Crates page: a 2×2 quad of square cards (free box + the configured boxes).
+	-- Luck page: the single Luck upgrade card, centered (the free roll lives at its
+	-- world pad; the purchasable crates are retired — see the header comment).
 	------------------------------------------------------------------
 	local cardsGrid = Instance.new("UIGridLayout")
 	cardsGrid.CellSize = UDim2.fromScale(0.48, 0.47)
 	cardsGrid.CellPadding = UDim2.fromScale(0.028, 0.05)
 	cardsGrid.SortOrder = Enum.SortOrder.LayoutOrder
 	cardsGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	cardsGrid.Parent = cratesPage
+	cardsGrid.Parent = luckPage
 
-	local free = CratesConfig.Free
-	local freeBtn = buildCrateCard(cratesPage, 1, free.Name .. "  🎁", "FREE every " .. (free.Interval // 60) .. " min", free.Weights, nil, boxThemeRarity(nil), nil)
-	freeBtn.Activated:Connect(CosmeticsShop.claimFree)
-	freeButton = freeBtn
-
-	for i, box in CratesConfig.Boxes do
-		local productId = tonumber(box.Product)
-		if productId == 0 then
-			productId = nil -- placeholder: no Robux button until a real product id is set
-		end
-		local btn = buildCrateCard(cratesPage, i + 1, box.Name, "💎 " .. StringUtils.FormatShort(box.Cost), box.Weights, box.Id, boxThemeRarity(box.Pity), productId)
-		btn.Activated:Connect(function()
-			CosmeticsShop.roll(box.Id)
-		end)
-	end
+	buildLuckCard(luckPage, 1)
 
 	------------------------------------------------------------------
 	-- Index page: the collection grid + equip footer.
@@ -980,13 +899,9 @@ end
 
 function CosmeticsShop.Init()
 	-- Paid-random-items policy: applied from the async fetch AND re-applied both ways on
-	-- dev /policy toggles. Cards may already be built when it lands, so crate "R$"
-	-- buttons flip Visible here, and refresh() re-decides the footer direct-buy.
+	-- dev /policy toggles. refresh() re-decides the footer direct-buy from it.
 	local function applyPolicy(restricted: boolean)
 		paidRandomRestricted = restricted
-		for _, btn in crateRobuxButtons do
-			btn.Visible = not restricted
-		end
 		refresh()
 	end
 	PolicyGate.OnChanged(applyPolicy)
@@ -1016,6 +931,28 @@ function CosmeticsShop.Init()
 			info = newInfo
 			freeReadyAt = os.clock() + (newInfo.freeCrateIn or math.huge)
 			refresh()
+		end
+	end)
+
+	-- Luck tier for the LUCK tab's upgrade card, kept fresh from ProfileChanged (same
+	-- source FreeRollBallSample reads its tease tier from).
+	local function setLuckFromProfile(profile: any)
+		if type(profile) == "table" and type(profile.upgrades) == "table" and type(profile.upgrades.Luck) == "number" then
+			if profile.upgrades.Luck ~= luckTier then
+				luckTier = profile.upgrades.Luck
+				refreshLuck()
+			end
+		end
+	end
+	local profileChangedRE = ProfileNet.ProfileChanged :: RemoteEvent
+	profileChangedRE.OnClientEvent:Connect(setLuckFromProfile)
+	task.spawn(function()
+		local getProfileRF = ProfileNet.GetProfile :: RemoteFunction
+		local ok, profile = pcall(function()
+			return getProfileRF:InvokeServer()
+		end)
+		if ok then
+			setLuckFromProfile(profile)
 		end
 	end)
 

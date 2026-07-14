@@ -219,7 +219,13 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	ScoreHandler.BallBanked:Fire(player, ball, info.banked)
 
 	PrestigeService.AddLifetimeBanked(player, info.banked)
-	BallService.Despawn(ball)
+	-- The falling husk is scored money, not money on the table — drop its value billboard
+	-- the moment it banks (the follower is client-side, so this rides a client effect).
+	BallEffects.DoClientEffect(player, "RemoveValueUI", ball)
+	-- A slot bank scores instantly but lets the ball keep falling into the slot's hole for
+	-- DestroyDelay before it's destroyed (it is logically despawned immediately). A stuck
+	-- force-bank vanishes on the spot — it's wedged, there's nothing left for it to fall into.
+	BallService.Despawn(ball, if stuck then nil else ScoringConfig.DestroyDelay)
 	CurrencyService.AddPoints(player, info.banked, if stuck then "Ball stuck (timeout): " .. ball.Name else "Ball destroyed at target: " .. targetName)
 end
 

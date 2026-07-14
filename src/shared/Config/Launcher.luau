@@ -18,9 +18,8 @@ local Launcher = {
 	-- LaunchOrigin is where balls spawn / lines start.
 	BaseDirection = Vector3.new(0, 0, -1),
 	LaunchOrigin = Vector3.new(21.3205, 172.855, 295.361),
-	-- CORE LOOP REWORK: fixed seconds per launch batch (BallLaunchService round-robins every
-	-- equipped ball evenly across this window). No longer upgrade-scaled — see Config/Upgrades
-	-- Frequency, which now raises equip-slot count instead.
+	-- UNUSED since the per-slot launch rework (each slot cools down independently off the
+	-- Frequency upgrade — ProfileStats.GetLaunchDelay); kept while the rework settles.
 	BatchDelay = 3,
 }
 

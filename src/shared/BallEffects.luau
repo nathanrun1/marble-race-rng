@@ -448,6 +448,16 @@ local function removeValueFollower(ball: BasePart)
 	f.anchor:Destroy()
 end
 
+-- Detach the value billboard from `ball`, if it has one. Used the instant a dropped ball
+-- banks at a destroy target (via DoClientEffect "RemoveValueUI"): the husk keeps falling
+-- into the hole for its destroy delay, and a value readout riding an already-scored ball
+-- reads as money still on the table. No-op if nothing is attached.
+function BallEffects.RemoveValueUI(ball: BasePart?)
+	if ball then
+		removeValueFollower(ball)
+	end
+end
+
 -- Instantiate an anchored part that smoothly follows `ball`, carrying a clone of
 -- ReplicatedStorage.Assets.ValueUI (a BillboardGui). Decouples the value billboard
 -- from the ball's jittery motion. Callable from client or server (e.g. via
@@ -456,9 +466,12 @@ end
 -- existing follower. Returns the anchor, or nil if the ball isn't present (e.g. a
 -- DoClientEffect arrived before the ball replicated).
 export type ValueUIOptions = {
-	studsOffset: Vector3?,   -- override the asset's billboard height (authored at (0, 5, 0))
-	extentsOffset: Vector3?, -- override the asset's extents offset (authored at (0, 6, 0))
+	studsOffset: Vector3?,   -- override the billboard height (applied WORLD-space; authored at (0, 5, 0))
+	extentsOffset: Vector3?, -- override the extents offset (applied WORLD-space; see below)
 	strokeColor: Color3?,    -- override the label's text stroke (defaulted to white in code)
+	worldSized: boolean?,    -- fixed WORLD size (shrinks with distance) instead of the asset's
+	                         -- authored pixel-capped look, which stops shrinking once far away.
+	                         -- Plot balls use this; dropped marbles keep the authored look.
 }
 
 function BallEffects.AttachValueUI(ball: BasePart?, opts: ValueUIOptions?): BasePart?
@@ -478,6 +491,13 @@ function BallEffects.AttachValueUI(ball: BasePart?, opts: ValueUIOptions?): Base
 
 	local ui = (RS.Assets:WaitForChild("ValueUI") :: BillboardGui):Clone()
 	ui.LightInfluence = 0 -- fullbright: the readout shouldn't dim in shadow / tint with lighting
+	-- The asset's StudsOffset/ExtentsOffset are camera-space, which makes the readout
+	-- lean/bend over the ball as the camera orbits. Re-express both (and any opts overrides
+	-- below) in world space so it sits physically above the ball regardless of view angle.
+	ui.ExtentsOffsetWorldSpace = ui.ExtentsOffset
+	ui.ExtentsOffset = Vector3.zero
+	ui.StudsOffsetWorldSpace = ui.StudsOffset
+	ui.StudsOffset = Vector3.zero
 	ui.Parent = anchor
 	local label = ui:FindFirstChild("TextLabel") :: TextLabel
 	label.Font = Enum.Font.FredokaOne -- match the runtime popups (the Studio asset is authored in Gotham)
@@ -487,17 +507,26 @@ function BallEffects.AttachValueUI(ball: BasePart?, opts: ValueUIOptions?): Base
 	local skinId = ball:GetAttribute(AttributesConfig.SkinId)
 	local skin = if type(skinId) == "string" then BallSkins.Get(skinId) else nil
 	local h, s, _ = BallSkins.RarityColor(if skin then skin.rarity else 1):ToHSV()
-	label.TextColor3 = Color3.fromHSV(h, s, 0.25)
+	label.TextColor3 = Color3.fromHSV(h, s, 0.5)
 	label.TextStrokeColor3 = Color3.new(1, 1, 1) -- white stroke on every value UI
 	if opts then
 		if opts.studsOffset then
-			ui.StudsOffset = opts.studsOffset
+			ui.StudsOffsetWorldSpace = opts.studsOffset
 		end
 		if opts.extentsOffset then
-			ui.ExtentsOffset = opts.extentsOffset
+			ui.ExtentsOffsetWorldSpace = opts.extentsOffset
 		end
 		if opts.strokeColor then
 			label.TextStrokeColor3 = opts.strokeColor
+		end
+		if opts.worldSized then
+			-- Drop the authored pixel cap and pin a fixed world size: the readout then shrinks
+			-- with camera distance like any object instead of bottoming out at the cap.
+			local constraint = label:FindFirstChildOfClass("UISizeConstraint")
+			if constraint then
+				constraint:Destroy()
+			end
+			ui.Size = UDim2.fromScale(6, 1.5)
 		end
 	end
 

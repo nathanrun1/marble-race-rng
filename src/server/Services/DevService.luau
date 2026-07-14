@@ -15,7 +15,7 @@
 --   /skin <name>           grant + equip a marble by display name or id (case-insensitive,
 --                          partial matches OK; repeat for extra copies/stars)
 --   /loadout <slot> <name|clear>  put an owned skin in a bonus-loadout/launch-batch slot (or
---                          clear it); slot count is LoadoutService.GetMaxSlots (Frequency tier)
+--                          clear it); slot count is LoadoutService.GetMaxSlots (NumSlots tier)
 --   /policy [on|off|clear] force ArePaidRandomItemsRestricted for you (no arg = toggle;
 --                          clear = back to the real policy) — server + your client both flip
 --   /avgball <n>           force lifetime avg $/marble (drives luck rank, leaderstats,

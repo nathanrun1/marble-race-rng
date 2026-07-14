@@ -577,6 +577,37 @@ local function startRollCrate(_spec: CompletionSpec, onComplete: () -> ()): () -
 	end
 end
 
+-- The Luck upgrade tier rising past the step-start baseline (ProfileChanged) — the
+-- cosmetic tutorial's target since Luck replaced the purchasable crates in the shop.
+local function startBuyLuck(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	local getProfileRF = ProfileNet.GetProfile :: RemoteFunction
+	local profileChangedRE = ProfileNet.ProfileChanged :: RemoteEvent
+
+	local function luckTier(profile: any): number
+		if type(profile) == "table" and type(profile.upgrades) == "table" and type(profile.upgrades.Luck) == "number" then
+			return profile.upgrades.Luck
+		end
+		return 0
+	end
+
+	local baseline = math.huge
+	task.spawn(function()
+		local ok, profile = pcall(function()
+			return getProfileRF:InvokeServer()
+		end)
+		baseline = if ok then luckTier(profile) else 0
+	end)
+
+	local conn = profileChangedRE.OnClientEvent:Connect(function(profile: any)
+		if luckTier(profile) > baseline then
+			onComplete()
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
 -- A skin landing in any bonus-loadout slot (CosmeticChanged loadout fill count rising
 -- past the step-start baseline), OR any EQUIP BEST press — the press completes even
 -- when the loadout is already optimal and nothing changes.
@@ -706,6 +737,7 @@ local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } 
 	ScoreBalls = startScoreBalls,
 	BuySkin = startBuySkin,
 	RollCrate = startRollCrate,
+	BuyLuck = startBuyLuck,
 	OpenTuningMenu = startOpenTuningMenu,
 	OpenLoadout = startOpenLoadout,
 	EquipLoadoutSlot = startEquipLoadoutSlot,

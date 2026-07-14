@@ -111,20 +111,32 @@ function BallService.Spawn(position: Vector3, options: SpawnOptions?): BasePart
 	return ball
 end
 
-function BallService.Despawn(ball: BasePart)
+-- destroyDelay: optionally keep the ball's instance alive, physics and all, for that many
+-- seconds before Destroy — the score/UI register instantly, but the ball visibly finishes
+-- falling into the slot's hole and only then vanishes (the delay is tuned to give it time
+-- to drop out of sight). The logical despawn is unconditional and immediate — liveBalls/
+-- owner counts/BallDespawned all fire now, so the falling husk can never score or count
+-- against the owner's ball cap again (ScoringService only walks active balls).
+function BallService.Despawn(ball: BasePart, destroyDelay: number?)
 	if not liveBalls[ball] then
 		return -- already gone; idempotent, prevents double-free
 	end
 	liveBalls[ball] = nil
-	
+
 	local ownerId: number = ball:GetAttribute(AttributesConfig.OwnerUserId) :: number
 	if ownerId then
 		ownerCounts[ownerId] = math.max(ownerCounts[ownerId] - 1, 0)
-	end		
-	
+	end
+
 	BallEffects.ClearSpawnState(ball)
 	BallService.BallDespawned:Fire(ball)
-	ball:Destroy()
+	if destroyDelay and destroyDelay > 0 then
+		task.delay(destroyDelay, function()
+			ball:Destroy()
+		end)
+	else
+		ball:Destroy()
+	end
 end
 
 function BallService.DespawnAll()

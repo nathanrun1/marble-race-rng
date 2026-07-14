@@ -59,7 +59,7 @@ local Upgrades = {
 		MaxBet = {
 			PerTier = 1.5,
 			Cost = { Base = 250, Growth = 1.9 },
-			Name = "Max Bet", Short = "Bet", Desc = "Raise your betting ceiling.",
+			Name = "Zone", Short = "Zone", Desc = "Move to the next zone; increase your marble value.",
 			Icon = "💰",
 		},
 		-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
@@ -85,24 +85,32 @@ local Upgrades = {
 		BaseAdditive = {
 			Base = 0.0, C1 = 0.05, C2 = 0.0, C3 = 0.0,
 			Cost = { Base = 300, Growth = 1.7 },
-			Name = "Mult Bonus", Short = "Base", Desc = "Boost the board's slot multipliers.",
+			Name = "Mult Bonus", Short = "Mult", Desc = "Boost the board's slot multipliers.",
 			Icon = "➕",
 		},
-		-- CORE LOOP REWORK: Frequency no longer scales a launch-delay countdown (Base/PerTier below
-		-- are kept, unused, rather than deleted — see BaseSlots/SlotsPerTier for the live meaning).
-		-- A batch now launches ALL of a player's equipped loadout balls, round-robined evenly across
-		-- a fixed Config/Launcher BatchDelay window; Frequency's tier instead raises how many equip
-		-- slots (ProfileStats.GetMaxSlots) the player gets to fill — more equipped balls = more balls
-		-- per batch = effectively higher throughput. (Also hard-ceilinged by Config/Cosmetics
-		-- LoadoutSlots, since the Studio-authored loadout UI only has that many physical slot buttons.)
+		-- launchDelay = Base * (PerTier ^ tier) — seconds a launch slot stays on cooldown after
+		-- firing (PER-SLOT LAUNCH REWORK: each slot launches independently off its Interact pad;
+		-- this one delay applies to every slot the player owns — see ProfileStats.GetLaunchDelay).
+		-- Slot COUNT is the separate NumSlots track below.
 		Frequency = {
-			Base = 2, PerTier = 0.82, -- unused now; kept rather than deleted (see note above)
-			BaseSlots = 1, -- equip slots at tier 0
-			SlotsPerTier = 1, -- +1 equip slot per tier purchased
+			Base = 2, PerTier = 0.82,
 			MaxTier = 12,
 			Cost = { Base = 230, Growth = 1.9 },
-			Name = "Loadout Slots", Short = "Slots", Desc = "Equip one more ball into your launch batch.",
+			Name = "Frequency", Short = "Freq", Desc = "Launch marbles more often.",
 			Icon = "🔄",
+		},
+		-- slots = BaseSlots + SlotsPerTier * tier (ProfileStats.GetMaxSlots): how many launch/equip
+		-- slots the player owns. THE authority on slot count (there is no separate config constant;
+		-- see ProfileStats.GetMaxSlotsCap for the MaxTier-derived ceiling). Sold through the locked
+		-- slot Interact buttons in the world (client SlotInteract's "Unlock - $X" flow), not an
+		-- upgrade-shop kiosk. Keep MaxTier matched to the authored world slot models (1 base + 9).
+		NumSlots = {
+			BaseSlots = 1, -- slots at tier 0
+			SlotsPerTier = 1, -- +1 slot per tier purchased
+			MaxTier = 9,
+			Cost = { Base = 400, Growth = 2.2 },
+			Name = "Add Slot", Short = "Slot", Desc = "Unlock another launch slot.",
+			Icon = "🔓",
 		},
 		-- pegHeatFactor = PerTier * tier (additive). Sensitivity to peg heat (§1.5,
 		-- simplified): tier 0 = heat has no effect; higher = aimed hot pegs pay more
@@ -119,9 +127,16 @@ local Upgrades = {
 		-- thin tail rarities, P(hit) ≈ (luck+1) × base odds, so a linear per-tier luck would
 		-- feel logarithmic (each tier a smaller relative gain) — doubling per tier makes every
 		-- tier double your effective tail odds instead. PLACEHOLDER magnitudes — tune in playtest.
+		--
+		-- Luck is the odd one out: priced in DIAMONDS (Currency below; UpgradeService charges
+		-- CosmeticService's CC instead of cash) and it SURVIVES rebirth (PersistsRebirth;
+		-- ProfileService.ResetProfile skips it) — it's the permanent meta-progression track,
+		-- sold from the cosmetics shop's LUCK tab rather than a cash kiosk.
 		Luck = {
 			LuckGrowth = 2,
 			Cost = { Base = 200, Growth = 1.8 },
+			Currency = "Diamonds",
+			PersistsRebirth = true,
 			Name = "Luck", Short = "Luck", Desc = "Improves your odds of rolling rarer balls.",
 			Icon = "🍀",
 		},

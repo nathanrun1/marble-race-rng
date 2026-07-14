@@ -119,11 +119,13 @@ local function rollCash(player: Player, entry: any, _luckBonus: number): RewardR
 	return { Kind = "Cash", Amount = amount }
 end
 
--- A free UNOPENED Marble Box (entry.BoxId picks which; defaults to Basic), banked into
--- the player's stash — they open it at the cosmetics shop whenever they like.
+-- A free Marble Box, opened ON THE SPOT (GrantCrateRollAnnounced pushes CrateRolled so
+-- the client plays the reveal reel after the daily reel). Opened immediately — not
+-- banked — because the shop's crate stash UI is retired (the LUCK tab replaced it), so
+-- a stashed box would be unreachable.
 local function rollCrate(player: Player, entry: any, _luckBonus: number): RewardResult?
 	local boxId = entry.BoxId or "Basic"
-	if not CosmeticService.AddBox(player, boxId) then
+	if not CosmeticService.GrantCrateRollAnnounced(player, boxId).ok then
 		return nil
 	end
 	local boxName = boxId .. " Box"

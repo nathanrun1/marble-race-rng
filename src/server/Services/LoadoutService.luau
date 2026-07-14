@@ -13,7 +13,6 @@
 local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
 
-local CosmeticsConfig = require(RS.Shared.Config.Cosmetics)
 local BallSkins = require(RS.Shared.BallSkins)
 local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local Signal = require(RS.Shared.Utility.Signal)
@@ -24,20 +23,16 @@ local LoadoutNet = require(RS.Shared.Remote.LoadoutNet)
 
 local LoadoutService = {}
 
--- Static ceiling: CosmeticBonus/LoadoutUI are Studio-authored around exactly this many
--- physical slots, so a player's dynamic per-Frequency-tier cap (GetMaxSlots below) can never
--- exceed it even if their unlocked tier would otherwise allow more (CORE LOOP REWORK).
-local SLOTS = CosmeticsConfig.LoadoutSlots
-
--- How many equip slots this player can currently fill: the Frequency upgrade's slot count
--- (CORE LOOP REWORK — see ProfileStats.GetMaxSlots), hard-capped at SLOTS. Also the batch
--- size BallLaunchService round-robins over (it reads the loadout up to this many slots).
+-- How many equip/launch slots this player currently owns: the NumSlots upgrade IS the
+-- authority on slot count (PER-SLOT LAUNCH REWORK — see ProfileStats.GetMaxSlots, already
+-- bounded by the track's MaxTier). Also the range of slots BallLaunchService will fire
+-- (each independently, off its Interact pad).
 function LoadoutService.GetMaxSlots(player: Player): number
-	return math.min(ProfileStats.GetMaxSlots(ProfileService.GetUpgrades(player)), SLOTS)
+	return ProfileStats.GetMaxSlots(ProfileService.GetUpgrades(player))
 end
 
--- Slot -> skin id, keyed by STRING slot number ("1".."LoadoutSlots") so DataStore round trips
--- never mangle a sparse array.
+-- Slot -> skin id, keyed by STRING slot number ("1"..the NumSlots cap) so DataStore round
+-- trips never mangle a sparse array.
 export type LoadoutData = { [string]: string }
 
 export type LoadoutInfo = {
@@ -64,10 +59,13 @@ local function countEquipped(loadout: LoadoutData): number
 	return n
 end
 
--- Loadout as a numeric slot array (holes allowed) for CosmeticBonus.
-local function loadoutArray(loadout: LoadoutData): { [number]: string? }
+-- Loadout as a numeric slot array (holes allowed) for CosmeticBonus, truncated to the
+-- slots the player currently OWNS. The STORED table is deliberately not clamped — a slot
+-- lost to a prestige reset keeps its skin saved — every read gates instead: entries above
+-- the cap don't pay (here), don't replicate (buildInfo), and don't launch (BallLaunchService).
+local function loadoutArray(loadout: LoadoutData, maxSlots: number): { [number]: string? }
 	local arr: { [number]: string? } = {}
-	for slot = 1, SLOTS do
+	for slot = 1, maxSlots do
 		arr[slot] = loadout[tostring(slot)]
 	end
 	return arr
@@ -80,13 +78,24 @@ function LoadoutService.GetMult(player: Player): number
 	if not loadout then
 		return 1
 	end
-	return 1 + CosmeticBonus.LoadoutBonus(loadoutArray(loadout), CosmeticService.GetCopies(player))
+	return 1 + CosmeticBonus.LoadoutBonus(loadoutArray(loadout, LoadoutService.GetMaxSlots(player)), CosmeticService.GetCopies(player))
 end
 
+-- What replicates to the owning client (and other services): only the slots the player
+-- currently owns. Beyond-cap entries stay in the stored table but are invisible here, so
+-- every consumer (LoadoutDisplay previews, LoadoutUI, BallLaunchService's batch read)
+-- acknowledges the current cap for free.
 local function buildInfo(player: Player): LoadoutInfo
-	local loadout = get(player.UserId)
+	local maxSlots = LoadoutService.GetMaxSlots(player)
+	local visible: LoadoutData = {}
+	for slotStr, id in get(player.UserId) do
+		local slot = tonumber(slotStr)
+		if slot and slot <= maxSlots then
+			visible[slotStr] = id
+		end
+	end
 	return {
-		loadout = loadout,
+		loadout = visible,
 		loadoutBonus = LoadoutService.GetMult(player) - 1,
 	}
 end
@@ -129,13 +138,15 @@ function LoadoutService.SetSlot(player: Player, slot: number, skinId: string?): 
 	return true
 end
 
--- Fill the loadout with the highest-bonus owned skins (CosmeticBonus.BestLoadout).
+-- Fill the loadout with the highest-bonus owned skins (CosmeticBonus.BestLoadout), only
+-- into slots the player has actually unlocked — a skin in a locked slot would still pay
+-- its bonus and preview above the locked world slot.
 function LoadoutService.EquipBest(player: Player)
 	local loadout = data[player.UserId]
 	if not loadout then
 		return
 	end
-	local best = CosmeticBonus.BestLoadout(CosmeticService.GetCopies(player))
+	local best = CosmeticBonus.BestLoadout(CosmeticService.GetCopies(player), LoadoutService.GetMaxSlots(player))
 	table.clear(loadout)
 	for slot, id in best do
 		loadout[tostring(slot)] = id
@@ -148,11 +159,14 @@ end
 --------------------------------------------------------------------------------
 function LoadoutService.ApplyData(player: Player, saved: LoadoutData?)
 	local loadout: LoadoutData = {}
-	local maxSlots = LoadoutService.GetMaxSlots(player)
+	-- Validated against the ABSOLUTE cap, not the player's current unlocked count: an entry
+	-- in a slot they've lost (prestige reset) stays stored — reads gate it out until the
+	-- slot is re-unlocked (see loadoutArray/buildInfo).
+	local slotCap = ProfileStats.GetMaxSlotsCap()
 	if saved then
 		for slotStr, id in saved do
 			local slot = tonumber(slotStr)
-			if slot and slot >= 1 and slot <= maxSlots and type(id) == "string" and CosmeticService.IsOwned(player, id) then
+			if slot and slot >= 1 and slot <= slotCap and type(id) == "string" and CosmeticService.IsOwned(player, id) then
 				loadout[tostring(slot)] = id
 			end
 		end

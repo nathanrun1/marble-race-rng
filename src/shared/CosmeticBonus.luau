@@ -34,6 +34,14 @@ function CosmeticBonus.StarOf(copies: number): number
 	return star
 end
 
+-- Bet multiplier a ball of `rarity` carries (PER-SLOT LAUNCH REWORK): a launched ball's
+-- $ value = current bet size × this. Geometric in rarity — common ×1, uncommon ×2, rare
+-- ×4, ... with the step configurable (CosmeticsConfig.RarityBetFactor). Shared so the
+-- server's launch valuation and every client preview (roll sample readouts) can't drift.
+function CosmeticBonus.RarityBetMult(rarity: number): number
+	return CosmeticsConfig.RarityBetFactor ^ (math.max(rarity, 1) - 1)
+end
+
 -- Duplicates still needed for the next star, or nil if already at max star.
 function CosmeticBonus.DupesToNextStar(copies: number): number?
 	local star = CosmeticBonus.StarOf(copies)
@@ -55,12 +63,13 @@ function CosmeticBonus.SkinBonus(skinId: string, copies: number): number
 end
 
 -- Total bonus (the "+X%" sum) for a loadout: slot array of skin ids (holes allowed).
+-- Iterates whatever is slotted rather than a fixed count — the caller's loadout is
+-- already bounded by the NumSlots track (the authority on slot count).
 function CosmeticBonus.LoadoutBonus(loadout: { [number]: string? }, copies: { [string]: number }): number
 	local sum = 0
 	local seen: { [string]: boolean } = {}
-	for slot = 1, CosmeticsConfig.LoadoutSlots do
-		local id = loadout[slot]
-		if id and not seen[id] then -- a skin only counts once even if duped into two slots
+	for _, id in pairs(loadout) do
+		if not seen[id] then -- a skin only counts once even if duped into two slots
 			seen[id] = true
 			sum += CosmeticBonus.SkinBonus(id, copies[id] or 0)
 		end
@@ -68,10 +77,13 @@ function CosmeticBonus.LoadoutBonus(loadout: { [number]: string? }, copies: { [s
 	return sum
 end
 
--- The best LoadoutSlots skins by bonus, descending (ties broken by rarity then name for
+-- The best maxSlots skins by bonus, descending (ties broken by rarity then name for
 -- stability). Input is the owned-copies table; returns an array of skin ids (may be
 -- shorter than the slot count if fewer skins are owned).
-function CosmeticBonus.BestLoadout(copies: { [string]: number }): { string }
+-- maxSlots: how many slots to fill — pass the player's UNLOCKED count
+-- (LoadoutService.GetMaxSlots); filling locked slots would render previews on locked
+-- world slots and pay their bonus.
+function CosmeticBonus.BestLoadout(copies: { [string]: number }, maxSlots: number): { string }
 	local entries: { { id: string, bonus: number, rarity: number } } = {}
 	for id, n in copies do
 		local bonus = CosmeticBonus.SkinBonus(id, n)
@@ -90,7 +102,7 @@ function CosmeticBonus.BestLoadout(copies: { [string]: number }): { string }
 		return a.id < b.id
 	end)
 	local out: { string } = {}
-	for i = 1, math.min(#entries, CosmeticsConfig.LoadoutSlots) do
+	for i = 1, math.min(#entries, maxSlots) do
 		out[i] = entries[i].id
 	end
 	return out

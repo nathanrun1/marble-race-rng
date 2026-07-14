@@ -16,9 +16,17 @@ local function remoteEvent(name: string): RemoteEvent
 end
 
 return {
-	-- Server -> Client: (plotId: string, skinId: string, value: number) — a banked marble
-	-- produced a claimable plot ball for this player.
+	-- Server -> Client: (id: number, skinId: string, value: number, sourceBall: BasePart?) —
+	-- a banked marble produced a claimable plot ball for this player. sourceBall is the banked
+	-- ball instance itself (still alive during its destroy-delay linger): the client clones it
+	-- so every appearance change the drop accumulated (heat paint, size, particles) carries
+	-- over; nil/expired falls back to a fresh prefab dressed from skinId.
 	SpawnPlotBall = remoteEvent("SpawnPlotBall"),
-	-- Client -> Server: (plotId: string) — claim a touched plot ball (server validates + pays).
+	-- Client -> Server: (ids: { number }, collectAll: boolean?) — claim the plot balls behind
+	-- these ids (server validates + pays). collectAll marks the collect-all pad's batch claim,
+	-- which celebrates with a bigger currency fly than a single walked-over ball.
 	ClaimPlotBall = remoteEvent("ClaimPlotBall"),
+	-- Server -> Client: () — every plot ball is gone (rebirth wiped the claimable set);
+	-- destroy all local plot-ball instances and reset the collect pad.
+	ClearPlotBalls = remoteEvent("ClearPlotBalls"),
 }

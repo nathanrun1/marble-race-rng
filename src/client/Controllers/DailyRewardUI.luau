@@ -98,7 +98,7 @@ local CELL_RENDERERS: { [string]: (Frame, any) -> () } = {
 		setCell(cell, "💰", StringUtils.FormatMoney(result.Amount))
 	end,
 	Crate = function(cell, result)
-		-- The box lands UNOPENED in the stash; the cell shows the box itself.
+		-- The cell shows the box; it opens on the spot (CrateRolled reveal follows).
 		setCell(cell, "📦", result.BoxName)
 	end,
 }
@@ -382,7 +382,7 @@ local WARN_TEXT: { [string]: (any) -> string } = {
 		return "+" .. StringUtils.FormatMoney(r.Amount) .. "!"
 	end,
 	Crate = function(r)
-		return "📦 " .. r.BoxName .. " added to your stash!"
+		return "📦 " .. r.BoxName .. " — opening it now!"
 	end,
 }
 
@@ -400,11 +400,10 @@ local function finishSpin(result: RewardResult)
 	if textFn then
 		WarnUI.WarnLocal(textFn(result), GOLD, WARN_LIFETIME)
 	end
-	-- Currencies fly to their balances; a banked box flies ONE 📦 to the LOADOUT trigger.
+	-- Currencies fly to their balances. A Crate result doesn't fly anything here: the box
+	-- opens immediately and CosmeticsShop's CrateRolled presentation flies the won marble.
 	if result.Kind == "Cash" or result.Kind == "Diamonds" then
 		CurrencyFlyUI.Play(result.Kind)
-	elseif result.Kind == "Crate" then
-		CurrencyFlyUI.Play("Crate", 1)
 	end
 end
 

@@ -10,6 +10,11 @@ local Scoring = {
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned
 	-- (a ball wedged on geometry must not live forever). Tune above a normal fall.
 	MaxBallLifetime = 35,
+	-- Seconds a ball banked at a DestroyTarget keeps physically falling (into the slot's
+	-- hole, out of sight) before its instance is destroyed. Logical despawn (state, counts,
+	-- signals, score/UI) still happens instantly at banking; this only delays the Destroy —
+	-- tune it to how long the drop into the hole takes to leave view.
+	DestroyDelay = 1,
 	-- Jackpot payout: hitting a JackpotTarget adds JackpotMultiplier × the ball's
 	-- otherwise-final banked value (so total = banked × (1 + this)). Tune.
 	-- Lowered 20→12: the jackpot edge was >half the no-build slot EV (the bet-spam exploit).

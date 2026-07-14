@@ -71,19 +71,25 @@ end
 -- 	return caps[math.clamp(tier(upgrades, "Frequency") + 1, 1, #caps)]
 -- end
 
--- Delay between ball launches. UNUSED by the current core loop (BallLaunchService now
--- launches a fixed-window batch — LauncherConfig.BatchDelay — of every equipped ball
--- rather than metering single launches off Frequency); kept rather than deleted per the
--- ongoing core-loop prototyping.
+-- Seconds a launch slot stays on cooldown after firing (PER-SLOT LAUNCH REWORK: every
+-- owned slot launches independently; this one Frequency-scaled delay applies to each).
 function ProfileStats.GetLaunchDelay(upgrades: Upgrades): number
 	return math.max(1/60, UpgradesConfig.Tracks.Frequency.Base * (UpgradesConfig.Tracks.Frequency.PerTier ^ tier(upgrades, "Frequency")))
 end
 
--- Equip slots unlocked by the Frequency tier (CORE LOOP REWORK: Frequency now raises how
--- many of your loadout balls launch each batch, instead of shrinking a launch cooldown).
+-- Launch/equip slots unlocked by the NumSlots tier (PER-SLOT LAUNCH REWORK: slot count is
+-- its own track, bought through the world slot Interact buttons; Frequency is back to delay).
 function ProfileStats.GetMaxSlots(upgrades: Upgrades): number
-	local track = UpgradesConfig.Tracks.Frequency
-	return track.BaseSlots + track.SlotsPerTier * tier(upgrades, "Frequency")
+	local track = UpgradesConfig.Tracks.NumSlots
+	return track.BaseSlots + track.SlotsPerTier * math.min(tier(upgrades, "NumSlots"), track.MaxTier)
+end
+
+-- The absolute slot ceiling: the slot count at NumSlots' MaxTier. The NumSlots track is
+-- THE authority on slot count (there is no separate cosmetics-config slot constant);
+-- world slot models and the loadout UI are authored to match this.
+function ProfileStats.GetMaxSlotsCap(): number
+	local track = UpgradesConfig.Tracks.NumSlots
+	return track.BaseSlots + track.SlotsPerTier * track.MaxTier
 end
 
 -- Luck: biases crate/free-roll rarity sampling toward rarer results (CosmeticService's
@@ -132,7 +138,8 @@ end
 --   MaxBet      → integer coin amount      e.g. "80"
 --   FlatRate    → decimal                  e.g. "1.00"
 --   BaseAdditive→ percentage               e.g. "+5%"
---   Frequency   → ball count               e.g. "4"
+--   Frequency   → per-slot cooldown        e.g. "1.64s delay"
+--   NumSlots    → slot count               e.g. "3 slots"
 --   PegHeat     → multiplier               e.g. "0.5×"
 --   Angle/Arc   → degree range             e.g. "-15° – 15°" (stored in radians)
 --   Axes        → range                    e.g. "0.25 – 0.75"
@@ -149,7 +156,9 @@ function ProfileStats.GetDisplayString(track: string, tier: number): string
 	elseif track == "BaseAdditive" then
 		return string.format("+%.0f%%", ProfileStats.GetBaseAdditive(u) * 100)
 	elseif track == "Frequency" then
-		return string.format("%d balls/batch", ProfileStats.GetMaxSlots(u))
+		return string.format("%.2fs delay", ProfileStats.GetLaunchDelay(u))
+	elseif track == "NumSlots" then
+		return string.format("%d slots", ProfileStats.GetMaxSlots(u))
 	elseif track == "Luck" then
 		-- Shown as the effective rare-odds multiplier (P(thin tail) ≈ (luck+1) × base).
 		return "×" .. StringUtils.FormatShort(ProfileStats.GetLuck(u) + 1)

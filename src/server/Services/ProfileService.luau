@@ -57,6 +57,9 @@ export type Profile = {
 	-- Lives in the profile ON PURPOSE: ResetProfile (prestige) wipes it so the locks
 	-- return, and DataService persistence carries it across sessions for free.
 	unlockedLocks: { [string]: boolean },
+	-- Per-slot AUTO launch purchases this prestige (stringified slot number -> true;
+	-- see Config/SlotAuto + BallLaunchService). Same lifecycle rationale as unlockedLocks.
+	autoSlots: { [string]: boolean },
 }
 
 -- profiles[userId] = Profile
@@ -102,6 +105,7 @@ local function newProfile(): Profile
 			axes = axes,
 		},
 		unlockedLocks = {},
+		autoSlots = {},
 	}
 end
 
@@ -165,6 +169,20 @@ end
 
 -- World upgrade locks bought this prestige (lock id -> true). Returned by reference;
 -- mutate only through SetLockUnlocked.
+-- Per-slot AUTO purchases (stringified slot number -> true). Mutate via SetSlotAuto only.
+function ProfileService.GetAutoSlots(player: Player): { [string]: boolean }
+	return get(player).autoSlots
+end
+
+-- Mark a slot's one-time AUTO as owned. Only BallLaunchService's purchase flow
+-- should call this (it owns validation + the cash deduct).
+function ProfileService.SetSlotAuto(player: Player, slot: number)
+	local profile = get(player)
+	profile.autoSlots[tostring(slot)] = true
+	ProfileService.Changed:Fire(player, profile)
+	ProfileChangedRE:FireClient(player, profile)
+end
+
 function ProfileService.GetUnlockedLocks(player: Player): { [string]: boolean }
 	return get(player).unlockedLocks
 end
@@ -276,12 +294,15 @@ function ProfileService.SetAxis(player: Player, axis: string, value: number): bo
 	return true
 end
 
--- Wipes all upgrade tiers and resets the loadout to defaults. Used only by
--- PrestigeService — bypasses the monotonic guard intentionally.
+-- Wipes upgrade tiers (except PersistsRebirth tracks) and resets the loadout to
+-- defaults. Used only by PrestigeService — bypasses the monotonic guard intentionally.
 function ProfileService.ResetProfile(player: Player)
 	local profile = get(player)
-	for name in UpgradesConfig.Tracks do
-		profile.upgrades[name] = 0
+	for name, def in UpgradesConfig.Tracks do
+		-- PersistsRebirth tracks (Luck — Diamond-bought meta progression) survive the wipe.
+		if not (def :: any).PersistsRebirth then
+			profile.upgrades[name] = 0
+		end
 	end
 	for name in UpgradesConfig.Axes do
 		profile.upgrades[name] = 0
@@ -293,6 +314,7 @@ function ProfileService.ResetProfile(player: Player)
 	local d = UpgradesConfig.LoadoutDefaults
 	profile.loadout = { Bet = ProfileStats.GetBetSizeAtTier(0), BetTier = 0, LaunchPhase = 0, axes = axes }
 	profile.unlockedLocks = {} -- world upgrade locks return on prestige
+	profile.autoSlots = {} -- per-slot AUTO purchases reset too, same as the locks
 	ProfileService.Changed:Fire(player, profile)
 	ProfileChangedRE:FireClient(player, profile)
 end
@@ -334,6 +356,13 @@ function ProfileService.ApplyData(player: Player, saved: Profile?)
 			for lockId, on in saved.unlockedLocks do
 				if type(lockId) == "string" and on == true then
 					profile.unlockedLocks[lockId] = true
+				end
+			end
+		end
+		if type(saved.autoSlots) == "table" then
+			for slotStr, on in saved.autoSlots do
+				if type(slotStr) == "string" and on == true then
+					profile.autoSlots[slotStr] = true
 				end
 			end
 		end

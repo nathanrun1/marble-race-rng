@@ -38,7 +38,8 @@ type Category = { Heat: number, Color: Color3, Material: Enum.Material }
 local CATEGORIES: { [string]: Category } = {
 	Hot    = { Heat = PegsConfig.HotHeat,     Color = Color3.fromRGB(255,   0, 191), Material = Enum.Material.Plastic },
 	Cold   = { Heat = PegsConfig.ColdHeat,    Color = Color3.fromRGB( 98,  37, 209), Material = Enum.Material.Limestone },
-	Normal = { Heat = PegsConfig.NeutralHeat, Color = Color3.fromRGB(180, 128, 255), Material = Enum.Material.Plastic },
+	-- Keep in sync with PegsConfig.HeatAppearance.NormalColor (the client override's default pink).
+	Normal = { Heat = PegsConfig.NeutralHeat, Color = Color3.fromRGB(240, 140, 220), Material = Enum.Material.Plastic },
 }
 
 -- Band thresholds on nd (0 = field edge .. 1 = center) and the category weights

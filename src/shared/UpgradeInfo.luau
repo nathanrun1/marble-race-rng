@@ -26,6 +26,8 @@ export type UpgradeDef = {
 	Widths: { number }?,                       -- Arc: tier cap = #Widths - 1
 	Ranges: { { Min: number, Max: number } }?, -- continuous axes: cap = #Ranges - 1
 	MaxTier: number?,
+	Currency: string?,                         -- "Diamonds" for CC-priced tracks (Luck); nil/absent = cash
+	PersistsRebirth: boolean?,                 -- true: ProfileService.ResetProfile leaves the tier alone
 }
 
 export type Info = {
@@ -37,6 +39,7 @@ export type Info = {
 	maxTier: number?, -- nil = unbounded
 	maxed: boolean,
 	price: number?,   -- nil if maxed
+	currency: string, -- "Cash" | "Diamonds" — what `price` is denominated in
 	canAfford: boolean,
 	-- NOTE: per-track "Locked" gating is gone — upgrade gating is now the world
 	-- UpgradeLock models (server UpgradeLockService / client UpgradeLocks), which sit
@@ -89,7 +92,9 @@ function UpgradeInfo.PriceAt(track: string, currentTier: number): number?
 	return math.floor(def.Cost.Base * (def.Cost.Growth ^ currentTier))
 end
 
--- One track's shop Info, computed from an explicit tier + cash balance.
+-- One track's shop Info, computed from an explicit tier + balance. `points` must be the
+-- balance of the track's OWN currency (cash for most tracks, Diamonds for Luck) — the
+-- caller picks; canAfford is computed against whatever it passes.
 function UpgradeInfo.Build(track: string, tier: number, points: number): Info?
 	local def = Defs[track]
 	if not def then
@@ -105,6 +110,7 @@ function UpgradeInfo.Build(track: string, tier: number, points: number): Info?
 		maxTier = UpgradeInfo.MaxTierOf(def),
 		maxed = price == nil,
 		price = price,
+		currency = def.Currency or "Cash",
 		canAfford = price ~= nil and points >= price,
 	}
 end

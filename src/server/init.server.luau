@@ -151,6 +151,7 @@ for _, service in {
 	ObstacleService.Start,
 	OverheadStatsService.Start,
 	PhysicalLeaderboardService.Start,
+	BallLaunchService.Start, -- per-slot AUTO launch sweep (Config/SlotAuto)
 } do
 	task.spawn(service)
 end

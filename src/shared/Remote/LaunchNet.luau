@@ -25,10 +25,18 @@ local function remoteFunction(name: string): RemoteFunction
 end
 
 return {
-	-- Client -> Server: () — request a launch batch of the player's equipped loadout balls
-	-- (server owns timing/affordability; silently ignored while a batch window is still open).
+	-- Client -> Server: (slot: number?) — request a launch. With a slot number, launches just
+	-- that slot's equipped ball (silently ignored while the slot is cooling down / empty /
+	-- not yet unlocked); with no slot, launches every ready slot (the HUD LAUNCH button).
 	RequestLaunch = remoteEvent("RequestLaunch"),
+	-- Server -> Client: (slot: number, cooldown: number) — this slot just fired; it is on
+	-- cooldown for `cooldown` seconds (client SlotInteract renders the countdown from this).
+	SlotLaunched = remoteEvent("SlotLaunched"),
 	-- Client -> Server invoke: () -> number — the server's current launcher swivel phase
 	-- (0..1), so the client aim preview stays in sync.
 	GetLauncherPhase = remoteFunction("GetLauncherPhase"),
+	-- Client -> Server invoke: (slot: number) -> { ok: boolean, reason: string? } — buy the
+	-- one-time AUTO launch for a slot (Config/SlotAuto price; reasons: "invalid_slot" |
+	-- "locked" | "owned" | "cannot_afford"). Ownership lands in the profile's autoSlots.
+	PurchaseSlotAuto = remoteFunction("PurchaseSlotAuto"),
 }

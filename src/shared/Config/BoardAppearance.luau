@@ -18,6 +18,15 @@ export type Keyframe = {
 	Material: Enum.Material,
 }
 
+-- Grass only ever changes COLOR (material stays whatever was authored) — it's scenery,
+-- not the board, so its shifts are deliberately muted: same hue journey as Floor but
+-- desaturated and pulled toward green, and neighbouring stages reuse colors where the
+-- theme allows. Loud grass would compete with the board for attention.
+export type GrassKeyframe = {
+	Tier: number,
+	Color: Color3,
+}
+
 local BoardAppearance = {
 	MaxTier = 25,
 	Floor = { -- a real color journey, not just darker/lighter: drab -> copper -> steel ->
@@ -43,6 +52,19 @@ local BoardAppearance = {
 		{ Tier = 20, Color = Color3.fromRGB(255, 220, 110), Material = Enum.Material.Foil },
 		{ Tier = 25, Color = Color3.fromRGB(255, 240, 200), Material = Enum.Material.Neon },
 	} :: { Keyframe },
+	Grass = { -- muted echo of the Floor journey: green -> warm olive (copper stages share
+		-- it) -> cool teal (steel) -> emerald -> dusky violet-green -> wine-tinted ->
+		-- golden-dry -> dark moss
+		{ Tier = 0, Color = Color3.fromRGB(106, 146, 74) },
+		{ Tier = 2, Color = Color3.fromRGB(126, 140, 62) },
+		{ Tier = 4, Color = Color3.fromRGB(126, 140, 62) },
+		{ Tier = 6, Color = Color3.fromRGB(76, 138, 118) },
+		{ Tier = 9, Color = Color3.fromRGB(62, 148, 92) },
+		{ Tier = 12, Color = Color3.fromRGB(104, 116, 142) },
+		{ Tier = 16, Color = Color3.fromRGB(134, 90, 94) },
+		{ Tier = 20, Color = Color3.fromRGB(152, 142, 76) },
+		{ Tier = 25, Color = Color3.fromRGB(56, 66, 58) },
+	} :: { GrassKeyframe },
 }
 
 return BoardAppearance

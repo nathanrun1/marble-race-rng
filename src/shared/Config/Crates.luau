@@ -1,6 +1,8 @@
 --!strict
--- Marble Boxes: crate rolls are the main way to get skins (the shop's direct-purchase flow
--- is retired in favour of the index tab). Weights are per-rarity (1..9) relative chances.
+-- Marble Boxes: rolls are the way to get skins. The shop no longer SELLS boxes (its LUCK
+-- tab replaced the crate cards — skins are a core bet-multiplier mechanic now); Boxes
+-- below remain the definitions behind the free roll, the daily reward's instant-open
+-- crate, and the Robux crate dev products. Weights are per-rarity (1..9) relative chances.
 -- Pity: rolling Every times without hitting rarity >= MinRarity forces one; the counter
 -- resets whenever a roll (natural or forced) lands MinRarity+. Counters persist per box.
 -- The Free box is never purchasable: it's granted on a session timer (FirstDelay after

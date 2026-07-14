@@ -24,11 +24,15 @@ local Tags = {
 	Board = "Board", -- Any part of the physical board whose look scales with bet tier (client BoardAppearanceView)
 	BoardFloor = "BoardFloor", -- The floor parts marbles roll on (darker default; see Config/BoardAppearance)
 	BoardSide = "BoardSide", -- The barrier/side parts (lighter default; see Config/BoardAppearance)
+	Grass = "Grass", -- Terrain grass parts; color (only) shifts with bet tier alongside the board (client BoardAppearanceView)
 	QuestUI = "QuestUI", -- A SurfaceGui the daily-quest panel is also built into (client QuestUI)
 	FreeCratePad = "MarbleRoll", -- The free-roll part (e.g. "BallRoll"); child "Pad" claims the free Marble Box on touch (client CosmeticsShop builds its billboard/timer, FreeRollBallSample floats the roll sample above it)
 	DailyRewardPad = "DailyReward", -- A pad that claims the daily reward on touch (client DailyRewardUI fills its authored Billboard.BillboardGui Title/Timer)
 	UpgradeLock = "UpgradeLock", -- A world lock Model gating upgrade tracks: attribute "UpgradeLock" lists the tracks, "Price" is the cash unlock cost, child "Pad" is the unlock pad (server UpgradeLockService + client UpgradeLocks)
-	TestPlotSpawn = "TestPlotSpawn", -- PLACEHOLDER: a part where every player's claimable plot balls spawn (client-only, one shared spot for now; see BallPlotService)
+	PlotSpawn = "PlotSpawn", -- the part plot-ball shots land on (client-only, one shared spot for now; see BallPlotService)
+	PlotShoot = "PlotShoot", -- the part plot balls are shot out of, arcing to PlotSpawn (client BallPlotService)
+	PlotBounds = "PlotBounds", -- CanQuery volume covering the plot; a plot ball not overlapping it after a shot is out of bounds and gets teleported back (client BallPlotService)
+	PlotCollect = "PlotCollect", -- pad that claims EVERY plot ball at once on touch; billboards the collectible total (client BallPlotService)
 	Slot = "Slot", -- A loadout-slot Model; attribute "SlotNum" is its slot index, child "Platform" is where the equipped marble's sample ball floats (client LoadoutDisplay)
 }
 

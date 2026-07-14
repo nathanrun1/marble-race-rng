@@ -17,6 +17,7 @@ local Signal = require(RS.Shared.Utility.Signal)
 local AnnounceUI = require(RS.Shared.AnnounceUI)
 local WarnUI = require(RS.Shared.WarnUI)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
+local BallPlotService = require(RS.Shared.BallPlotService)
 local ProfileService = require(SSS.Scripts.Services.ProfileService)
 local CurrencyService = require(SSS.Scripts.Services.CurrencyService)
 local BallService = require(SSS.Scripts.Services.BallService)
@@ -225,6 +226,10 @@ function PrestigeService.Prestige(player: Player): (boolean, string?)
 	ScoringService.BeginNoScore(player.UserId, PrestigeConfig.NoScoreSeconds)
 	BallService.RemoveOwnership(player.UserId)
 	ScoringService.ClearOwner(player.UserId)
+	-- Same guard for plot balls: invalidate every claimable one BEFORE the balance reset
+	-- below, so an in-flight claim can't credit pre-rebirth plot money into the fresh
+	-- balance (also removes the physical balls on the client).
+	BallPlotService.InvalidateAll(player)
 
 	-- Spend the PP: deduct this prestige's cost so it can't be re-spent. creditedBanked is
 	-- left intact (it's a high-water mark), so available PP simply drops by nextCost — leaving

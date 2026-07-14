@@ -1,12 +1,13 @@
 --!strict
--- Peg "heat sense" visual: hot/cold pegs read as a dull, uncolored gray until the LOCAL
--- player invests in the PegHeat ("Heat Sense") upgrade — each tier blends the peg's color
+-- Peg "heat sense" visual: hot/cold pegs read as ordinary pegs (the default NormalColor
+-- pink) until the LOCAL player invests in the PegHeat ("Heat Sense") upgrade — each tier
+-- blends the peg's color
 -- further toward its true hot/cold identity and unlocks scaling particle FX (orange sparks
 -- on hot, a pale-blue aura on cold), maxing out at PegsConfig.HeatAppearance.MaxTier. Also
 -- reveals PegService's hidden "double-hot" promotion (Neon + Fire) once the viewer's tier
 -- clears DoubleHotMinTier — otherwise a double-hot peg looks like an ordinary hot one.
--- Normal (neither hot nor cold) pegs ignore the PegHeat tier entirely and instead blend
--- toward NormalBetColor as the viewer's selected bet tier rises.
+-- Normal (neither hot nor cold) pegs ignore the PegHeat tier entirely and stay the flat
+-- default purple (NormalColor) — the board/grass carry the bet-tier theme, not the pegs.
 --
 -- Same "local view of shared state" pattern as GoldenPegView/BoardAppearanceView: the pegs
 -- (and their AttributesConfig.PegHeat gameplay value) are server-shared, but the paint job
@@ -17,7 +18,6 @@ local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
 local AttributesConfig = require(RS.Shared.Config.Attributes)
-local BoardAppearanceConfig = require(RS.Shared.Config.BoardAppearance)
 local PegsConfig = require(RS.Shared.Config.Pegs)
 -- Golden pegs outrank the heat look: both views locally repaint the same pegs and both
 -- re-assert Color against server repaints, so exactly ONE of them may own any given peg —
@@ -58,7 +58,6 @@ type Entry = {
 }
 
 local tier = 0
-local betTier = 0
 local entries: { [BasePart]: Entry } = {}
 
 -- Hot/Cold/Normal from the raw heat attribute; also whether a "Hot" peg is actually the
@@ -77,14 +76,15 @@ end
 local function colorFor(category: Category): Color3
 	if category == "Normal" then
 		-- Neutral pegs carry no heat signal either way, so they don't follow the PegHeat tier
-		-- (unlike Hot/Cold below) — instead they blend toward NormalBetColor as the LOCAL
-		-- viewer's selected bet tier rises, same tier scale BoardAppearanceView uses.
-		local betFrac = math.clamp(betTier / BoardAppearanceConfig.MaxTier, 0, 1)
-		return A.DullColor:Lerp(A.NormalBetColor, betFrac)
+		-- (unlike Hot/Cold below) — they're always the flat default purple; the board/grass
+		-- (BoardAppearanceView) carry the bet-tier theme.
+		return A.NormalColor
 	end
 	local trueColor = if category == "Hot" then A.Hot.Color else A.Cold.Color
 	local frac = math.clamp(tier / A.MaxTier, 0, 1)
-	return A.DullColor:Lerp(trueColor, frac)
+	-- Tier 0 = indistinguishable from a normal peg; each Heat Sense tier blends toward
+	-- the true hot/cold identity.
+	return A.NormalColor:Lerp(trueColor, frac)
 end
 
 local function particleStrength(): number
@@ -276,18 +276,9 @@ local function gatherPegs(): { BasePart }
 end
 
 local function setTierFromProfile(profile: any)
-	local changed = false
 	local t = if type(profile) == "table" and type(profile.upgrades) == "table" then profile.upgrades.PegHeat else nil
 	if type(t) == "number" and t ~= tier then
 		tier = t
-		changed = true
-	end
-	local bt = if type(profile) == "table" and type(profile.loadout) == "table" then profile.loadout.BetTier else nil
-	if type(bt) == "number" and bt ~= betTier then
-		betTier = bt
-		changed = true
-	end
-	if changed then
 		repaintAll()
 	end
 end

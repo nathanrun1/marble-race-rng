@@ -204,6 +204,18 @@ come from the `*Net` modules, never created inline).
 - Number formatting goes through `shared/Utility/StringUtils` (`FormatMoney`,
   `FormatShort`, `FormatCompact`, `Commas`).
 
+### Billboards
+
+- World-attached BillboardGuis that label an object (pad billboards, ball value UIs, roll
+  readouts) offset with the WORLD-space properties (`StudsOffsetWorldSpace` /
+  `ExtentsOffsetWorldSpace`), never the unqualified ones: `ExtentsOffset` is CAMERA-space
+  (the label leans/bends over the object as the camera orbits) and `StudsOffset` is
+  OBJECT-space (it follows the part's authored rotation — pads are often authored lying
+  on their side). Billboard text font is `Enum.Font.FredokaOne`.
+- Size them in SCALE units (studs — a fixed world size that shrinks with camera distance)
+  with `TextScaled` labels, not pixel Offsets: an Offset-sized billboard renders at
+  constant screen size, so it looks like it GROWS as the camera backs away.
+
 ### Style
 
 - Match existing file structure and naming: PascalCase modules, `*.luau` extension,

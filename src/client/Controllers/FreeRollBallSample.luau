@@ -20,8 +20,8 @@ local TweenService = game:GetService("TweenService")
 local RS = game:GetService("ReplicatedStorage")
 
 local BallConfig = require(RS.Shared.Config.Ball)
-local CosmeticsConfig = require(RS.Shared.Config.Cosmetics)
 local CratesConfig = require(RS.Shared.Config.Crates)
+local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local WeightedRandom = require(RS.Shared.Utility.WeightedRandom)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local TagsConfig = require(RS.Shared.Config.Tags)
@@ -41,7 +41,6 @@ local SPIN_SPEED = 1.0
 local SCALE = 1.35    -- bigger than a normal/cosmetic sample ball (was 1.8; shrunk to 3/4)
 local TICK_INTERVAL = 3.0 -- how often the idle silhouette cycles to a new candidate
 local SILHOUETTE_COLOR = Color3.new(0, 0, 0)
-local VALUE_GREEN = Color3.fromRGB(110, 255, 120) -- same light green as the ball value UIs
 
 -- Same naming BallEffects uses for a skin's fixed shape attachments (crowns/wings/etc.) — matching
 -- it lets BallEffects.UpdateOrbits (already exported, called every frame) position/scale these
@@ -109,10 +108,10 @@ local function oddsText(weights: { number }, rarity: number): string
 	return "1 in " .. StringUtils.FormatCompact(math.floor(total / w + 0.5))
 end
 
--- The ball's base $ value (CORE LOOP REWORK: a rolled ball IS worth money now —
--- CosmeticsConfig.RarityValue — so the roll readout shows what you'd be launching).
+-- The ball's bet multiplier (PER-SLOT LAUNCH REWORK: rarity multiplies your bet size —
+-- CosmeticBonus.RarityBetMult — so the roll readout shows the N× you'd be launching at).
 local function valueText(rarity: number): string
-	return StringUtils.FormatMoney(CosmeticsConfig.RarityValue[rarity] or 0)
+	return StringUtils.FormatShort(CosmeticBonus.RarityBetMult(rarity)) .. "×"
 end
 
 local function clearShapes(ball: BasePart)
@@ -160,7 +159,7 @@ type Rig = {
 	highlight: Highlight,
 	nameLabel: TextLabel,   -- top row: skin name (white)
 	rarityLabel: TextLabel, -- tall middle row: "1 in X", rarity-coloured
-	valueLabel: TextLabel,  -- bottom row: ball $ value (white)
+	valueLabel: TextLabel,  -- bottom row: bet multiplier "N×" (rarity-coloured)
 	nextTick: number,
 	rolling: boolean,
 }
@@ -223,49 +222,51 @@ local function buildRig(origin: Vector3, pad: BasePart): Rig
 
 	-- Three stacked rows: skin name (white) / rarity + odds (rarity colour, EMPHASIZED — the
 	-- rarity is the hook, so its row is the tall one) / ball value (green). Adorned to the
-	-- sample BALL, not the pad, riding just above it via ExtentsOffset — which is in units of
-	-- the adornee's extents, so the per-tick pop tween (ball shrinks then springs back) makes
-	-- the billboard's height dip and rise with it, punctuating each tick.
+	-- sample BALL, not the pad, riding just above it via ExtentsOffsetWorldSpace — WORLD-space
+	-- (the plain ExtentsOffset is camera-space, which made the readout lean/bend over the ball
+	-- as the camera orbited), still in units of the adornee's extents so the per-tick pop tween
+	-- (ball shrinks then springs back) makes the billboard's height dip and rise with it.
 	--
-	-- PIXEL-sized (Offset) billboard + fixed TextSize: an offset-sized BillboardGui renders at
-	-- a constant SCREEN size at any camera distance, and fixed pixel text neither swells with
-	-- distance nor with how long the odds string happens to be. Wide enough that the longest
-	-- odds row ("1 in 500.5K") fits at its TextSize with margin. Capped at MaxDistance so a
-	-- constant-size readout doesn't hover over the pad from across the whole map.
+	-- STUD-sized (Scale) billboard + TextScaled rows: a fixed WORLD size that shrinks with
+	-- camera distance like any object (a pixel-Offset billboard renders constant screen size,
+	-- i.e. grows relative to the world as you back away). Wide enough that the longest odds
+	-- row ("1 in 500.5K") fits with margin.
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "RollOddsBillboard"
 	billboard.Adornee = ball
-	billboard.Size = UDim2.fromOffset(340, 140)
-	billboard.ExtentsOffset = Vector3.new(0, 1.6, 0) -- just above the ball; tracks its tweened size
+	billboard.Size = UDim2.fromScale(10, 3.1)
+	billboard.ExtentsOffsetWorldSpace = Vector3.new(0, 2.1, 0) -- above the ball; tracks its tweened size
 	billboard.MaxDistance = 120
 	billboard.AlwaysOnTop = true
 	billboard.Parent = ball
 
-	local function makeRow(name: string, yScale: number, heightScale: number, textSize: number): TextLabel
+	-- Row text scales to its row height (the stud-sized billboard means rows have a fixed
+	-- world height), so the height split IS the text-size hierarchy: rarity row tallest.
+	local function makeRow(name: string, yScale: number, heightScale: number): TextLabel
 		local row = Instance.new("TextLabel")
 		row.Name = name
 		row.BackgroundTransparency = 1
 		row.Size = UDim2.new(1, 0, heightScale, 0)
 		row.Position = UDim2.fromScale(0, yScale)
 		row.Font = Enum.Font.FredokaOne
-		row.TextSize = textSize
+		row.TextScaled = true
 		row.TextColor3 = Color3.new(1, 1, 1)
 		row.TextStrokeColor3 = Color3.new(0, 0, 0)
 		row.TextStrokeTransparency = 0.3
 		row.Text = ""
 		row.Parent = billboard
 		-- Vertical shading: bright at the top, dimmer at the bottom. Multiplies the row's
-		-- TextColor3, so each row keeps its own hue (white/rarity colour/green).
+		-- TextColor3, so each row keeps its own hue (white name, rarity-coloured rarity/value).
 		local gradient = Instance.new("UIGradient")
 		gradient.Rotation = 90
 		gradient.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(150, 150, 150))
 		gradient.Parent = row
 		return row
 	end
-	local nameLabel = makeRow("Name", 0, 0.26, 30)
-	local rarityLabel = makeRow("Rarity", 0.26, 0.48, 44) -- the tall middle row
-	local valueLabel = makeRow("Value", 0.74, 0.26, 30)
-	valueLabel.TextColor3 = VALUE_GREEN
+	local nameLabel = makeRow("Name", 0, 0.26)
+	local rarityLabel = makeRow("Rarity", 0.26, 0.48) -- the tall middle row
+	-- Value row: rarity-coloured per tick/reveal (presentCandidate/presentReveal), like the rarity row.
+	local valueLabel = makeRow("Value", 0.74, 0.26)
 
 	return {
 		origin = origin,
@@ -300,10 +301,11 @@ local function presentCandidate(rig: Rig, skinId: string, rarity: number, masked
 	applySilhouetteShapes(rig.ball, skin and skin.data.shapes)
 	local color = BallSkins.RarityColor(rarity)
 	rig.highlight.OutlineColor = color
-	-- Only the rarity row wears the rarity colour; name stays white, value green.
+	-- The rarity and value rows wear the rarity colour; only the name stays white.
 	rig.nameLabel.Text = if masked then "???" else (if skin then skin.name else skinId)
 	rig.rarityLabel.TextColor3 = color
 	rig.rarityLabel.Text = oddsText(CratesConfig.Free.Weights, rarity)
+	rig.valueLabel.TextColor3 = color
 	rig.valueLabel.Text = if masked then "???" else valueText(rarity)
 	popBall(rig)
 end
@@ -369,6 +371,7 @@ local function presentReveal(rig: Rig, skinId: string, rarity: number)
 	local color = BallSkins.RarityColor(rarity)
 	rig.rarityLabel.TextColor3 = color
 	rig.rarityLabel.Text = oddsText(CratesConfig.Free.Weights, rarity)
+	rig.valueLabel.TextColor3 = color
 	rig.valueLabel.Text = valueText(rarity)
 	playRevealFX(rig.ball, color)
 	popBall(rig)

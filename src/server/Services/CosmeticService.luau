@@ -141,6 +141,23 @@ function CosmeticService.AddCC(player: Player, amount: number)
 	announce(player)
 end
 
+-- Spend CC atomically: false (untouched) when the balance can't cover it. Used by
+-- UpgradeService for Diamond-priced tracks (Luck); skin/crate spending stays inline
+-- in Purchase/RollCrate below.
+function CosmeticService.SpendCC(player: Player, amount: number): boolean
+	local d = data[player.UserId]
+	if not d then
+		return false
+	end
+	amount = math.floor(amount)
+	if amount <= 0 or d.cc < amount then
+		return false
+	end
+	d.cc -= amount
+	announce(player)
+	return true
+end
+
 -- Dev only (DevService /cc): set the CC balance directly, raising or lowering.
 function CosmeticService.SetCC(player: Player, amount: number)
 	local d = data[player.UserId]

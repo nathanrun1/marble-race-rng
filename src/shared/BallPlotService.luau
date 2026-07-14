@@ -1,8 +1,9 @@
 --!strict
 -- Plot balls: when a dropped marble banks at a destroy target, a claimable "ghost" copy of it
 -- (same appearance, same final value) spawns at the player's plot for them to walk over and
--- collect. PLACEHOLDER: everyone's plot balls spawn at the single part tagged
--- TagsConfig.TestPlotSpawn for now (no real per-player plots yet).
+-- collect. PLACEHOLDER: everyone's plot balls arrive at the single part tagged
+-- TagsConfig.PlotSpawn for now (no real per-player plots yet), shot out of the part tagged
+-- TagsConfig.PlotShoot along a collision-free curved arc.
 --
 -- Split (one file, two entry points — call the one matching context):
 --   BallPlotService.InitServer() — hooks ScoreHandler.BallBanked, tracks each player's currently
@@ -29,16 +30,18 @@ local BallConfig = require(RS.Shared.Config.Ball)
 local BallPlotConfig = require(RS.Shared.Config.BallPlot)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local TagsConfig = require(RS.Shared.Config.Tags)
+local CoinsConfig = require(RS.Shared.Config.Coins)
 local BallSkins = require(RS.Shared.BallSkins)
 local BallEffects = require(RS.Shared.BallEffects)
 local SoundService = require(RS.Shared.SoundService)
+local StringUtils = require(RS.Shared.Utility.StringUtils)
+local WarnUI = require(RS.Shared.WarnUI)
 local FxNet = require(RS.Shared.Remote.FxNet)
 local PlotNet = require(RS.Shared.Remote.PlotNet)
 
 local BallPlotService = {}
 
 local ID_WRAP = 2 ^ 31
-local SPAWN_VEL_RANGE = 8  -- How much spawned plot ball velocity can very from 0 in both x & y
 local PLOT_VALUE_FRACTION = 1 / 3 -- a plot ball is only worth a third of what it actually banked
 
 -- Same non-collidable-with-players group shape as CollisionService's "Player" group for real
@@ -49,6 +52,20 @@ local PLAYER_GROUP = "Player" -- matches CollisionService.luau's PLAYER_GROUP st
 --------------------------------------------------------------------------------
 -- Server
 --------------------------------------------------------------------------------
+-- Per-player claimable balls: id -> what it's actually worth/wearing. The server never
+-- re-derives this from the client; a claim either matches an entry here or it's ignored.
+-- Module-scope (populated/used by InitServer) so InvalidateAll can wipe it.
+local claimable: { [Player]: { [number]: { value: number, skinId: string } } } = {}
+
+-- Server-only. Invalidate EVERY claimable plot ball for `player` and tell their client to
+-- remove the physical balls. PrestigeService calls this BEFORE the rebirth balance reset —
+-- a claim landing between the reset and the wipe would credit pre-rebirth plot money into
+-- the fresh balance.
+function BallPlotService.InvalidateAll(player: Player)
+	claimable[player] = nil
+	PlotNet.ClearPlotBalls:FireClient(player)
+end
+
 function BallPlotService.InitServer()
 	local SSS = game:GetService("ServerScriptService")
 	local ScoreHandler = require(SSS.Scripts.Services.ScoreHandler)
@@ -67,10 +84,6 @@ function BallPlotService.InitServer()
 
 	local spawnRE = PlotNet.SpawnPlotBall
 	local claimRE = PlotNet.ClaimPlotBall
-
-	-- Per-player claimable balls: id -> what it's actually worth/wearing. The server never
-	-- re-derives this from the client; a claim either matches an entry here or it's ignored.
-	local claimable: { [Player]: { [number]: { value: number, skinId: string } } } = {}
 	local nextId = 0
 
 	local function onBallBanked(player: Player, ball: BasePart, amount: number)
@@ -93,13 +106,15 @@ function BallPlotService.InitServer()
 		end
 		perPlayer[id] = { value = plotValue, skinId = skinId }
 
-		spawnRE:FireClient(player, id, skinId, plotValue)
+		-- The banked ball rides along so the client can clone its exact look (it stays alive
+		-- through its destroy-delay linger, which comfortably covers the remote's flight).
+		spawnRE:FireClient(player, id, skinId, plotValue, ball)
 	end
 
 	-- ids: a list, since a client-combined plot ball claims every id merged into it at once
 	-- rather than firing one remote per merged ball. Each id is validated independently —
 	-- unknown/already-claimed ids in the batch are silently skipped, not a failure of the batch.
-	local function onClaim(player: Player, ids: unknown)
+	local function onClaim(player: Player, ids: unknown, collectAll: unknown)
 		if type(ids) ~= "table" then
 			return
 		end
@@ -123,9 +138,10 @@ function BallPlotService.InitServer()
 		CurrencyService.AddPoints(player, total, "Plot ball claimed")
 		local flyRE = FxNet.PlayCurrencyFly
 		if flyRE then
-			-- A small fixed count: plot claims happen constantly while walking the plot, so the
-			-- default 7-11 icon celebration is too loud a beat for them.
-			flyRE:FireClient(player, "Cash", 3)
+			-- Single walked-over claims fly a small fixed count (they happen constantly while
+			-- walking the plot; the full celebration is too loud a beat for them). The
+			-- collect-all pad's batch claim IS the big beat: 10 icons.
+			flyRE:FireClient(player, "Cash", if collectAll == true then 10 else 3)
 		end
 	end
 
@@ -141,6 +157,7 @@ end
 --------------------------------------------------------------------------------
 function BallPlotService.InitClient()
 	local TweenService = game:GetService("TweenService")
+	local RunService = game:GetService("RunService")
 
 	local spawnRE = PlotNet.SpawnPlotBall
 	local claimRE = PlotNet.ClaimPlotBall
@@ -156,8 +173,8 @@ function BallPlotService.InitClient()
 	-- claim path could look a ball up by id if ever needed.
 	local plotBalls: { [number]: BasePart } = {}
 
-	local function resolvePlotPart(): BasePart?
-		for _, inst in CollectionService:GetTagged(TagsConfig.TestPlotSpawn) do
+	local function resolveTaggedPart(tag: string): BasePart?
+		for _, inst in CollectionService:GetTagged(tag) do
 			if inst:IsA("BasePart") then
 				return inst
 			end
@@ -251,13 +268,164 @@ function BallPlotService.InitClient()
 		end)
 	end
 
-	-- Claims EVERY id this ball currently represents (its own + anything merged into it) in one
-	-- remote call, rather than one FireServer per merged ball.
-	local function claim(ball: BasePart)
-		local ids = ballIds[ball]
-		if not ids then
+	-- Fires the ball out of the PlotShoot part along a curved (y-arcing) path that lands at
+	-- landPos. Animated along a quadratic Bezier (start -> raised midpoint -> landing) rather
+	-- than launched as a live projectile: with fixed gravity a real ballistic shot can't have
+	-- its flight time AND arc height tuned independently, and both are config knobs
+	-- (BallPlotConfig.ShotTime / ShotArcHeight). The ball is fully ghosted (anchored, no
+	-- collide/touch/query) for the flight so nothing can deflect it or claim it mid-air; at
+	-- touchdown it unanchors with the curve's end velocity so physics take over seamlessly.
+	-- After landing, the first moment the ball overlaps the PlotBounds volume its velocity is
+	-- damped by BallPlotConfig.BoundsHitSlowFactor so the handoff momentum can't skid it across
+	-- (or out of) the plot. Safety net: BallPlotConfig.OutOfBoundsRescueTime after the shot, a
+	-- ball that is still not overlapping PlotBounds (a bad arc, a bounce off a fence) teleports
+	-- to landPos.
+
+	-- nil if no PlotBounds part is tagged (bounds checks then just no-op).
+	local function isInPlotBounds(ball: BasePart): boolean?
+		local bounds = resolveTaggedPart(TagsConfig.PlotBounds)
+		if not bounds then
+			return nil
+		end
+		local params = OverlapParams.new()
+		params.FilterType = Enum.RaycastFilterType.Include
+		params.FilterDescendantsInstances = { bounds }
+		return #workspace:GetPartsInPart(ball, params) > 0
+	end
+
+	-- dress: parenting-dependent decoration (appearance/orbits/value UI) — the ball stays OUT
+	-- of workspace for the ShotDelay muzzle hold (it must not be visible while the banked ball
+	-- is still lingering out its destroy delay), so launchShot parents it when the shot fires
+	-- and calls this right after. A ball consumed mid-hold (collect-all) never appears at all.
+	-- onBoundsHit: optional override for the first-PlotBounds-overlap moment after landing —
+	-- the merge shot deletes its visual ball there instead of damping it. Called exactly once.
+	local function launchShot(ball: BasePart, shootPart: BasePart, landPos: Vector3, dress: () -> (), onBoundsHit: (() -> ())?)
+		ball.CanCollide = false
+		ball.CanTouch = false
+		ball.CanQuery = false
+		ball.Anchored = true
+		local startPos = shootPart.Position
+		local midPos = (startPos + landPos) / 2 + Vector3.new(0, BallPlotConfig.ShotArcHeight, 0)
+		ball.CFrame = CFrame.new(startPos)
+
+		-- Consumed (Destroyed) while still unparented can't be seen via ball.Parent — track it.
+		local destroyed = false
+		ball.Destroying:Once(function()
+			destroyed = true
+		end)
+
+		task.delay(BallPlotConfig.ShotDelay, function()
+			if destroyed then
+				return -- claimed/consumed during the muzzle hold; it never appears
+			end
+			ball.Parent = workspace
+			dress()
+
+			local flightTime = BallPlotConfig.ShotTime
+			local elapsed = 0
+			local landed = false
+			local conn: RBXScriptConnection
+			conn = RunService.Heartbeat:Connect(function(dt: number)
+				if not ball.Parent then
+					conn:Disconnect() -- claimed/destroyed mid-flight
+					return
+				end
+				if landed then
+					-- Post-landing: watch for the first PlotBounds overlap.
+					local inBounds = isInPlotBounds(ball)
+					if inBounds == nil then
+						-- No bounds volume tagged: still fire the callback (a merge must complete
+						-- rather than strand its visual ball forever); nothing to damp against.
+						conn:Disconnect()
+						if onBoundsHit then
+							onBoundsHit()
+						end
+					elseif inBounds then
+						conn:Disconnect()
+						if onBoundsHit then
+							onBoundsHit()
+						else
+							ball.AssemblyLinearVelocity *= BallPlotConfig.BoundsHitSlowFactor
+						end
+					end
+					return
+				end
+				elapsed += dt
+				local t = math.min(elapsed / flightTime, 1)
+				ball.Position = startPos:Lerp(midPos, t):Lerp(midPos:Lerp(landPos, t), t)
+				if t >= 1 then
+					landed = true
+					ball.Anchored = false
+					-- Bezier end tangent B'(1) = 2*(landPos - midPos)/T: physics continues the curve
+					ball.AssemblyLinearVelocity = (landPos - midPos) * 2 / flightTime
+					ball.CanCollide = true
+					ball.CanTouch = true
+					ball.CanQuery = true
+				end
+			end)
+		end)
+
+		-- Unconditional: fires even if the ball already hit bounds earlier (it may have bounced
+		-- back out since). It only teleports, never retires the watcher — a still-pending
+		-- onBoundsHit (merge finalize) then triggers off the now-in-bounds ball next frame.
+		-- Counted from when the shot actually FIRES, so the muzzle hold doesn't eat into it.
+		task.delay(BallPlotConfig.ShotDelay + BallPlotConfig.OutOfBoundsRescueTime, function()
+			if not ball.Parent then
+				return -- already claimed/consumed
+			end
+			if isInPlotBounds(ball) == false then
+				ball.CFrame = CFrame.new(landPos)
+				ball.AssemblyLinearVelocity = Vector3.zero
+			end
+		end)
+	end
+
+	-- Same gold the coin pickups' "+$X" banner uses (CoinService REWARD_COLOR) — a plot
+	-- claim is the same "walked over free money" beat.
+	local CLAIM_WARN_COLOR = Color3.fromRGB(255, 210, 60)
+
+	----------------------------------------------------------------------------
+	-- Collect-all pad (TagsConfig.PlotCollect): billboards the total claimable $
+	-- and claims every plot ball at once on touch. Wired at the end of InitClient;
+	-- refreshCollect is safe to call before then (it just no-ops).
+	----------------------------------------------------------------------------
+	local COLLECT_GREEN = Color3.fromRGB(0, 255, 0)
+	local COLLECT_GRAY = Color3.fromRGB(128, 128, 128)
+	local collectPart: BasePart? = nil
+	local collectAmountLabel: TextLabel? = nil
+
+	local function totalCollectible(): number
+		local total = 0
+		for _, v in ballValue do
+			total += v
+		end
+		return total
+	end
+
+	-- Repaint the collect pad + its billboard from the current claimable total. Called on
+	-- every event that changes ballValue (spawn, merge, claim, collect-all).
+	local function refreshCollect()
+		local part = collectPart
+		local label = collectAmountLabel
+		if not (part and label) then
 			return
 		end
+		local total = totalCollectible()
+		local hasMoney = total > 0
+		label.Text = "$" .. StringUtils.FormatShort(total)
+		label.TextColor3 = if hasMoney then COLLECT_GREEN else COLLECT_GRAY
+		part.Color = if hasMoney then COLLECT_GREEN else COLLECT_GRAY
+	end
+
+	-- Visually + logically consume one plot ball (bookkeeping, burst, instance) WITHOUT the
+	-- claim side effects (sound/banner/remote/refresh) — claim() and collectAll() layer
+	-- those, since collect-all batches every ball into ONE remote call and one banner.
+	local function consumeBall(ball: BasePart): ({ number }?, number)
+		local ids = ballIds[ball]
+		if not ids then
+			return nil, 0
+		end
+		local value = ballValue[ball] or 0
 		ballIds[ball] = nil
 		ballValue[ball] = nil
 		pulsing[ball] = nil
@@ -269,40 +437,171 @@ function BallPlotService.InitClient()
 			removeFromSkinList(ball, skinId)
 			ballSkin[ball] = nil
 		end
-
 		playClaimBurst(ball.Position, ball.Color)
-		-- Collect SFX on the touch itself (same sound coin pickups use), not on the server's
-		-- credit round trip — the feedback has to land the instant the marble disappears.
-		SoundService.Play({ soundId = SoundsConfig.Collect3 })
-		ball:Destroy() -- optimistic: gone locally the instant it's touched
-		claimRE:FireServer(ids)
+		ball:Destroy() -- optimistic: gone locally the instant it's consumed
+		return ids, value
 	end
 
-	local function onSpawn(id: unknown, skinIdRaw: unknown, value: unknown)
+	local function claim(ball: BasePart)
+		local ids, value = consumeBall(ball)
+		if not ids then
+			return
+		end
+		-- Collect SFX + "+$X" banner on the touch itself (same sound/colour/lifetime the coin
+		-- pickups use), not on the server's credit round trip — the feedback has to land the
+		-- instant the marble disappears. Optimistic like the rest of the claim.
+		SoundService.Play({ soundId = SoundsConfig.Collect3 })
+		if value > 0 then
+			WarnUI.WarnLocal("+$" .. StringUtils.FormatShort(value), CLAIM_WARN_COLOR, CoinsConfig.RewardWarnLifetime)
+		end
+		claimRE:FireServer(ids)
+		refreshCollect()
+	end
+
+	-- Claim EVERY plot ball (in-flight real shots included — the server already holds their
+	-- ids as claimable) in one remote call, one sound, one summed banner.
+	local function collectAll()
+		local balls = {}
+		for ball in ballIds do
+			table.insert(balls, ball)
+		end
+		local allIds: { number } = {}
+		local total = 0
+		for _, ball in balls do
+			local ids, value = consumeBall(ball)
+			if ids then
+				table.move(ids, 1, #ids, #allIds + 1, allIds)
+				total += value
+			end
+		end
+		if #allIds == 0 then
+			return
+		end
+		SoundService.Play({ soundId = SoundsConfig.Collect3 })
+		WarnUI.WarnLocal("+$" .. StringUtils.FormatShort(total), CLAIM_WARN_COLOR, CoinsConfig.RewardWarnLifetime)
+		claimRE:FireServer(allIds, true) -- collect-all: server flies the big 10-icon celebration
+		refreshCollect()
+	end
+
+	-- Rebirth wiped the claimable set server-side: remove every physical plot ball (and any
+	-- still holding at the muzzle / mid-shot — Destroy retires their flight watchers) with no
+	-- claim/burst/banner, and reset the collect pad.
+	local function onClearAll()
+		for ball in ballIds do
+			ball:Destroy()
+		end
+		table.clear(ballIds)
+		table.clear(ballValue)
+		table.clear(ballSkin)
+		table.clear(ballsBySkin)
+		table.clear(plotBalls)
+		table.clear(pulsing)
+		refreshCollect()
+	end
+
+	-- Two stacked rows over the pad, WORLD-space offset (camera-space offsets lean/bend as
+	-- the camera orbits; object-space ones follow the pad's authored rotation).
+	local function setupCollectPad(part: BasePart)
+		if collectPart then
+			return -- one pad; ignore extras
+		end
+		collectPart = part
+
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = "PlotCollectBillboard"
+		-- Scale units = studs: fixed WORLD size, shrinks with distance (pixel-Offset billboards
+		-- render constant screen size, i.e. grow with distance).
+		billboard.Size = UDim2.fromScale(7, 2.6)
+		billboard.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
+		billboard.AlwaysOnTop = true
+		billboard.MaxDistance = 120
+		billboard.Parent = part
+
+		local function makeRow(name: string, yScale: number, heightScale: number): TextLabel
+			local row = Instance.new("TextLabel")
+			row.Name = name
+			row.Size = UDim2.new(1, 0, heightScale, 0)
+			row.Position = UDim2.fromScale(0, yScale)
+			row.BackgroundTransparency = 1
+			row.Font = Enum.Font.FredokaOne
+			row.TextScaled = true
+			row.TextColor3 = Color3.new(1, 1, 1)
+			row.Parent = billboard
+			local rowStroke = Instance.new("UIStroke")
+			rowStroke.Color = Color3.new(0, 0, 0)
+			rowStroke.Thickness = 2
+			rowStroke.Transparency = 0.2
+			rowStroke.Parent = row
+			return row
+		end
+		local title = makeRow("Title", 0, 0.5)
+		title.Text = "Collect All"
+		collectAmountLabel = makeRow("Amount", 0.5, 0.5)
+
+		local TOUCH_DEBOUNCE = 0.4
+		local lastTouch = 0
+		part.Touched:Connect(function(obj: BasePart)
+			local char = Players.LocalPlayer.Character
+			if not (char and obj:IsDescendantOf(char)) then
+				return
+			end
+			local now = os.clock()
+			if now - lastTouch < TOUCH_DEBOUNCE then
+				return
+			end
+			lastTouch = now
+			collectAll()
+		end)
+
+		refreshCollect()
+	end
+
+	-- The visible half of a merge: bump the target's displayed value and pulse it. Split from
+	-- the id bookkeeping because the merge shot defers this until its ball reaches the plot.
+	local function showMerge(target: BasePart, value: number)
+		ballValue[target] += value
+		BallEffects.SetValueUI(target, ballValue[target])
+		playMergePulse(target)
+		refreshCollect()
+	end
+
+	local function onSpawn(id: unknown, skinIdRaw: unknown, value: unknown, sourceBall: unknown)
 		if type(id) ~= "number" or type(value) ~= "number" then
 			return
 		end
 		local skinId = if type(skinIdRaw) == "string" then skinIdRaw else BallSkins.GetDefaultId()
+		-- The banked ball itself, if it's still lingering out its destroy delay on this
+		-- client — cloning it carries EVERY appearance change the drop accumulated (heat
+		-- paint/particles, size, material), not just the skin.
+		local source: BasePart? = if typeof(sourceBall) == "Instance"
+				and sourceBall:IsA("BasePart")
+				and sourceBall.Parent
+			then sourceBall
+			else nil
 
 		-- Already at the cap for this skin: merge into a random existing ball of it instead of
-		-- spawning a new physical ball.
+		-- adding a new live one. The id/claim bookkeeping happens NOW — a claim on the target
+		-- mid-shot must still collect this value — but the visible merge waits for the shot.
 		local list = getSkinList(skinId)
+		local mergeTarget: BasePart? = nil
 		if #list >= BallPlotConfig.MaxPerSkin then
-			local target = list[math.random(#list)]
-			table.insert(ballIds[target], id)
-			ballValue[target] += value
-			plotBalls[id] = target
-			BallEffects.SetValueUI(target, ballValue[target])
-			playMergePulse(target)
-			return
+			mergeTarget = list[math.random(#list)]
+			table.insert(ballIds[mergeTarget], id)
+			plotBalls[id] = mergeTarget
 		end
 
-		local plotPart = resolvePlotPart()
+		local plotPart = resolveTaggedPart(TagsConfig.PlotSpawn)
+		local shootPart = resolveTaggedPart(TagsConfig.PlotShoot)
+		if mergeTarget and not (plotPart and shootPart) then
+			-- No way to play the shot: apply the merge instantly (pre-shot behavior).
+			showMerge(mergeTarget, value)
+			return
+		end
 		if not plotPart then
 			return
 		end
 
-		local ball = (BallConfig.Prefab :: BasePart):Clone()
+		local ball = (if source then source:Clone() else (BallConfig.Prefab :: BasePart):Clone())
 		ball.Name = "PlotBall"
 		ball.Anchored = false
 		ball.CanCollide = true
@@ -310,38 +609,77 @@ function BallPlotService.InitClient()
 		ball.CanTouch = true
 		ball.CollisionGroup = PLOT_BALL_GROUP
 		ball:RemoveTag(TagsConfig.Ball) -- never scored/hidden as a real live ball
+		ball:SetAttribute(AttributesConfig.OwnerUserId, nil) -- a clone of a live ball isn't one
 		-- Stamped like real board balls get at spawn (CosmeticService.onBallSpawn), so anything
 		-- reading a ball's cosmetic identity generically — e.g. AttachValueUI's rarity-tinted
 		-- value text — works on plot balls too.
 		ball:SetAttribute(AttributesConfig.SkinId, skinId)
-		ball.CFrame = CFrame.new(plotPart.Position + Vector3.new(0, plotPart.Size.Y / 2 + ball.Size.Y, 0))
-        ball.AssemblyLinearVelocity = Vector3.new(math.random(-SPAWN_VEL_RANGE, SPAWN_VEL_RANGE), 0, math.random(-SPAWN_VEL_RANGE, SPAWN_VEL_RANGE))
-		ball.Parent = workspace
+		local spread = BallPlotConfig.ShotSpread
+		local landPos = plotPart.Position
+			+ Vector3.new(
+				(math.random() - 0.5) * 2 * spread,
+				plotPart.Size.Y / 2 + ball.Size.Y,
+				(math.random() - 0.5) * 2 * spread
+			)
+		-- Parenting-dependent decoration; the shot paths run it via launchShot when the ball
+		-- actually enters workspace (after the ShotDelay muzzle hold), the no-shot fallback
+		-- runs it right here.
+		local function dress()
+			if not source then
+				-- Prefab fallback only: a source clone already wears the drop's full look, and
+				-- re-applying would repaint it back to neutral (heat 0, default size/material).
+				BallEffects.ApplyAppearance(ball, {
+					skinId = skinId,
+					heat = 0,
+				})
+			end
+			-- Plot balls shed the "Ball" tag (above), so BallEffects' per-frame shape/orbit
+			-- positioner never picks them up on its own — without this opt-in, a shape-built
+			-- skin (crowns/wings/rings) shows only its base colour + highlight.
+			BallEffects.TrackOrbits(ball)
+			-- Same value display dropped balls use (BallEffects.AttachValueUI/SetValueUI): a
+			-- smooth-follow billboard, independent of this ball's own physics jitter — just
+			-- sitting lower and white-stroked so a plot full of them reads differently from
+			-- live board balls.
+			BallEffects.AttachValueUI(ball, {
+				studsOffset = Vector3.new(0, 2, 0),
+				extentsOffset = Vector3.new(0, 2, 0),
+				strokeColor = Color3.new(1, 1, 1),
+				worldSized = true, -- plot balls linger; their readout must shrink with distance
+			})
+			BallEffects.SetValueUI(ball, value)
+		end
 
-		BallEffects.ApplyAppearance(ball, {
-			skinId = skinId,
-			heat = 0,
-		})
-		-- Plot balls shed the "Ball" tag (above), so BallEffects' per-frame shape/orbit
-		-- positioner never picks them up on its own — without this opt-in, a shape-built
-		-- skin (crowns/wings/rings) shows only its base colour + highlight.
-		BallEffects.TrackOrbits(ball)
-		-- Same value display dropped balls use (BallEffects.AttachValueUI/SetValueUI): a
-		-- smooth-follow billboard, independent of this ball's own physics jitter — just
-		-- sitting lower and white-stroked so a plot full of them reads differently from
-		-- live board balls.
-		BallEffects.AttachValueUI(ball, {
-			studsOffset = Vector3.new(0, 2, 0),
-			extentsOffset = Vector3.new(0, 2, 0),
-			strokeColor = Color3.new(1, 1, 1),
-		})
-		BallEffects.SetValueUI(ball, value)
+		if mergeTarget and shootPart then
+			-- Visual-only merge shot: the ball flies in, vanishes on its first PlotBounds
+			-- overlap, and only THEN does the target visibly absorb it (value bump + pulse).
+			local target = mergeTarget
+			launchShot(ball, shootPart, landPos, dress, function()
+				ball:Destroy()
+				if ballIds[target] then -- target may have been claimed mid-shot (this id went with it)
+					showMerge(target, value)
+				end
+			end)
+		elseif shootPart then
+			launchShot(ball, shootPart, landPos, dress)
+		else
+			ball.CFrame = CFrame.new(landPos)
+			ball.AssemblyLinearVelocity = Vector3.zero -- a source clone copies the drop's velocity
+			ball.Parent = workspace
+			dress()
+		end
+
+		if mergeTarget then
+			return -- visual-only shot: its id already belongs to the merge target, and it is
+			-- never claimable/tracked itself — launchShot's bounds hit consumes it
+		end
 
 		ballIds[ball] = { id }
 		ballValue[ball] = value
 		ballSkin[ball] = skinId
 		plotBalls[id] = ball
 		table.insert(list, ball)
+		refreshCollect()
 
 		local touchedConn: RBXScriptConnection
 		touchedConn = ball.Touched:Connect(function(obj: BasePart)
@@ -354,6 +692,17 @@ function BallPlotService.InitClient()
 	end
 
 	spawnRE.OnClientEvent:Connect(onSpawn)
+	;(PlotNet.ClearPlotBalls :: RemoteEvent).OnClientEvent:Connect(onClearAll)
+
+	local collectPad = resolveTaggedPart(TagsConfig.PlotCollect)
+	if collectPad then
+		setupCollectPad(collectPad)
+	end
+	CollectionService:GetInstanceAddedSignal(TagsConfig.PlotCollect):Connect(function(inst: Instance)
+		if inst:IsA("BasePart") then
+			setupCollectPad(inst)
+		end
+	end)
 end
 
 return BallPlotService

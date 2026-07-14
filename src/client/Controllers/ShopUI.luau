@@ -62,6 +62,7 @@ local UI = {
 	boostHost = ShopGui.ShopFrame:FindFirstChild("3xButtonHost") :: GuiObject?,
 	frameStroke = ShopGui.ShopFrame:FindFirstChildOfClass("UIStroke") :: UIStroke?,
 	iconStroke = ShopGui.ShopFrame.Head.Icon:FindFirstChildOfClass("UIStroke") :: UIStroke?,
+	tierBadge = ShopGui.ShopFrame.Head.TierBadge, -- Frame (hidden entirely in the flat unlock views)
 	tierStroke = ShopGui.ShopFrame.Head.TierBadge:FindFirstChildOfClass("UIStroke") :: UIStroke?,
     closeBtn = ShopGui.ShopFrame.UIListIgnore.CloseButton
 }
@@ -115,6 +116,11 @@ local loadedInfo: Info? = nil
 -- exclusive with loadedTrack.
 export type LockView = { id: string, price: number, tracks: { string } }
 local loadedLock: LockView? = nil
+
+-- A launch-slot unlock being offered (see ShopUI.OpenSlotUnlock — the world slot Interact
+-- pads open this). Renders with the lock chrome but is backed by the NumSlots upgrade
+-- track, not a world UpgradeLock. Mutually exclusive with loadedTrack/loadedLock.
+local loadedSlotUnlock = false
 
 -- The 3× boost grants 3 tiers, so it's only offered when at least 3 tiers remain.
 -- `boostButton` is bound at the bottom; loadShop captures it as a forward ref.
@@ -283,6 +289,8 @@ local function applyLockChrome(locked: boolean)
 	if UI.tierStroke then
 		UI.tierStroke.Color = if locked then LOCK_STROKE else ORIGINAL_TIER_STROKE
 	end
+	-- A flat unlock has no tier progression — the badge is meaningless there, hide it.
+	UI.tierBadge.Visible = not locked
 	UI.word.Text = if locked then LOCK_WORD else ORIGINAL_WORD
 
 	local size = ShopFrame.Size
@@ -308,7 +316,10 @@ function loadShop(track: string): Info
 	end
 
     if upgradeInfo.price then
-        UI.price.Text = "$"..StringUtils.FormatShort(upgradeInfo.price)
+        -- Diamond-priced tracks (Luck) show 💎; note the kiosk's canAfford still compares
+        -- against the CASH balance — Luck's real home is the cosmetics shop's LUCK tab.
+        local prefix = if upgradeInfo.currency == "Diamonds" then "💎 " else "$"
+        UI.price.Text = prefix..StringUtils.FormatShort(upgradeInfo.price)
     else
         UI.price.Text = "MAXED"
     end
@@ -344,7 +355,26 @@ function loadShop(track: string): Info
     loadedTrack = track
     loadedInfo = upgradeInfo
     loadedLock = nil
+    loadedSlotUnlock = false
     return upgradeInfo
+end
+
+-- Hide the tier-progression sections (effect values, pips, 3× boost) — shared by the two
+-- flat-purchase views (world lock / slot unlock), which have no progression to show.
+local function hideProgressSections()
+	UI.effect.Visible = false
+	if UI.effectSpacer then
+		UI.effectSpacer.Visible = false
+	end
+	UI.track.Visible = false
+	boostAvailable = false
+	if UI.boostHost then
+		UI.boostHost.Visible = false
+	end
+	if boostButton then
+		boostButton.SetDisabled(true)
+		boostButton.SetGlowing(false, BOOST_GLOW_GOLD, BOOST_GLOW_WHITE)
+	end
 end
 
 -- Loads ShopGui as a world-lock purchase screen: grey teaser chrome, "???" placeholder,
@@ -365,22 +395,33 @@ local function loadLock(lock: LockView)
 	UI.tiers.Text = LOCK_TIER
 	UI.price.Text = "$" .. StringUtils.FormatShort(lock.price)
 	adjustButton(cachedBalance >= lock.price)
-
-	UI.effect.Visible = false
-	if UI.effectSpacer then
-		UI.effectSpacer.Visible = false
-	end
-	UI.track.Visible = false
-	boostAvailable = false
-	if UI.boostHost then
-		UI.boostHost.Visible = false
-	end
-	if boostButton then
-		boostButton.SetDisabled(true)
-		boostButton.SetGlowing(false, BOOST_GLOW_GOLD, BOOST_GLOW_WHITE)
-	end
+	hideProgressSections()
 
 	loadedLock = lock
+	loadedTrack = nil
+	loadedInfo = nil
+	loadedSlotUnlock = false
+end
+
+-- Loads ShopGui as the "add a launch slot" purchase screen: lock chrome + Unlock button,
+-- priced off the NumSlots track's next tier (buying it is a plain PurchaseUpgrade).
+local function loadSlotUnlock()
+	local info = UpgradeInfo.Build("NumSlots", cachedUpgrades.NumSlots or 0, cachedBalance) :: Info
+	UI.name.Text = "🔒 LOCKED"
+	applyLockChrome(true)
+	UI.desc.Text = "Unlocks Launch Slot " .. tostring(ProfileStats.GetMaxSlots(cachedUpgrades) + 1)
+	UI.icon.Text = info.icon
+	UI.tiers.Text = LOCK_TIER
+	if info.price then
+		UI.price.Text = "$" .. StringUtils.FormatShort(info.price)
+	else
+		UI.price.Text = "MAXED" -- defensive; the pads stop offering unlocks at the cap
+	end
+	adjustButton(info.canAfford and not info.maxed)
+	hideProgressSections()
+
+	loadedSlotUnlock = true
+	loadedLock = nil
 	loadedTrack = nil
 	loadedInfo = nil
 end
@@ -422,6 +463,23 @@ end
 -- re-renders from server truth either way, so a wrong guess (balance changed since the
 -- last render) simply snaps back rather than staying granted.
 function onBuyPressed()
+    -- Slot-unlock view: one NumSlots tier, server-validated, no optimistic prediction.
+    if loadedSlotUnlock then
+        local res: PurchaseResult = PurchaseUpgradeRF:InvokeServer("NumSlots")
+        if res.upgrades then
+            for t, i in res.upgrades :: { [string]: Info } do
+                cachedUpgrades[t] = i.tier
+            end
+        end
+        if res.ok then
+            SoundService.Play({ soundId = SoundsConfig.Upgrade })
+            punch()
+            playFlare("Slot Unlocked!")
+            ShopUI.CloseShop() -- the pad re-renders as a launch button (SlotInteract); nothing left to sell here
+        end
+        return
+    end
+
     -- Lock view: one flat server-validated purchase, no optimistic tier prediction.
     local lock = loadedLock
     if lock then
@@ -507,9 +565,14 @@ local function watchWalkAway()
 	end)
 end
 
+-- True while the close slide-out is playing (Enabled stays true until it completes, so
+-- Enabled alone can't distinguish "open" from "on its way out").
+local closing = false
+
 -- Invoked when close button pressed
 function ShopUI.CloseShop()
 	walkAwayWatch += 1 -- retire the watcher
+	closing = true
 	if activeTween then activeTween:Cancel() end
 	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_RIGHT })
 	activeTween = t
@@ -522,10 +585,18 @@ function ShopUI.CloseShop()
 	t:Play()
 end
 
--- Enable the shop for the given track, sliding it in from the right.
-function ShopUI.OpenShop(track: string)
+-- Shared by every Open* entry: slide the shop in from the right — unless it's already
+-- open, in which case the freshly-loaded content just swaps in place (world pads re-fire
+-- Touched on every step while the player stands on them; replaying the slide-in every
+-- time looked like the shop reopening over and over). Re-opening mid-close restarts the
+-- slide-in from off-screen.
+local function slideIn()
+	if ShopGui.Enabled and not closing then
+		watchWalkAway() -- re-anchor the leash to wherever the player now stands
+		return
+	end
+	closing = false
 	if activeTween then activeTween:Cancel() end
-	loadShop(track)
 	ShopFrame.Position = POS_RIGHT
 	ShopGui.Enabled = true
 	watchWalkAway()
@@ -534,16 +605,22 @@ function ShopUI.OpenShop(track: string)
 	t:Play()
 end
 
+-- Enable the shop for the given track, sliding it in from the right.
+function ShopUI.OpenShop(track: string)
+	loadShop(track)
+	slideIn()
+end
+
 -- Enable the shop as a world-lock purchase screen (UpgradeLocks pads open this).
 function ShopUI.OpenLock(lock: LockView)
-	if activeTween then activeTween:Cancel() end
 	loadLock(lock)
-	ShopFrame.Position = POS_RIGHT
-	ShopGui.Enabled = true
-	watchWalkAway()
-	local t = TweenService:Create(ShopFrame, TWEEN_INFO, { Position = POS_OPEN })
-	activeTween = t
-	t:Play()
+	slideIn()
+end
+
+-- Enable the shop as the launch-slot unlock screen (SlotInteract's locked pads open this).
+function ShopUI.OpenSlotUnlock()
+	loadSlotUnlock()
+	slideIn()
 end
 
 -- Determines if the Shop UI is open
@@ -587,6 +664,8 @@ function ShopUI.Init()
 	            loadShop(loadedTrack)
 	        elseif loadedLock then
 	            loadLock(loadedLock) -- re-colour the Unlock button's affordability
+	        elseif loadedSlotUnlock then
+	            loadSlotUnlock()
 	        end
 	    end
 	end)
@@ -597,8 +676,12 @@ function ShopUI.Init()
 	ProfileChangedRE.OnClientEvent:Connect(function(profile: any)
 	    cachedUpgrades = (profile and profile.upgrades) or {}
 	    seededUpgrades = true
-	    if ShopGui.Enabled and loadedTrack then
-	        loadShop(loadedTrack)
+	    if ShopGui.Enabled then
+	        if loadedTrack then
+	            loadShop(loadedTrack)
+	        elseif loadedSlotUnlock then
+	            loadSlotUnlock() -- the NumSlots tier may have just changed
+	        end
 	    end
 	end)
 

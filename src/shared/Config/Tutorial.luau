@@ -55,7 +55,7 @@
 -- update this rect (in 1080p offset pos/size, matching the element's own UDim2) once you can
 -- check it visually.
 
-local Crates = require(script.Parent.Crates)
+local Upgrades = require(script.Parent.Upgrades)
 
 export type Step = {
 	text: string,
@@ -118,21 +118,15 @@ local Tutorial = {
 	-- cosmetics shop. Same step shape as Steps above, same Skip button; finishing or
 	-- skipping persists separately (Stats.completedCosmeticTutorial) so it runs once ever.
 	Cosmetic = {
-		-- Trigger: enough Diamonds for the CHEAPEST Marble Box (derived from Config/Crates,
-		-- so crate price tuning moves the tutorial with it).
-		DiamondTrigger = (function()
-			local cheapest = math.huge
-			for _, box in Crates.Boxes do
-				cheapest = math.min(cheapest, box.Cost)
-			end
-			return cheapest
-		end)(),
+		-- Trigger: enough Diamonds for the FIRST Luck tier (derived from Config/Upgrades,
+		-- so Luck price tuning moves the tutorial with it).
+		DiamondTrigger = Upgrades.Tracks.Luck.Cost.Base,
 		Steps = {
 			{
-				text = "You can afford a Marble Box! Roll one at the cosmetics shop.",
+				text = "You can afford a LUCK upgrade! Boost your roll odds at the marble shop.",
 				boxPosition = UDim2.fromScale(0.75, 0.80), -- same lower-right spot as the upgrade steps
 				arrow = { Kind = "CosmeticsShop" },
-				complete = { Kind = "RollCrate" }, -- any box opening (bought or free)
+				complete = { Kind = "BuyLuck" }, -- the Luck tier rising (TutorialController)
 			},
 		},
 	},

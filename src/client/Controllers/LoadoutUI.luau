@@ -3,8 +3,10 @@
 -- (white rounded box, magenta stroke) showing
 --   - the APPEARANCE square: which owned skin the marbles wear (visual only — any owned
 --     skin, independent of the bonus slots),
---   - the N loadout slots (CosmeticsConfig.LoadoutSlots): every slotted skin contributes
---     its rarity×star money bonus (CosmeticBonus), applied server-side at banking,
+--   - one slot button per slot the player has UNLOCKED (the NumSlots track is the
+--     authority on slot count), cloned from the invisible authored prefab at
+--     Panel.SlotsRow.Frame.Slot: every slotted skin contributes its rarity×star money
+--     bonus (CosmeticBonus), applied server-side at banking,
 --   - the owned-skin grid below (skins already in the loadout are hidden from it),
 --   - an EQUIP BEST button (server fills the slots with the highest-bonus skins).
 --
@@ -13,16 +15,16 @@
 -- empty slot. While the appearance square is armed, clicking a slotted skin also works.
 --
 -- The panel itself is Studio-authored (StarterGui.LoadoutGui: Panel > VisualButton /
--- BonusLabel / EquipBestHost / SlotsRow.Slot1..N / HintLabel / Grid / CloseButton);
--- this module only resolves + binds it and renders the dynamic bits (slot painting,
--- the owned-skin grid tiles, selection highlights). Opened from the authored LOADOUT
--- trigger on MainGui.LeftBar.TriggerQuad.
+-- BonusLabel / EquipBestHost / SlotsRow.Frame.Slot (invisible prefab, cloned per unlocked
+-- slot) / HintLabel / Grid / CloseButton); this module only resolves + binds it and
+-- renders the dynamic bits (slot cloning/painting, the owned-skin grid tiles, selection
+-- highlights). Opened from the authored LOADOUT trigger on MainGui.LeftBar.TriggerQuad.
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 
-local CosmeticsConfig = require(RS.Shared.Config.Cosmetics)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
+local ProfileStats = require(RS.Shared.ProfileStats)
 local BallSkins = require(RS.Shared.BallSkins)
 local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
@@ -31,6 +33,7 @@ local SoundService = require(RS.Shared.SoundService)
 local Signal = require(RS.Shared.Utility.Signal)
 local CosmeticsNet = require(RS.Shared.Remote.CosmeticsNet)
 local LoadoutNet = require(RS.Shared.Remote.LoadoutNet)
+local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 
 local LoadoutUI = {}
 
@@ -52,7 +55,6 @@ local setSlotRE = LoadoutNet.SetLoadoutSlot :: RemoteEvent
 local equipBestRE = LoadoutNet.EquipBestLoadout :: RemoteEvent
 local equipRE = CosmeticsNet.EquipCosmetic :: RemoteEvent
 
-local SLOTS = CosmeticsConfig.LoadoutSlots
 
 -- ShopGui-style palette (white card, magenta border, navy text).
 local MAGENTA   = Color3.fromRGB(236, 63, 212)
@@ -88,6 +90,9 @@ local selection: (number | "visual")? = nil
 local screenGui: ScreenGui? = nil
 local slotButtons: { TextButton } = {}
 local slotStrokes: { UIStroke } = {}
+-- The invisible authored slot button (Panel.SlotsRow.Frame.Slot); rebuildSlots clones one
+-- visible copy per unlocked slot.
+local slotPrefab: TextButton? = nil
 local visualButton: TextButton? = nil
 local visualStroke: UIStroke? = nil
 local bonusLabel: TextLabel? = nil
@@ -118,11 +123,11 @@ local function stroke(parent: Instance, color: Color3, thickness: number): UIStr
 	}, parent)
 end
 
--- Slot -> skin id array from the pushed keyed table.
+-- Slot -> skin id array from the pushed keyed table (as many slots as are shown).
 local function loadoutArray(): { [number]: string? }
 	local arr: { [number]: string? } = {}
 	if loadoutInfo then
-		for slot = 1, SLOTS do
+		for slot = 1, #slotButtons do
 			arr[slot] = loadoutInfo.loadout[tostring(slot)]
 		end
 	end
@@ -269,7 +274,10 @@ local function refresh()
 		paintSwatchButton(btn, arr[i])
 	end
 	if visualButton then
-		paintSwatchButton(visualButton, info.equipped)
+		-- Nothing explicitly worn -> show Classic (what unskinned marbles actually wear)
+		-- rather than the "+" empty state.
+		local equipped = info.equipped
+		paintSwatchButton(visualButton, if equipped ~= nil and equipped ~= "" then equipped else BallSkins.GetDefaultId())
 	end
 	if bonusLabel then
 		-- CORE LOOP REWORK: ball value now comes from rarity, not this loadout %-bonus, so it's
@@ -320,7 +328,7 @@ function LoadoutUI.OnSkinClicked(id: string)
 	if not slot then
 		-- Nothing armed: fill the first empty slot.
 		local arr = loadoutArray()
-		for i = 1, SLOTS do
+		for i = 1, #slotButtons do
 			if not arr[i] then
 				slot = i
 				break
@@ -354,6 +362,40 @@ end
 local function onVisualClicked()
 	selection = if selection == "visual" then nil else "visual"
 	renderSelection()
+end
+
+-- (Re)build the slot buttons: one visible clone of the authored prefab per unlocked slot.
+-- Runs whenever the unlocked count changes (NumSlots purchases push ProfileChanged); the
+-- SlotsRow scroll UI handles layout, this only supplies the buttons.
+local function rebuildSlots(count: number)
+	local prefab = slotPrefab
+	if not prefab then
+		return
+	end
+	local container = prefab.Parent :: Instance
+	for _, c in container:GetChildren() do
+		if c ~= prefab and c.Name:match("^Slot%d+$") then
+			c:Destroy()
+		end
+	end
+	table.clear(slotButtons)
+	table.clear(slotStrokes)
+	if type(selection) == "number" and selection > count then
+		selection = nil -- armed slot no longer exists
+	end
+	for i = 1, count do
+		local btn = prefab:Clone()
+		btn.Name = "Slot" .. i
+		btn.LayoutOrder = i
+		btn.Visible = true
+		btn.Parent = container
+		btn.Activated:Connect(function()
+			onSlotClicked(i)
+		end)
+		slotButtons[i] = btn
+		slotStrokes[i] = btn:FindFirstChildOfClass("UIStroke") :: UIStroke
+	end
+	refresh()
 end
 
 ----------------------------------------------------------------------------------
@@ -393,21 +435,9 @@ local function resolveUI()
 		clickSound = SoundsConfig.Toggle2,
 	})
 
+	-- The invisible authored slot prefab; rebuildSlots clones it per unlocked slot.
 	local slotsRow = panel:WaitForChild("SlotsRow")
-	for i = 1, SLOTS do
-		-- Authored slots must match CosmeticsConfig.LoadoutSlots — warn loudly if the
-		-- config grew past what's in StarterGui instead of hanging on WaitForChild.
-		local btn = slotsRow:WaitForChild("Slot" .. i, 10) :: TextButton?
-		if not btn then
-			warn("LoadoutUI: StarterGui.LoadoutGui has no Slot" .. i .. " (CosmeticsConfig.LoadoutSlots = " .. SLOTS .. ")")
-			break
-		end
-		btn.Activated:Connect(function()
-			onSlotClicked(i)
-		end)
-		slotButtons[i] = btn
-		slotStrokes[i] = btn:FindFirstChildOfClass("UIStroke") :: UIStroke
-	end
+	slotPrefab = (slotsRow:WaitForChild("Frame") :: Instance):WaitForChild("Slot") :: TextButton
 end
 
 ----------------------------------------------------------------------------------
@@ -461,6 +491,26 @@ end
 function LoadoutUI.Init()
 	resolveUI()
 	makeTrigger()
+
+	-- Slot count follows the NumSlots upgrade — THE authority on slot count (same
+	-- derivation as the world pads / LoadoutService) — rebuilt only when it changes.
+	local function applyUpgrades(upgrades: any)
+		local count = ProfileStats.GetMaxSlots(if type(upgrades) == "table" then upgrades else {})
+		if count ~= #slotButtons then
+			rebuildSlots(count)
+		end
+	end
+	;(ProfileNet.ProfileChanged :: RemoteEvent).OnClientEvent:Connect(function(profile: any)
+		applyUpgrades(type(profile) == "table" and profile.upgrades)
+	end)
+	task.spawn(function()
+		local ok, profile = pcall(function()
+			return (ProfileNet.GetProfile :: RemoteFunction):InvokeServer()
+		end)
+		if ok and #slotButtons == 0 and type(profile) == "table" then
+			applyUpgrades(profile.upgrades)
+		end
+	end)
 
 	changedRE.OnClientEvent:Connect(function(newInfo: Info)
 		if newInfo then

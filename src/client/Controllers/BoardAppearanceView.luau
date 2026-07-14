@@ -4,7 +4,9 @@
 -- bet size, same "local view of shared state" pattern as GoldenPegView (per-player peg
 -- recolor) and BoardMultiplierView (per-player label rewrite).
 --
--- Three tags feed this: TagsConfig.BoardFloor / BoardSide pick a part's specific ramp
+-- Four tags feed this: TagsConfig.Grass parts get the color-only Grass ramp (muted echo
+-- of the board theme; authored material untouched); TagsConfig.BoardFloor / BoardSide
+-- pick a part's specific ramp
 -- (darker default for the floor marbles roll on, lighter default for the side barriers);
 -- a part tagged only TagsConfig.Board (not further specialized as Floor/Side) falls back
 -- to the Floor ramp, since most plain structural board parts read closer to the floor's
@@ -19,22 +21,24 @@ local TagsConfig = require(RS.Shared.Config.Tags)
 local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 local BoardAppearanceView = {}
 
-type Keyframe = { Tier: number, Color: Color3, Material: Enum.Material }
+-- Material is optional so the Grass ramp (color-only keyframes) shares the same lookup.
+type Keyframe = { Tier: number, Color: Color3, Material: Enum.Material? }
 
 local FLOOR: { Keyframe } = BoardAppearanceConfig.Floor
 local SIDE: { Keyframe } = BoardAppearanceConfig.Side
+local GRASS: { Keyframe } = BoardAppearanceConfig.Grass
 local MAX_TIER: number = BoardAppearanceConfig.MaxTier
 
 local currentTier = 0
 
--- part -> "Floor" | "Side" (Generic-tagged parts are stored as "Floor", their fallback).
+-- part -> "Floor" | "Side" | "Grass" (Generic-tagged parts are stored as "Floor", their fallback).
 local partKind: { [BasePart]: string } = {}
 
 -- (color, material) for `tier` within a keyframe list (ascending Tier): Color lerps
 -- linearly between the two keyframes straddling the tier; Material holds the LOWER
 -- keyframe's value until the tier reaches the next one. Clamped to [0, MaxTier], so a
 -- tier past the last keyframe holds that keyframe's look.
-local function lookup(keyframes: { Keyframe }, tier: number): (Color3, Enum.Material)
+local function lookup(keyframes: { Keyframe }, tier: number): (Color3, Enum.Material?)
 	tier = math.clamp(tier, 0, MAX_TIER)
 	local lo = keyframes[1]
 	local hi = keyframes[#keyframes]
@@ -57,10 +61,13 @@ local function lookup(keyframes: { Keyframe }, tier: number): (Color3, Enum.Mate
 end
 
 local function paintOne(part: BasePart)
-	local ramp = if partKind[part] == "Side" then SIDE else FLOOR
+	local kind = partKind[part]
+	local ramp = if kind == "Side" then SIDE elseif kind == "Grass" then GRASS else FLOOR
 	local color, material = lookup(ramp, currentTier)
 	part.Color = color
-	part.Material = material
+	if material then -- Grass keyframes carry no Material: color-only, keep the authored material
+		part.Material = material
+	end
 end
 
 local function repaintAll()
@@ -77,6 +84,8 @@ local function kindFor(inst: Instance): string?
 		return "Floor"
 	elseif CollectionService:HasTag(inst, TagsConfig.BoardSide) then
 		return "Side"
+	elseif CollectionService:HasTag(inst, TagsConfig.Grass) then
+		return "Grass"
 	elseif CollectionService:HasTag(inst, TagsConfig.Board) then
 		return "Floor" -- generic/unspecialized Board part: falls back to the Floor ramp
 	end
@@ -109,7 +118,7 @@ local function setTierFromProfile(profile: any)
 end
 
 function BoardAppearanceView.Init()
-	for _, tag in { TagsConfig.Board, TagsConfig.BoardFloor, TagsConfig.BoardSide } do
+	for _, tag in { TagsConfig.Board, TagsConfig.BoardFloor, TagsConfig.BoardSide, TagsConfig.Grass } do
 		for _, inst in CollectionService:GetTagged(tag) do
 			track(inst)
 		end

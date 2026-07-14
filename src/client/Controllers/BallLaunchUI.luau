@@ -10,7 +10,6 @@
 -- the server (SetBetTier would just clamp it back down to the owned tier anyway).
 
 local Players: Players = game:GetService("Players")
-local RunService       = game:GetService("RunService")
 local RS               = game:GetService("ReplicatedStorage")
 
 local ProfileStats = require(RS.Shared.ProfileStats)
@@ -18,11 +17,11 @@ local SoundService = require(RS.Shared.SoundService)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
 local UIButton = require(RS.Shared.Utility.UIButton)
 local ProductService = require(RS.Shared.ProductService)
-local LauncherConfig = require(RS.Shared.Config.Launcher)
 local MonetizationConfig = require(RS.Shared.Config.Monetization)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local WarnUI = require(RS.Shared.WarnUI)
 local LaunchNet = require(RS.Shared.Remote.LaunchNet)
+local LoadoutNet = require(RS.Shared.Remote.LoadoutNet)
 local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 local UpgradeNet = require(RS.Shared.Remote.UpgradeNet)
 
@@ -31,6 +30,7 @@ local player = Players.LocalPlayer
 local GetProfileRF          = ProfileNet.GetProfile :: RemoteFunction
 local SetBetTierRF          = ProfileNet.SetBetTier :: RemoteFunction
 local RequestLaunchRE       = LaunchNet.RequestLaunch :: RemoteEvent
+local SlotLaunchedRE        = LaunchNet.SlotLaunched :: RemoteEvent
 local ProfileChangedRE      = ProfileNet.ProfileChanged :: RemoteEvent
 local PurchaseUpgradeRF     = UpgradeNet.PurchaseUpgrade :: RemoteFunction
 local RequestUpgradeBoostRF = UpgradeNet.RequestUpgradeBoost :: RemoteFunction
@@ -236,15 +236,14 @@ local function onLaunchClicked()
 	end
 	launchBtnActive = false
 
-	if not doAutoLaunch then
-		SoundService.Play({ soundId = SoundsConfig.Launch, volume = 1.0 })
-	end
-	RequestLaunchRE:FireServer()
+	-- No press sound here: SlotInteract plays the launch sound at each pad that actually
+	-- fires (driven by the server's SlotLaunched push), covering manual, HUD, and auto.
+	RequestLaunchRE:FireServer() -- no slot arg = every READY slot fires
 
-	-- Client-authored countdown, mirroring the server's fixed batch window (CORE LOOP REWORK:
-	-- launches are now whole-loadout batches over LauncherConfig.BatchDelay — Frequency no
-	-- longer shrinks a per-launch delay, it raises equip-slot count).
-	local delay = LauncherConfig.BatchDelay
+	-- Client-authored countdown, mirroring the server's per-slot cooldown (PER-SLOT LAUNCH
+	-- REWORK: this button fires every READY slot; the countdown shows the Frequency-scaled
+	-- delay after which the slots just fired become ready again).
+	local delay = ProfileStats.GetLaunchDelay(latestUpgrades)
 	local start = os.clock()
 	while os.clock() - start < delay do
 		launchWordLabel.Text = string.format("%.1f", delay - (os.clock() - start))
@@ -255,26 +254,54 @@ local function onLaunchClicked()
 	launchBtnActive = true
 end
 
--- Auto-launch only fires real launches — never spam Unlock purchase attempts every
--- heartbeat if the player parks the selection on the locked preview rung with auto on.
--- Parked there, say WHY nothing is launching instead of silently idling (throttled —
--- this runs every heartbeat, and WarnUI queues).
+-- Auto-launch never fires while the selection is parked on the locked preview rung (it
+-- would spam Unlock attempts); say WHY nothing is launching instead of silently idling
+-- (throttled — WarnUI queues).
 local LOCKED_WARN_INTERVAL = 3
 local lastLockedWarn = 0
+local function warnLockedThrottled()
+	local now = os.clock()
+	if now - lastLockedWarn >= LOCKED_WARN_INTERVAL then
+		lastLockedWarn = now
+		WarnUI.WarnLocal("Bet size locked!")
+	end
+end
 
-local function onHeartbeat()
+-- AUTO is event-driven, not a polling loop: kicking it fires every ready slot, and each
+-- SlotLaunched push from the server schedules that slot's relaunch for the moment its
+-- cooldown lapses (see Init). Also re-kicked on profile/loadout changes, which is what
+-- brings newly unlocked/newly equipped slots into the cycle.
+local function autoKick()
 	if not doAutoLaunch then
 		return
 	end
-	if selectedTier <= ownedTier then
-		onLaunchClicked()
-	else
-		local now = os.clock()
-		if now - lastLockedWarn >= LOCKED_WARN_INTERVAL then
-			lastLockedWarn = now
-			WarnUI.WarnLocal("Bet size locked!")
-		end
+	if selectedTier > ownedTier then
+		warnLockedThrottled()
+		return
 	end
+	RequestLaunchRE:FireServer()
+end
+
+-- Fired slightly AFTER the server-reported cooldown, never at it: relaunching a hair early
+-- gets silently rejected server-side, which would break that slot's auto chain.
+local RELAUNCH_BUFFER = 0.1
+
+local function onSlotLaunched(slot: unknown, cooldown: unknown)
+	if type(slot) ~= "number" or type(cooldown) ~= "number" then
+		return
+	end
+	-- Scheduled even while AUTO is off (checked at fire time), so toggling AUTO on during
+	-- a cooldown still picks the slot up when it lapses (plus the toggle's own kick).
+	task.delay(cooldown + RELAUNCH_BUFFER, function()
+		if not doAutoLaunch then
+			return
+		end
+		if selectedTier > ownedTier then
+			warnLockedThrottled()
+			return
+		end
+		RequestLaunchRE:FireServer(slot)
+	end)
 end
 
 function Controller.Init()
@@ -286,6 +313,7 @@ function Controller.Init()
 			initial = false,
 			onChange = function(active: boolean)
 				doAutoLaunch = active
+				autoKick() -- launch everything ready right away; SlotLaunched chains the rest
 			end,
 		},
 		onRender = function(button: GuiButton, active: boolean)
@@ -295,8 +323,16 @@ function Controller.Init()
 		end,
 	})
 
-	RunService.Heartbeat:Connect(onHeartbeat)
-	ProfileChangedRE.OnClientEvent:Connect(onProfileChanged)
+	SlotLaunchedRE.OnClientEvent:Connect(onSlotLaunched)
+	ProfileChangedRE.OnClientEvent:Connect(function(profile: any)
+		onProfileChanged(profile)
+		autoKick() -- a new slot/tier may be ready to join the auto cycle
+	end)
+	-- Equipping a skin into a previously empty slot has no SlotLaunched chain yet — the
+	-- loadout push is what brings it into the cycle.
+	;(LoadoutNet.LoadoutChanged :: RemoteEvent).OnClientEvent:Connect(function()
+		autoKick()
+	end)
 
 	refreshFromProfile()
 end

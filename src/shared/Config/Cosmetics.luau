@@ -23,18 +23,17 @@ local Cosmetics = {
 	----------------------------------------------------------------------------
 	-- Skin power (crate/loadout progression, shared math in CosmeticBonus)
 	----------------------------------------------------------------------------
-	-- Slots in the bonus loadout. Every slotted skin contributes its bonus; the total is
-	-- one global money multiplier applied at banking (ScoreHandler): ×(1 + sum of bonuses).
-	LoadoutSlots = 5,
+	-- NOTE: slot COUNT has no constant here — the NumSlots upgrade track is the authority
+	-- (ProfileStats.GetMaxSlots / GetMaxSlotsCap). Every slotted skin contributes its bonus;
+	-- the total is one global money multiplier applied at banking (ScoreHandler): ×(1 + sum).
 	-- Base money bonus per skin by rarity (1..9). A full early loadout of commons is a
 	-- noticeable-but-small +10%; the 6-9 tiers (Mythic/Celestial/Divine/Transcendent)
 	-- are the whale-tail chase — Gold Box exclusive, tiny odds.
 	RarityBonus = { 0.02, 0.05, 0.12, 0.30, 0.75, 1.8, 4, 9, 20 },
-	-- CORE LOOP REWORK: base $ value a ball of this rarity (1..9) carries into ScoreHandler's
-	-- multiplier chain (replaces the old bet-tier/MaxBet ladder as the value input — see
-	-- BallLaunchService.spawnBall). PLACEHOLDER magnitudes, roughly ~2.4x per rarity like
-	-- RarityBonus above; tune in playtest.
-	RarityValue = { 10, 25, 60, 150, 375, 900, 2200, 5000, 12000 },
+	-- PER-SLOT LAUNCH REWORK: a launched ball's $ value = the player's current bet size ×
+	-- this factor^(rarity-1) (see CosmeticBonus.RarityBetMult / BallLaunchService). Rarity is a
+	-- MULTIPLIER on bet sizing now, not a standalone value: common ×1, uncommon ×2, rare ×4, ...
+	RarityBetFactor = 2,
 	-- Duplicate copies star a skin up: ★k at StarDupes[k] DUPLICATES (copies beyond the
 	-- first). Triangular like the golden peg schedule: 0, 1, 3, 6, 10.
 	StarDupes = { 0, 1, 3, 6, 10 },

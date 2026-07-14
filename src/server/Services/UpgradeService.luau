@@ -45,20 +45,31 @@ export type PurchaseResult = {
 	upgrades: { [string]: Info }?, -- fresh snapshot for the UI to re-render
 }
 
--- CORE LOOP REWORK: bet sizing is no longer a real concept (ball value now comes from the
--- rolled skin's rarity — see CosmeticsConfig.RarityValue / BallLaunchService), so MaxBet
--- purchases are gated off here rather than deleted (still prototyping this rework; the
--- track/UI/pricing code stays intact and inert).
-local DISABLED_TRACKS: { [string]: boolean } = { MaxBet = true }
+-- Tracks temporarily not for sale (kept as a switch; currently none — bet sizing is back:
+-- a ball's value = bet size × rarity multiplier, see BallLaunchService.ballValueForSkin).
+local DISABLED_TRACKS: { [string]: boolean } = {}
 
 local maxTierOf = UpgradeInfo.MaxTierOf
 local priceAt = UpgradeInfo.PriceAt
+
+-- The balance of the track's own currency: cash for most tracks, Diamonds (CC) for
+-- Currency = "Diamonds" ones (Luck). CosmeticService is lazy-required (same pattern as
+-- PrestigeService) so this module adds no load-time edge toward the known ProductService
+-- -> DataService -> CosmeticService require chain.
+local function balanceFor(player: Player, track: string): number
+	local def = UpgradeDefs[track]
+	if def and def.Currency == "Diamonds" then
+		local CosmeticService = require(SSS.Scripts.Services.CosmeticService)
+		return CosmeticService.GetCC(player)
+	end
+	return CurrencyService.GetPoints(player)
+end
 
 function UpgradeService.GetInfo(player: Player, track: string): Info?
 	return UpgradeInfo.Build(
 		track,
 		ProfileService.GetUpgradeTier(player, track),
-		CurrencyService.GetPoints(player)
+		balanceFor(player, track)
 	)
 end
 
@@ -100,11 +111,20 @@ function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	if not price then
 		return { ok = false, reason = "maxed", upgrades = UpgradeService.GetAllInfo(player) }
 	end
-	if CurrencyService.GetPoints(player) < price then
-		return { ok = false, reason = "cannot_afford", upgrades = UpgradeService.GetAllInfo(player) }
+	-- Deduct in the track's own currency. Both paths are atomic against concurrent
+	-- requests (no yield between check and deduct; SpendCC re-checks internally).
+	local def = UpgradeDefs[track]
+	if def.Currency == "Diamonds" then
+		local CosmeticService = require(SSS.Scripts.Services.CosmeticService)
+		if not CosmeticService.SpendCC(player, price) then
+			return { ok = false, reason = "cannot_afford", upgrades = UpgradeService.GetAllInfo(player) }
+		end
+	else
+		if CurrencyService.GetPoints(player) < price then
+			return { ok = false, reason = "cannot_afford", upgrades = UpgradeService.GetAllInfo(player) }
+		end
+		CurrencyService.AddPoints(player, -price, "Upgrade: " .. track)
 	end
-
-	CurrencyService.AddPoints(player, -price, "Upgrade: " .. track)
 	ProfileService.SetUpgradeTier(player, track, tier + 1)
 	StatsService.AddUpgradesPurchased(player, 1)
 	-- MaxBet raises the CEILING only — the selected bet tier stays put. BallLaunchUI's
