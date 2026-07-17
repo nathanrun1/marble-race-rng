@@ -6,6 +6,8 @@
 --     down (the server's SlotLaunched push carries the Frequency-scaled delay) the pad
 --     turns red and counts the cooldown down. An unlocked slot with NO ball equipped
 --     (LoadoutNet) reads gray "Equip" instead, and stepping on it opens the loadout menu.
+--     While the bet ladder previews a LOCKED zone (BallLaunchUI.IsZoneLocked), every
+--     unlocked slot's pad is dead instead: grey "Zone Locked", touches ignored.
 --   * The NEXT locked slot — the whole model is hidden EXCEPT its Interact part, which
 --     advertises "Unlock - $X" (the NumSlots track's next-tier price, pure UpgradeInfo
 --     math) and opens ShopUI's slot-unlock purchase screen on touch.
@@ -30,6 +32,7 @@ local SlotAutoConfig = require(RS.Shared.Config.SlotAuto)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local SoundService = require(RS.Shared.SoundService)
 local TagsConfig = require(RS.Shared.Config.Tags)
+local BallLaunchUI = require(script.Parent.BallLaunchUI)
 local ShopUI = require(script.Parent.ShopUI)
 local LoadoutUI = require(script.Parent.LoadoutUI)
 local LaunchNet = require(RS.Shared.Remote.LaunchNet)
@@ -46,7 +49,9 @@ local GRAY = Color3.fromRGB(150, 150, 150) -- unlocked but empty: "Equip"
 local GOLD = Color3.fromRGB(255, 200, 40)  -- AUTO sign price row
 local AUTO_OWNED_GREEN = Color3.fromRGB(107, 223, 101) -- sign body once AUTO is owned (local repaint)
 local UNLOCK_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
+local ZONE_LOCKED_COLOR = Color3.fromRGB(130, 130, 130) -- matches BallLaunchUI's locked LaunchBtn tint
 local TOUCH_DEBOUNCE = 0.4 -- seconds; one step-on fires Touched once per limb
+local AUTO_CLICK_DISTANCE = 40 -- ClickDetector range while the AUTO sign is buyable (0 = dead)
 
 type Rig = {
 	model: Model,
@@ -62,6 +67,7 @@ type Rig = {
 	autoSign: BasePart?,        -- the sign part itself (recoloured locally when owned)
 	autoSignColor: Color3?,     -- its authored colour, restored while not owned
 	autoPrompt: ProximityPrompt?, -- "E to buy" on the sign; disabled once owned
+	autoClick: ClickDetector?,    -- click-to-buy on the sign; range zeroed while not buyable
 }
 
 local rigs: { [number]: Rig } = {}
@@ -144,17 +150,32 @@ local function render(rig: Rig)
 		if rig.autoSign then
 			rig.autoSign.Color = if owned then AUTO_OWNED_GREEN else rig.autoSignColor :: Color3
 		end
-		-- The prompt only offers what's actually buyable: gone once owned or while locked.
+		-- The prompt and click detector only offer what's actually buyable: gone once owned
+		-- or while locked. (ClickDetector has no Enabled — zeroing its range kills both the
+		-- click AND the cursor highlight on the invisible sign of a locked slot.)
+		local buyable = n <= unlocked and not owned
 		local prompt = rig.autoPrompt
 		if prompt then
-			prompt.Enabled = n <= unlocked and not owned
+			prompt.Enabled = buyable
 			prompt.ActionText = "Buy AUTO — $" .. StringUtils.FormatShort(SlotAutoConfig.PriceFor(n))
+		end
+		if rig.autoClick then
+			rig.autoClick.MaxActivationDistance = if buyable then AUTO_CLICK_DISTANCE else 0
 		end
 	end
 
 	if n <= unlocked then
 		setModelHidden(rig, false, false)
 		rig.billboard.Enabled = true
+		if BallLaunchUI.IsZoneLocked() then
+			-- Locked zone previewed on the bet ladder: every launch pad is dead until the
+			-- zone is bought — the LaunchBtn ("UNLOCK ZONE") is the one place selling it.
+			rig.cooling = false
+			rig.label.Text = "Zone Locked"
+			rig.label.TextColor3 = UNLOCK_TEXT_COLOR
+			rig.interact.Color = ZONE_LOCKED_COLOR
+			return
+		end
 		if slotEmpty(n) then
 			-- Unlocked but nothing equipped: the pad can't launch, so it sells the fix —
 			-- gray "Equip", stepping on it opens the loadout menu (onTouched).
@@ -213,6 +234,9 @@ local function onTouched(rig: Rig, obj: BasePart)
 
 	local unlocked = unlockedSlots()
 	if rig.slotNum <= unlocked then
+		if BallLaunchUI.IsZoneLocked() then
+			return -- pad disabled (grey "Zone Locked"): the zone must be bought first
+		end
 		if slotEmpty(rig.slotNum) then
 			-- Empty slot: nothing to launch — open the loadout menu so they can fill it.
 			if not LoadoutUI.IsOpen() then
@@ -310,8 +334,9 @@ local function buildAutoSign(rig: Rig, sign: BasePart)
 
 	local click = Instance.new("ClickDetector")
 	click.Name = "AutoSignClick"
-	click.MaxActivationDistance = 40
+	click.MaxActivationDistance = 0 -- dead until render() marks the slot buyable
 	click.Parent = sign
+	rig.autoClick = click
 	click.MouseClick:Connect(function()
 		onAutoClicked(rig)
 	end)
@@ -360,6 +385,7 @@ local function setup(inst: Instance)
 		autoSign = nil,
 		autoSignColor = nil,
 		autoPrompt = nil,
+		autoClick = nil,
 	}
 	local autoSign = inst:FindFirstChild("AutoSign")
 	if autoSign and autoSign:IsA("BasePart") then
@@ -393,6 +419,10 @@ function SlotInteract.Init()
 		setup(inst)
 	end
 	CollectionService:GetInstanceAddedSignal(TagsConfig.Slot):Connect(setup)
+
+	-- While the bet ladder previews a locked zone, every unlocked slot's pad renders dead
+	-- ("Zone Locked", grey) — re-render the moment that state flips either way.
+	BallLaunchUI.ZoneLockedChanged:Connect(renderAll)
 
 	;(LaunchNet.SlotLaunched :: RemoteEvent).OnClientEvent:Connect(function(slot: unknown, cooldown: unknown)
 		if type(slot) ~= "number" or type(cooldown) ~= "number" then

@@ -60,7 +60,7 @@ local Upgrades = {
 			PerTier = 1.5,
 			Cost = { Base = 250, Growth = 1.9 },
 			Name = "Zone", Short = "Zone", Desc = "Move to the next zone; increase your marble value.",
-			Icon = "💰",
+			Icon = "🌍",
 		},
 		-- flatPerBounce = Base * (PerTier ^ tier)           [output-scaling]
 		-- Combo bonus is an ABSOLUTE point add (combo × this), free of the bet — the low-bet/high-

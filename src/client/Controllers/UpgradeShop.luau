@@ -18,6 +18,7 @@ local RS = game:GetService("ReplicatedStorage")
 
 local TagsConfig = require(RS.Shared.Config.Tags)
 local UpgradesConfig = require(RS.Shared.Config.Upgrades)
+local ProfileStats = require(RS.Shared.ProfileStats)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
 
 local UpgradeShop = {}
@@ -38,6 +39,14 @@ local DENY_COLOR   = Color3.fromRGB(214, 74, 64)  -- can't afford → red
 local MAXED_COLOR  = Color3.fromRGB(128, 128, 140) -- nothing left to buy → grey
 local LOCKED_COLOR = Color3.fromRGB(90, 90, 96)   -- still locked → grey/black (pad + IconFrame)
 local LOCKED_ICON  = "❓"
+
+-- The MaxBet kiosk is the "Zone" pad: it gets a bigger, gold-titled billboard with a
+-- "Zone N" line instead of the standard short-name + "Lv. N" readout (its world model
+-- previews the next zone's colors — see BoardAppearanceView). Plain text only: arrow
+-- glyphs like ➜ aren't in GothamBold and render as missing-character boxes.
+local ZONE_TRACK = "MaxBet"
+local ZONE_TITLE_GRADIENT_TOP = Color3.fromRGB(255, 255, 255)
+local ZONE_TITLE_GRADIENT_BOTTOM = Color3.fromRGB(255, 205, 80)
 
 -- Track defs live in UpgradesConfig.Tracks or UpgradesConfig.Axes (axes are purchasable tracks too).
 local function defFor(track: string): any
@@ -62,6 +71,7 @@ type Display = {
 	track: string,
 	bb: BillboardGui,      -- whole readout; hidden outright while the track's world lock is unbought
 	tierLabel: TextLabel,
+	valueLabel: TextLabel?, -- Zone kiosk only: "Ball Value: $X" row under the zone row
 	priceLabel: TextLabel,
 	priceChip: Frame,
 	emitter: ParticleEmitter,
@@ -105,11 +115,16 @@ end
 -- icon tile if there is one, else above the pad itself.
 local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 	local adornee: BasePart = iconTile or pad
+	local track = pad:GetAttribute(TRACK_ATTR) :: string
+	local isZone = track == ZONE_TRACK
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "ShopInfo"
 	bb.Adornee = adornee
-	bb.Size = UDim2.fromOffset(170, 140)
+	-- Zone kiosk: STUD-sized (scale units) like the slot-pad billboards, so it keeps a
+	-- constant world size instead of a constant screen size; its children are therefore
+	-- scale-sized with TextScaled (pixel offsets/caps would drift against a stud canvas).
+	bb.Size = if isZone then UDim2.fromScale(8, 5.6) else UDim2.fromOffset(170, 140)
 	bb.ExtentsOffsetWorldSpace = Vector3.new(0, 3.0, 0) -- float just above the tile
 	bb.AlwaysOnTop = false
 	bb.LightInfluence = 0
@@ -126,28 +141,37 @@ local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 2)
+	layout.Padding = if isZone then UDim.new(0.012, 0) else UDim.new(0, 2)
 	layout.Parent = root
 
 	local nameLabel = Instance.new("TextLabel")
 	nameLabel.LayoutOrder = 1
 	nameLabel.BackgroundTransparency = 1
-	nameLabel.Size = UDim2.new(1, 0, 0, 30)
+	nameLabel.Size = if isZone then UDim2.fromScale(1, 0.21) else UDim2.new(1, 0, 0, 30)
 	nameLabel.Font = Enum.Font.GothamBold
 	nameLabel.TextScaled = true
 	nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	nameLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
 	nameLabel.TextStrokeTransparency = 0.35
-	nameLabel.Text = shortFor(pad:GetAttribute(TRACK_ATTR) :: string)
+	nameLabel.Text = if isZone then "🌍 " .. string.upper(shortFor(track)) else shortFor(track)
 	nameLabel.Parent = root
-	local nameConstraint = Instance.new("UITextSizeConstraint")
-	nameConstraint.MaxTextSize = 26
-	nameConstraint.Parent = nameLabel
+	if not isZone then -- pixel cap is meaningless on the stud-sized zone billboard
+		local nameConstraint = Instance.new("UITextSizeConstraint")
+		nameConstraint.MaxTextSize = 26
+		nameConstraint.Parent = nameLabel
+	end
+	if isZone then
+		local gradient = Instance.new("UIGradient")
+		gradient.Color = ColorSequence.new(ZONE_TITLE_GRADIENT_TOP, ZONE_TITLE_GRADIENT_BOTTOM)
+		gradient.Rotation = 90
+		gradient.Parent = nameLabel
+	end
 
 	local priceChip = Instance.new("Frame")
 	priceChip.LayoutOrder = 2
-	priceChip.Size = UDim2.fromOffset(0, 28)
-	priceChip.AutomaticSize = Enum.AutomaticSize.X
+	-- Zone: fixed-scale chip (AutomaticSize.X can't track a TextScaled label's width).
+	priceChip.Size = if isZone then UDim2.fromScale(0.5, 0.165) else UDim2.fromOffset(0, 28)
+	priceChip.AutomaticSize = if isZone then Enum.AutomaticSize.None else Enum.AutomaticSize.X
 	priceChip.BackgroundColor3 = DENY_COLOR
 	priceChip.Parent = root
 	local chipCorner = Instance.new("UICorner")
@@ -159,15 +183,16 @@ local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 	chipStroke.Thickness = 1.5
 	chipStroke.Parent = priceChip
 	local chipPad = Instance.new("UIPadding")
-	chipPad.PaddingLeft = UDim.new(0, 10)
-	chipPad.PaddingRight = UDim.new(0, 10)
+	chipPad.PaddingLeft = if isZone then UDim.new(0.1, 0) else UDim.new(0, 10)
+	chipPad.PaddingRight = if isZone then UDim.new(0.1, 0) else UDim.new(0, 10)
 	chipPad.Parent = priceChip
 
 	local priceLabel = Instance.new("TextLabel")
 	priceLabel.BackgroundTransparency = 1
-	priceLabel.Size = UDim2.fromOffset(0, 28)
-	priceLabel.AutomaticSize = Enum.AutomaticSize.X
+	priceLabel.Size = if isZone then UDim2.fromScale(1, 1) else UDim2.fromOffset(0, 28)
+	priceLabel.AutomaticSize = if isZone then Enum.AutomaticSize.None else Enum.AutomaticSize.X
 	priceLabel.Font = Enum.Font.GothamBold
+	priceLabel.TextScaled = isZone
 	priceLabel.TextSize = 18
 	priceLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	priceLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
@@ -178,7 +203,8 @@ local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 	local tierLabel = Instance.new("TextLabel")
 	tierLabel.LayoutOrder = 3
 	tierLabel.BackgroundTransparency = 1
-	tierLabel.Size = UDim2.new(1, 0, 0, 18)
+	-- Zone rows stay ~1.3x the standard kiosks' proportions via their scale fractions.
+	tierLabel.Size = if isZone then UDim2.fromScale(1, 0.14) else UDim2.new(1, 0, 0, 18)
 	tierLabel.Font = Enum.Font.GothamMedium
 	tierLabel.TextScaled = true
 	tierLabel.TextColor3 = Color3.fromRGB(225, 225, 235)
@@ -187,16 +213,37 @@ local function makeBillboard(pad: BasePart, iconTile: BasePart?): Display
 	tierLabel.Text = "Lv. 0"
 	tierLabel.FontFace.Bold = true
 	tierLabel.Parent = root
-	local tierConstraint = Instance.new("UITextSizeConstraint")
-	tierConstraint.MaxTextSize = 24
-	tierConstraint.Parent = tierLabel
+	if not isZone then
+		local tierConstraint = Instance.new("UITextSizeConstraint")
+		tierConstraint.MaxTextSize = 24
+		tierConstraint.Parent = tierLabel
+	end
+
+	-- Zone kiosk only: the marble value at the current zone, under the zone row — same
+	-- derivation the bet UI displays (ProfileStats.GetBetSizeAtTier), applyInfo fills it.
+	local valueLabel: TextLabel? = nil
+	if isZone then
+		local vl = Instance.new("TextLabel")
+		vl.LayoutOrder = 4
+		vl.BackgroundTransparency = 1
+		vl.Size = UDim2.fromScale(1, 0.14)
+		vl.Font = Enum.Font.GothamMedium
+		vl.TextScaled = true
+		vl.TextColor3 = Color3.fromRGB(225, 225, 235)
+		vl.TextStrokeColor3 = Color3.new(0, 0, 0)
+		vl.TextStrokeTransparency = 0.4
+		vl.Text = "Ball Value: $0"
+		vl.Parent = root
+		valueLabel = vl
+	end
 
 	defaultColors[pad] = pad.Color
 
 	return {
-		track = pad:GetAttribute(TRACK_ATTR) :: string,
+		track = track,
 		bb = bb,
 		tierLabel = tierLabel,
+		valueLabel = valueLabel,
 		priceLabel = priceLabel,
 		priceChip = priceChip,
 		emitter = makeEmitter(pad),
@@ -223,7 +270,10 @@ local function applyInfo(d: Display, info: any)
 	end
 	d.bb.Enabled = true
 
-	d.tierLabel.Text = "Lv. " .. tostring(info.tier)
+	d.tierLabel.Text = (if d.track == ZONE_TRACK then "Zone " else "Lv. ") .. tostring(info.tier)
+	if d.valueLabel then
+		d.valueLabel.Text = "Ball Value: " .. StringUtils.FormatMoney(ProfileStats.GetBetSizeAtTier(info.tier))
+	end
 	if d.iconLabel then
 		local icon = iconFor(d.track)
 		if icon then

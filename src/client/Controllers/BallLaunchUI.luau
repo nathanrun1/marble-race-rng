@@ -5,7 +5,7 @@
 -- steps through with Raise/Lower (ProfileStats.GetBetSizeAtTier), matching the
 -- server-authoritative tier stored on the profile (ProfileService.SetBetTier). Raise can
 -- go one rung PAST the player's owned MaxBet tier as a locked preview — LaunchBtn then
--- reads "UNLOCK" and, when pressed, runs the same PurchaseUpgrade("MaxBet") flow the
+-- reads "UNLOCK ZONE" and, when pressed, runs the same PurchaseUpgrade("MaxBet") flow the
 -- upgrade shop uses. That locked preview rung is purely client-local: it's never sent to
 -- the server (SetBetTier would just clamp it back down to the owned tier anyway).
 
@@ -13,6 +13,7 @@ local Players: Players = game:GetService("Players")
 local RS               = game:GetService("ReplicatedStorage")
 
 local ProfileStats = require(RS.Shared.ProfileStats)
+local Signal = require(RS.Shared.Utility.Signal)
 local SoundService = require(RS.Shared.SoundService)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
 local UIButton = require(RS.Shared.Utility.UIButton)
@@ -42,7 +43,11 @@ local BottomBar = MainGui:WaitForChild("BottomBar")
 local Controller = {}
 
 local LAUNCH_WORD = "LAUNCH"
-local UNLOCK_WORD = "UNLOCK"
+local UNLOCK_WORD = "UNLOCK ZONE"
+-- "UNLOCK ZONE" overflows the authored 88px word size (TextWrapped wraps it and the
+-- second line clips outside the button), so the locked state drops to this size; the
+-- authored size is cached below and restored alongside LAUNCH_WORD.
+local UNLOCK_WORD_TEXT_SIZE = 64
 -- Same grey UIButton uses for a true SetDisabled — LaunchBtn stays clickable while
 -- "locked" (pressing it attempts the Unlock purchase), so it's tinted via SetColor
 -- rather than actually disabled.
@@ -63,6 +68,7 @@ local ORIGINAL_BETSIZE_COLOR = betSizeLabel.TextColor3
 -- that name, so `launchButton.Text = ...` silently writes to the (invisible/unused) native
 -- property instead of this label. Must go through WaitForChild, which isn't fooled by that.
 local launchWordLabel = launchButton:WaitForChild("Text") :: TextLabel
+local ORIGINAL_WORD_TEXT_SIZE = launchWordLabel.TextSize
 local ORIGINAL_LAUNCH_COLOR = launchButton.BackgroundColor3
 
 local raiseHost = BottomBar:WaitForChild("RaiseBtn")
@@ -80,6 +86,16 @@ local autoShadow = autoHost:WaitForChild("Shadow") :: GuiObject
 -- currently displayed/selected rung, 0 .. ownedTier + 1 (the "+1" is the locked preview).
 local ownedTier = 0
 local selectedTier = 0
+
+-- The locked-preview selection is client-local, but other surfaces render off it too
+-- (SlotInteract greys its launch pads to "Zone Locked"): exposed as a getter + a Signal
+-- fired with (locked: boolean) whenever render() sees the state flip.
+Controller.ZoneLockedChanged = Signal.new()
+local lastZoneLocked = false
+
+function Controller.IsZoneLocked(): boolean
+	return selectedTier > ownedTier
+end
 -- The latest profile.upgrades pushed by the server (ProfileChanged / the Init pull) —
 -- lets launch clicks compute their countdown locally instead of a GetProfile round trip.
 local latestUpgrades: any = {}
@@ -113,6 +129,7 @@ local function render()
 		betSizeLabel.TextColor3 = ORIGINAL_BETSIZE_COLOR
 	end
 	launchWordLabel.Text = if locked then UNLOCK_WORD else LAUNCH_WORD
+	launchWordLabel.TextSize = if locked then UNLOCK_WORD_TEXT_SIZE else ORIGINAL_WORD_TEXT_SIZE
 	-- LaunchBtn stays CLICKABLE while locked (pressing it attempts the Unlock purchase),
 	-- so it's tinted via SetColor rather than SetDisabled. Raise/Lower actually should do
 	-- nothing at their respective edges, so they use the real UIButton.SetDisabled (which
@@ -125,6 +142,11 @@ local function render()
 	end
 	if lowerHandle then
 		lowerHandle.SetDisabled(selectedTier <= 0) -- floor: tier 0 (bet 10) has nothing below it
+	end
+	-- After painting, so subscribers re-rendering off the signal observe consistent state.
+	if locked ~= lastZoneLocked then
+		lastZoneLocked = locked
+		Controller.ZoneLockedChanged:Fire(locked)
 	end
 end
 

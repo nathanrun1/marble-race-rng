@@ -127,11 +127,15 @@ function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	end
 	ProfileService.SetUpgradeTier(player, track, tier + 1)
 	StatsService.AddUpgradesPurchased(player, 1)
-	-- MaxBet raises the CEILING only — the selected bet tier stays put. BallLaunchUI's
-	-- raise-arrow unlock flow re-selects the new rung itself (the player explicitly asked
-	-- for that tier); the shop kiosk deliberately does not, so a new player who buys the
-	-- tutorial's Max Bet tier keeps betting the starter amount instead of being silently
-	-- bumped to a 4x bet the board can eat.
+	-- Buying the Zone track IS moving to the next zone (its whole pitch), so the selected
+	-- bet tier jumps to the newly owned rung here, in the one place every purchase surface
+	-- (kiosk, launch bar, auto button) funnels through. SetBetTier clamps and fires its own
+	-- ProfileChanged, which repaints the board/zone client-side. This intentionally dropped
+	-- the old "kiosk buys don't bump" guard — post-Zone-reframe, buying and not moving read
+	-- as a bug.
+	if track == "MaxBet" then
+		ProfileService.SetBetTier(player, tier + 1)
+	end
 	return { ok = true, upgrades = UpgradeService.GetAllInfo(player) }
 end
 
