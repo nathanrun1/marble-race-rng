@@ -10,9 +10,10 @@
 --     advertises "Unlock - $X" (the NumSlots track's next-tier price, pure UpgradeInfo
 --     math) and opens ShopUI's slot-unlock purchase screen on touch.
 --   * An unlocked slot's Studio-authored "AutoSign" part (tilted panel behind the pad)
---     sells the one-time AUTO purchase (Config/SlotAuto price by slot index): this
---     controller fills its SurfaceGui and wires a local ClickDetector; buying goes
---     through LaunchNet.PurchaseSlotAuto and the server then auto-fires the slot.
+--     advertises the one-time AUTO purchase (Config/SlotAuto price by slot index): this
+--     controller fills its SurfaceGui and wires a local ClickDetector + ProximityPrompt,
+--     both of which open ShopUI's slot-AUTO purchase screen (ShopUI.OpenSlotAuto) —
+--     buying happens there, and the server then auto-fires the slot.
 --   * Slots beyond the next — completely hidden, Interact included.
 -- Hiding is client-local (LocalTransparencyModifier + local CanCollide) — the slot models
 -- are shared world content, and each client sees its own unlock progress on them.
@@ -28,7 +29,6 @@ local StringUtils = require(RS.Shared.Utility.StringUtils)
 local SlotAutoConfig = require(RS.Shared.Config.SlotAuto)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local SoundService = require(RS.Shared.SoundService)
-local WarnUI = require(RS.Shared.WarnUI)
 local TagsConfig = require(RS.Shared.Config.Tags)
 local ShopUI = require(script.Parent.ShopUI)
 local LoadoutUI = require(script.Parent.LoadoutUI)
@@ -44,6 +44,7 @@ local GREEN = Color3.fromRGB(0, 255, 0)
 local RED = Color3.fromRGB(255, 0, 0)
 local GRAY = Color3.fromRGB(150, 150, 150) -- unlocked but empty: "Equip"
 local GOLD = Color3.fromRGB(255, 200, 40)  -- AUTO sign price row
+local AUTO_OWNED_GREEN = Color3.fromRGB(107, 223, 101) -- sign body once AUTO is owned (local repaint)
 local UNLOCK_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 local TOUCH_DEBOUNCE = 0.4 -- seconds; one step-on fires Touched once per limb
 
@@ -57,7 +58,10 @@ type Rig = {
 	lastTouch: number,
 	cooling: boolean, -- countdown loop renders the label while true
 	autoGui: SurfaceGui?,      -- built onto the authored "AutoSign" part, if the model has one
-	autoPriceLabel: TextLabel?, -- price row ("$X — one time" / "OWNED ✓")
+	autoPriceLabel: TextLabel?, -- price row ("$X" / "OWNED ✓")
+	autoSign: BasePart?,        -- the sign part itself (recoloured locally when owned)
+	autoSignColor: Color3?,     -- its authored colour, restored while not owned
+	autoPrompt: ProximityPrompt?, -- "E to buy" on the sign; disabled once owned
 }
 
 local rigs: { [number]: Rig } = {}
@@ -75,7 +79,6 @@ end
 
 -- Latest server-pushed AUTO ownership (ProfileChanged; profile.autoSlots).
 local autoSlots: { [string]: boolean } = {}
-local autoBuying = false -- one AUTO purchase in flight at a time
 
 local function autoOwned(slotNum: number): boolean
 	return autoSlots[tostring(slotNum)] == true
@@ -125,15 +128,27 @@ local function render(rig: Rig)
 	-- part transparency — setModelHidden's LocalTransparencyModifier doesn't hide SurfaceGuis.
 	if rig.autoGui then
 		rig.autoGui.Enabled = n <= unlocked
+		local owned = autoOwned(n)
 		local priceL = rig.autoPriceLabel
 		if priceL then
-			if autoOwned(n) then
+			if owned then
 				priceL.Text = "OWNED ✓"
 				priceL.TextColor3 = GREEN
 			else
-				priceL.Text = "$" .. StringUtils.FormatShort(SlotAutoConfig.PriceFor(n)) .. " — one time"
+				priceL.Text = "$" .. StringUtils.FormatShort(SlotAutoConfig.PriceFor(n))
 				priceL.TextColor3 = GOLD
 			end
+		end
+		-- Local repaint only (like PegHeatView's peg colours): the sign is shared world
+		-- content, but ownership is per-player.
+		if rig.autoSign then
+			rig.autoSign.Color = if owned then AUTO_OWNED_GREEN else rig.autoSignColor :: Color3
+		end
+		-- The prompt only offers what's actually buyable: gone once owned or while locked.
+		local prompt = rig.autoPrompt
+		if prompt then
+			prompt.Enabled = n <= unlocked and not owned
+			prompt.ActionText = "Buy AUTO — $" .. StringUtils.FormatShort(SlotAutoConfig.PriceFor(n))
 		end
 	end
 
@@ -222,7 +237,7 @@ local function makeBillboard(interact: BasePart): (BillboardGui, TextLabel)
 	billboard.Size = UDim2.fromScale(7, 1.6)
 	-- World-space offset: Interact pads can be authored lying flat/on their side, and the
 	-- object-space StudsOffset axes would follow that rotation (see the lock-pad billboards).
-	billboard.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
+	billboard.StudsOffsetWorldSpace = Vector3.new(0, 2, 0)
 	billboard.AlwaysOnTop = true
 	billboard.MaxDistance = 120
 	billboard.Parent = interact
@@ -246,27 +261,14 @@ local function makeBillboard(interact: BasePart): (BillboardGui, TextLabel)
 	return billboard, label
 end
 
--- Buy AUTO for this slot off its sign. Fire-and-wait (RemoteFunction) so we can surface
--- the reason; ownership itself re-renders via the ProfileChanged push SetSlotAuto sends.
+-- The sign is a storefront, not a buy button: clicking it (or its prompt) opens ShopUI's
+-- slot-AUTO purchase screen — the actual purchase happens there, server-validated.
 local function onAutoClicked(rig: Rig)
 	local n = rig.slotNum
-	if autoBuying or n > unlockedSlots() or autoOwned(n) then
+	if n > unlockedSlots() or autoOwned(n) then
 		return
 	end
-	autoBuying = true
-	local ok, result = pcall(function()
-		return (LaunchNet.PurchaseSlotAuto :: RemoteFunction):InvokeServer(n)
-	end)
-	autoBuying = false
-	if not ok or type(result) ~= "table" then
-		return
-	end
-	if result.ok then
-		SoundService.Play({ soundId = SoundsConfig.Upgrade })
-		WarnUI.WarnLocal(("⚡ AUTO enabled for slot %d!"):format(n), GREEN, 3)
-	elseif result.reason == "cannot_afford" then
-		WarnUI.WarnLocal("Not enough cash!", Color3.fromRGB(255, 120, 120))
-	end
+	ShopUI.OpenSlotAuto(n)
 end
 
 -- Fill the authored AutoSign panel: same billboard styling as the pads (FredokaOne,
@@ -303,6 +305,8 @@ local function buildAutoSign(rig: Rig, sign: BasePart)
 	desc.TextTransparency = 0.1
 	rig.autoPriceLabel = row(0.70, 0.28, "", GOLD)
 	rig.autoGui = gui
+	rig.autoSign = sign
+	rig.autoSignColor = sign.Color
 
 	local click = Instance.new("ClickDetector")
 	click.Name = "AutoSignClick"
@@ -311,6 +315,22 @@ local function buildAutoSign(rig: Rig, sign: BasePart)
 	click.MouseClick:Connect(function()
 		onAutoClicked(rig)
 	end)
+
+	-- Same purchase, gamepad/keyboard-friendly: a proximity prompt ("E to interact") on
+	-- the sign. Client-built like the ClickDetector, so it's this player's price/state.
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "AutoSignPrompt"
+	prompt.ObjectText = "⚡ AUTO"
+	prompt.ActionText = "Buy AUTO"
+	prompt.HoldDuration = 0 -- just opens the purchase screen; ShopUI's Buy is the commitment
+	prompt.MaxActivationDistance = 10
+	prompt.RequiresLineOfSight = false
+	prompt.Enabled = false -- render() decides (locked/owned hide it)
+	prompt.Parent = sign
+	prompt.Triggered:Connect(function()
+		onAutoClicked(rig)
+	end)
+	rig.autoPrompt = prompt
 end
 
 local function setup(inst: Instance)
@@ -337,6 +357,9 @@ local function setup(inst: Instance)
 		cooling = false,
 		autoGui = nil,
 		autoPriceLabel = nil,
+		autoSign = nil,
+		autoSignColor = nil,
+		autoPrompt = nil,
 	}
 	local autoSign = inst:FindFirstChild("AutoSign")
 	if autoSign and autoSign:IsA("BasePart") then

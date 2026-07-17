@@ -437,7 +437,7 @@ local function resolveUI()
 
 	-- The invisible authored slot prefab; rebuildSlots clones it per unlocked slot.
 	local slotsRow = panel:WaitForChild("SlotsRow")
-	slotPrefab = (slotsRow:WaitForChild("Frame") :: Instance):WaitForChild("Slot") :: TextButton
+	slotPrefab = slotsRow:WaitForChild("Slot") :: TextButton
 end
 
 ----------------------------------------------------------------------------------

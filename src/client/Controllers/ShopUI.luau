@@ -13,9 +13,11 @@ local SoundService = require(RS.Shared.SoundService)
 local ProductService = require(RS.Shared.ProductService)
 local UIButton = require(RS.Shared.Utility.UIButton)
 local MonetizationConfig = require(RS.Shared.Config.Monetization)
+local SlotAutoConfig = require(RS.Shared.Config.SlotAuto)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local UpgradesConfig = require(RS.Shared.Config.Upgrades)
 local CurrencyNet = require(RS.Shared.Remote.CurrencyNet)
+local LaunchNet = require(RS.Shared.Remote.LaunchNet)
 local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 local UpgradeNet = require(RS.Shared.Remote.UpgradeNet)
 local player: Player = Players.LocalPlayer :: Player
@@ -121,6 +123,13 @@ local loadedLock: LockView? = nil
 -- pads open this). Renders with the lock chrome but is backed by the NumSlots upgrade
 -- track, not a world UpgradeLock. Mutually exclusive with loadedTrack/loadedLock.
 local loadedSlotUnlock = false
+
+-- A slot's one-time AUTO purchase being offered (see ShopUI.OpenSlotAuto — the world
+-- AutoSigns open this). Flat purchase through LaunchNet.PurchaseSlotAuto; ownership
+-- state comes from the profile's autoSlots (cached below). Mutually exclusive with the
+-- other loaded* views.
+local loadedSlotAuto: number? = nil
+local cachedAutoSlots: { [string]: boolean } = {}
 
 -- The 3× boost grants 3 tiers, so it's only offered when at least 3 tiers remain.
 -- `boostButton` is bound at the bottom; loadShop captures it as a forward ref.
@@ -356,6 +365,7 @@ function loadShop(track: string): Info
     loadedInfo = upgradeInfo
     loadedLock = nil
     loadedSlotUnlock = false
+    loadedSlotAuto = nil
     return upgradeInfo
 end
 
@@ -401,6 +411,7 @@ local function loadLock(lock: LockView)
 	loadedTrack = nil
 	loadedInfo = nil
 	loadedSlotUnlock = false
+	loadedSlotAuto = nil
 end
 
 -- Loads ShopGui as the "add a launch slot" purchase screen: lock chrome + Unlock button,
@@ -421,6 +432,34 @@ local function loadSlotUnlock()
 	hideProgressSections()
 
 	loadedSlotUnlock = true
+	loadedSlotAuto = nil
+	loadedLock = nil
+	loadedTrack = nil
+	loadedInfo = nil
+end
+
+-- Loads ShopGui as a slot's one-time AUTO purchase screen (the world AutoSigns open
+-- this): flat-purchase layout (no tier progression) but with the real name/desc/icon —
+-- it's an offer, not a locked tease. "OWNED" is defensive: the signs stop opening the
+-- view once owned.
+local function loadSlotAuto(slot: number)
+	local owned = cachedAutoSlots[tostring(slot)] == true
+	local price = SlotAutoConfig.PriceFor(slot)
+	UI.name.Text = "⚡ AUTO"
+	applyLockChrome(true)
+	UI.word.Text = "Buy"
+	UI.desc.Text = ("Launches Slot %d automatically. One-time purchase."):format(slot)
+	UI.icon.Text = "⚡"
+	if owned then
+		UI.price.Text = "OWNED"
+	else
+		UI.price.Text = "$" .. StringUtils.FormatShort(price)
+	end
+	adjustButton(not owned and cachedBalance >= price)
+	hideProgressSections()
+
+	loadedSlotAuto = slot
+	loadedSlotUnlock = false
 	loadedLock = nil
 	loadedTrack = nil
 	loadedInfo = nil
@@ -463,6 +502,19 @@ end
 -- re-renders from server truth either way, so a wrong guess (balance changed since the
 -- last render) simply snaps back rather than staying granted.
 function onBuyPressed()
+    -- Slot-AUTO view: one flat server-validated purchase (LaunchNet), no prediction.
+    local autoSlot = loadedSlotAuto
+    if autoSlot then
+        local res = (LaunchNet.PurchaseSlotAuto :: RemoteFunction):InvokeServer(autoSlot)
+        if type(res) == "table" and res.ok then
+            SoundService.Play({ soundId = SoundsConfig.Upgrade })
+            punch()
+            playFlare("AUTO Enabled!")
+            ShopUI.CloseShop() -- the sign re-renders OWNED (SlotInteract); nothing left to sell
+        end
+        return
+    end
+
     -- Slot-unlock view: one NumSlots tier, server-validated, no optimistic prediction.
     if loadedSlotUnlock then
         local res: PurchaseResult = PurchaseUpgradeRF:InvokeServer("NumSlots")
@@ -623,6 +675,12 @@ function ShopUI.OpenSlotUnlock()
 	slideIn()
 end
 
+-- Enable the shop as a slot's AUTO purchase screen (SlotInteract's AutoSigns open this).
+function ShopUI.OpenSlotAuto(slot: number)
+	loadSlotAuto(slot)
+	slideIn()
+end
+
 -- Determines if the Shop UI is open
 function ShopUI.IsOpen(): boolean
 	return ShopGui.Enabled
@@ -666,6 +724,8 @@ function ShopUI.Init()
 	            loadLock(loadedLock) -- re-colour the Unlock button's affordability
 	        elseif loadedSlotUnlock then
 	            loadSlotUnlock()
+	        elseif loadedSlotAuto then
+	            loadSlotAuto(loadedSlotAuto) -- re-colour the Buy button's affordability
 	        end
 	    end
 	end)
@@ -675,12 +735,17 @@ function ShopUI.Init()
 	local ProfileChangedRE: RemoteEvent = ProfileNet.ProfileChanged
 	ProfileChangedRE.OnClientEvent:Connect(function(profile: any)
 	    cachedUpgrades = (profile and profile.upgrades) or {}
+	    if type(profile) == "table" and type(profile.autoSlots) == "table" then
+	        cachedAutoSlots = profile.autoSlots
+	    end
 	    seededUpgrades = true
 	    if ShopGui.Enabled then
 	        if loadedTrack then
 	            loadShop(loadedTrack)
 	        elseif loadedSlotUnlock then
 	            loadSlotUnlock() -- the NumSlots tier may have just changed
+	        elseif loadedSlotAuto then
+	            loadSlotAuto(loadedSlotAuto) -- ownership may have just landed
 	        end
 	    end
 	end)
@@ -695,6 +760,9 @@ function ShopUI.Init()
 	    end)
 	    if okP and not seededUpgrades and type(profile) == "table" and type(profile.upgrades) == "table" then
 	        cachedUpgrades = profile.upgrades
+	        if type(profile.autoSlots) == "table" then
+	            cachedAutoSlots = profile.autoSlots
+	        end
 	    end
 	    local okB, balance = pcall(function()
 	        return GetBalanceRF:InvokeServer()
