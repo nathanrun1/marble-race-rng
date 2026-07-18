@@ -6,10 +6,14 @@
 -- phase at fire time, around the player's Angle (aim center).
 --
 -- PER-SLOT LAUNCH REWORK: each loadout slot launches independently (the world slot
--- Interact pads / the HUD LAUNCH button = every ready slot at once). Each slot has its
--- own cooldown, ProfileStats.GetLaunchDelay (the Frequency upgrade lowers it for all
+-- Interact pads / the HUD LAUNCH ALL button = every ready slot at once). Each slot has
+-- its own cooldown, ProfileStats.GetLaunchDelay (the Frequency upgrade lowers it for all
 -- slots). A ball's value = the player's selected bet size (BetTier ladder) × its skin's
--- rarity bet multiplier (CosmeticBonus.RarityBetMult); launching itself is free.
+-- rarity bet multiplier (CosmeticBonus.RarityBetMult), but the launch STAKES only the
+-- flat bet size (deducted from the balance — can't afford = no launch + a throttled
+-- warn): rarity multiplies the value for the same price. The payout comes back only when
+-- the banked plot ball is walked over (BallPlotService), never at the destroy target
+-- itself.
 
 local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
@@ -26,6 +30,8 @@ local CurrencyService = require(SSS.Scripts.Services.CurrencyService)
 local BallConfig = require(RS.Shared.Config.Ball)
 local LauncherConfig = require(RS.Shared.Config.Launcher)
 local SlotAutoConfig = require(RS.Shared.Config.SlotAuto)
+local StringUtils = require(RS.Shared.Utility.StringUtils)
+local WarnUI = require(RS.Shared.WarnUI)
 local LaunchNet = require(RS.Shared.Remote.LaunchNet)
 local requestLaunch = LaunchNet.RequestLaunch
 
@@ -50,6 +56,21 @@ local LAUNCH_DIR_VARIATION = math.rad(10)                -- Launch angle can var
 -- (missing = ready now). Cleared on leave.
 local slotReadyTime: { [number]: { [number]: number } } = {}
 
+-- Can't-afford-stake warn throttle: one warn per player per interval, no matter how many
+-- slots fail in a volley or how often the auto sweep retries. Cleared on leave.
+local AFFORD_WARN_INTERVAL = 2
+local AFFORD_WARN_COLOR = Color3.fromRGB(255, 120, 120)
+local lastAffordWarn: { [number]: number } = {}
+
+local function warnCantAfford(player: Player, value: number)
+	local now = os.clock()
+	if now - (lastAffordWarn[player.UserId] or 0) < AFFORD_WARN_INTERVAL then
+		return
+	end
+	lastAffordWarn[player.UserId] = now
+	WarnUI.Warn(player, ("Can't afford value ($%s)"):format(StringUtils.FormatShort(value)), AFFORD_WARN_COLOR)
+end
+
 local function genLaunchSpeed(): number
 	local variation = LAUNCH_SPEED * LAUNCH_SPEED_VARIATION
 	return math.random(LAUNCH_SPEED - variation, LAUNCH_SPEED + variation)
@@ -71,14 +92,19 @@ local function deriveLaunchVelocity(phase: number, arcWidth: number, aimAngle: n
 	return dir.Unit * genLaunchSpeed()
 end
 
--- $ value a launched ball carries (PER-SLOT LAUNCH REWORK): the player's selected bet size
--- (their BetTier ladder rung) × the skin's rarity bet multiplier — rarity scales the bet,
--- it is no longer a standalone value table.
+-- What a launch COSTS: the player's selected bet size (their BetTier ladder rung), flat
+-- per ball regardless of the skin in the slot — this is the $P in the HUD's "N x $P".
+local function launchStake(player: Player): number
+	return ProfileStats.GetBetSizeAtTier(ProfileService.GetLoadout(player).BetTier)
+end
+
+-- $ value a launched ball CARRIES (PER-SLOT LAUNCH REWORK): the stake × the skin's rarity
+-- bet multiplier. Rarity multiplies the ball's value for the same price — it does NOT
+-- raise the stake; that's the whole payoff of slotting rarer marbles.
 local function ballValueForSkin(player: Player, skinId: string): number
 	local skin = BallSkins.Get(skinId)
 	local rarity = if skin then skin.rarity else 1
-	local betSize = ProfileStats.GetBetSizeAtTier(ProfileService.GetLoadout(player).BetTier)
-	return betSize * CosmeticBonus.RarityBetMult(rarity)
+	return launchStake(player) * CosmeticBonus.RarityBetMult(rarity)
 end
 
 -- Spawn one ball for this player wearing `skinId`, valued at that skin's rarity. This is the
@@ -127,10 +153,23 @@ local function launchSlot(player: Player, slot: number)
 		return
 	end
 
+	-- The launch is STAKED at the flat bet size (rarity boosts the ball's value, never the
+	-- price): paid up front, atomically (no yield between check and deduct). The reason
+	-- must NOT start with "Ball " — that prefix is the load-bearing ball-BANK contract
+	-- (StatsService/MoneyPerBallUI/TutorialController parse it), and a stake is spend,
+	-- not income.
+	local stake = launchStake(player)
+	if CurrencyService.GetPoints(player) < stake then
+		warnCantAfford(player, stake)
+		return
+	end
+	CurrencyService.AddPoints(player, -stake, "Launch stake: slot " .. slot)
+
 	local cooldown = ProfileStats.GetLaunchDelay(ProfileService.GetUpgrades(player))
 	ready[slot] = now + cooldown
 	spawnBall(player, skinId)
-	LaunchNet.SlotLaunched:FireClient(player, slot, cooldown)
+	-- The stake rides along so the pad can pop its "-$X" spent readout (SlotInteract).
+	LaunchNet.SlotLaunched:FireClient(player, slot, cooldown, stake)
 end
 
 -- The HUD LAUNCH button / auto-launch: fire every slot that is currently ready.
@@ -217,16 +256,31 @@ local function purchaseSlotAuto(player: Player, slot: unknown): { ok: boolean, r
 	if slot > LoadoutService.GetMaxSlots(player) then
 		return { ok = false, reason = "locked" }
 	end
-	if ProfileService.GetAutoSlots(player)[tostring(slot)] then
-		return { ok = false, reason = "owned" }
+	if ProfileService.GetAutoSlots(player)[tostring(slot)] ~= nil then
+		return { ok = false, reason = "owned" } -- owned even if currently toggled off
 	end
 	local price = SlotAutoConfig.PriceFor(slot)
 	if CurrencyService.GetPoints(player) < price then
 		return { ok = false, reason = "cannot_afford" }
 	end
 	CurrencyService.AddPoints(player, -price, "SlotAuto: " .. slot)
-	ProfileService.SetSlotAuto(player, slot)
+	ProfileService.SetSlotAuto(player, slot) -- defaults to enabled
 	return { ok = true }
+end
+
+-- Flip an owned slot's AUTO on/off (the AutoSign's post-purchase interaction). Ownership
+-- is the key existing in autoSlots; the value is the on/off state the Start sweep obeys.
+local function toggleSlotAuto(player: Player, slot: unknown): { ok: boolean, enabled: boolean?, reason: string? }
+	if type(slot) ~= "number" or slot ~= math.floor(slot) or slot < 1 then
+		return { ok = false, reason = "invalid_slot" }
+	end
+	local current = ProfileService.GetAutoSlots(player)[tostring(slot)]
+	if current == nil then
+		return { ok = false, reason = "not_owned" }
+	end
+	local enabled = not current
+	ProfileService.SetSlotAuto(player, slot, enabled)
+	return { ok = true, enabled = enabled }
 end
 
 -- Request a launch: a numbered slot from its world Interact pad, or no arg = every ready
@@ -244,6 +298,7 @@ function BallLaunchService.Init()
 	requestLaunch.OnServerEvent:Connect(onRequest)
 	Players.PlayerRemoving:Connect(function(player: Player)
 		slotReadyTime[player.UserId] = nil
+		lastAffordWarn[player.UserId] = nil
 	end)
 
 	-- Lets the client sync its visual launcher rotation to the server's phase.
@@ -252,11 +307,13 @@ function BallLaunchService.Init()
 	end
 
 	LaunchNet.PurchaseSlotAuto.OnServerInvoke = purchaseSlotAuto
+	LaunchNet.ToggleSlotAuto.OnServerInvoke = toggleSlotAuto
 end
 
--- Auto-launch sweep: every SweepInterval, fire each AUTO-owned slot that's ready.
--- launchSlot's own guards (unlock, equip, cooldown, ball cap) are the real gate — the
--- sweep just asks. pcall around the profile read: a player can be in Players before
+-- Auto-launch sweep: every SweepInterval, fire each AUTO-owned slot that's ready AND
+-- switched on (the autoSlots value — owned-but-toggled-off slots sit out). launchSlot's
+-- own guards (unlock, equip, cooldown, ball cap, stake) are the real gate — the sweep
+-- just asks. pcall around the profile read: a player can be in Players before
 -- DataService has seeded their profile (join race), and GetAutoSlots asserts on that.
 function BallLaunchService.Start()
 	while true do
@@ -264,9 +321,9 @@ function BallLaunchService.Start()
 		for _, player in Players:GetPlayers() do
 			local ok, autoSlots = pcall(ProfileService.GetAutoSlots, player)
 			if ok then
-				for slotStr in autoSlots do
+				for slotStr, enabled in autoSlots do
 					local slot = tonumber(slotStr)
-					if slot then
+					if slot and enabled == true then
 						launchSlot(player, slot)
 					end
 				end

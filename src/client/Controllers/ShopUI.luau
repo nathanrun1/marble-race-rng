@@ -325,8 +325,9 @@ function loadShop(track: string): Info
 	end
 
     if upgradeInfo.price then
-        -- Diamond-priced tracks (Luck) show 💎; note the kiosk's canAfford still compares
-        -- against the CASH balance — Luck's real home is the cosmetics shop's LUCK tab.
+        -- Diamond-priced purchases (Luck's barrier tiers) show 💎; note the kiosk's
+        -- canAfford still compares against the CASH balance — Luck's real home is the
+        -- cosmetics shop's LUCK tab.
         local prefix = if upgradeInfo.currency == "Diamonds" then "💎 " else "$"
         UI.price.Text = prefix..StringUtils.FormatShort(upgradeInfo.price)
     else
@@ -443,7 +444,8 @@ end
 -- it's an offer, not a locked tease. "OWNED" is defensive: the signs stop opening the
 -- view once owned.
 local function loadSlotAuto(slot: number)
-	local owned = cachedAutoSlots[tostring(slot)] == true
+	-- Key present = owned (the value is the on/off toggle state, irrelevant here).
+	local owned = cachedAutoSlots[tostring(slot)] ~= nil
 	local price = SlotAutoConfig.PriceFor(slot)
 	UI.name.Text = "⚡ AUTO"
 	applyLockChrome(true)

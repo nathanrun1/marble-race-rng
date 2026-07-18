@@ -42,12 +42,11 @@ local BottomBar = MainGui:WaitForChild("BottomBar")
 
 local Controller = {}
 
-local LAUNCH_WORD = "LAUNCH"
+local LAUNCH_WORD = "LAUNCH ALL"
 local UNLOCK_WORD = "UNLOCK ZONE"
--- "UNLOCK ZONE" overflows the authored 88px word size (TextWrapped wraps it and the
--- second line clips outside the button), so the locked state drops to this size; the
--- authored size is cached below and restored alongside LAUNCH_WORD.
-local UNLOCK_WORD_TEXT_SIZE = 64
+-- Both words overflow the authored 88px word size (TextWrapped wraps them and the
+-- second line clips outside the button), so both states drop to this size.
+local WORD_TEXT_SIZE = 64
 -- Same grey UIButton uses for a true SetDisabled — LaunchBtn stays clickable while
 -- "locked" (pressing it attempts the Unlock purchase), so it's tinted via SetColor
 -- rather than actually disabled.
@@ -68,7 +67,6 @@ local ORIGINAL_BETSIZE_COLOR = betSizeLabel.TextColor3
 -- that name, so `launchButton.Text = ...` silently writes to the (invisible/unused) native
 -- property instead of this label. Must go through WaitForChild, which isn't fooled by that.
 local launchWordLabel = launchButton:WaitForChild("Text") :: TextLabel
-local ORIGINAL_WORD_TEXT_SIZE = launchWordLabel.TextSize
 local ORIGINAL_LAUNCH_COLOR = launchButton.BackgroundColor3
 
 local raiseHost = BottomBar:WaitForChild("RaiseBtn")
@@ -117,19 +115,26 @@ local launchBtnActive = true
 local lastPricedTier: number? = nil
 local nextTierPrice: number? = nil
 
+-- Equipped marbles (entries in the server-pushed loadout), for the "N x $P" cost line
+-- under LAUNCH ALL — N balls fire, each staking the zone's bet value.
+local equippedCount = 0
+
 local function render()
 	local locked = selectedTier > ownedTier
 	if locked and nextTierPrice then
 		-- Previewing the locked rung: show what it costs to unlock, in green, instead of
-		-- the (inaccessible) bet size.
+		-- the (inaccessible) launch cost.
 		betSizeLabel.Text = StringUtils.FormatMoney(nextTierPrice)
 		betSizeLabel.TextColor3 = PRICE_GREEN
 	else
-		betSizeLabel.Text = StringUtils.FormatMoney(ProfileStats.GetBetSizeAtTier(selectedTier))
+		betSizeLabel.Text = ("%d x %s"):format(
+			equippedCount,
+			StringUtils.FormatMoney(ProfileStats.GetBetSizeAtTier(selectedTier))
+		)
 		betSizeLabel.TextColor3 = ORIGINAL_BETSIZE_COLOR
 	end
 	launchWordLabel.Text = if locked then UNLOCK_WORD else LAUNCH_WORD
-	launchWordLabel.TextSize = if locked then UNLOCK_WORD_TEXT_SIZE else ORIGINAL_WORD_TEXT_SIZE
+	launchWordLabel.TextSize = WORD_TEXT_SIZE
 	-- LaunchBtn stays CLICKABLE while locked (pressing it attempts the Unlock purchase),
 	-- so it's tinted via SetColor rather than SetDisabled. Raise/Lower actually should do
 	-- nothing at their respective edges, so they use the real UIButton.SetDisabled (which
@@ -351,9 +356,30 @@ function Controller.Init()
 		autoKick() -- a new slot/tier may be ready to join the auto cycle
 	end)
 	-- Equipping a skin into a previously empty slot has no SlotLaunched chain yet — the
-	-- loadout push is what brings it into the cycle.
-	;(LoadoutNet.LoadoutChanged :: RemoteEvent).OnClientEvent:Connect(function()
+	-- loadout push is what brings it into the cycle. It also carries the equipped-marble
+	-- count the "N x $P" cost line renders from.
+	local function applyLoadout(info: any)
+		if type(info) == "table" and type(info.loadout) == "table" then
+			local n = 0
+			for _ in info.loadout do
+				n += 1
+			end
+			equippedCount = n
+			render()
+		end
+	end
+	;(LoadoutNet.LoadoutChanged :: RemoteEvent).OnClientEvent:Connect(function(info: any)
+		applyLoadout(info)
 		autoKick()
+	end)
+	-- Seed once on startup (pushes only arrive on changes) — same pattern SlotInteract uses.
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return (LoadoutNet.GetLoadoutInfo :: RemoteFunction):InvokeServer()
+		end)
+		if ok then
+			applyLoadout(info)
+		end
 	end)
 
 	refreshFromProfile()

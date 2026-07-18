@@ -1,8 +1,10 @@
 --!strict
 -- Marble shop, built into the world SurfaceGui tagged TagsConfig.CosmeticsGui.
 -- Two tabs (left column):
---   LUCK (primary) — the Luck upgrade card: the Diamond-priced, rebirth-persistent Luck
---     track (Config/Upgrades) that biases every roll toward rarer marbles. The free roll
+--   LUCK (primary) — the Luck upgrade card: the rebirth-persistent Luck track
+--     (Config/Upgrades) that biases every roll toward rarer marbles. A barrier ladder:
+--     cash-priced + sub-tiers, with a Diamond-priced barrier into each next display
+--     tier (the card goes red-locked at a barrier). The free roll
 --     (the main way to get skins) is claimed at its WORLD pad (TagsConfig.FreeCratePad,
 --     billboard/countdown below), not from a shop card; the purchasable crates are
 --     retired — skins are a core bet-multiplier mechanic now, not loot to sell.
@@ -39,6 +41,7 @@ local DiamondsShopUI = require(script.Parent.DiamondsShopUI)
 local CurrencyFlyUI = require(script.Parent.CurrencyFlyUI)
 local FreeRollBallSample = require(script.Parent.FreeRollBallSample)
 local CosmeticsNet = require(RS.Shared.Remote.CosmeticsNet)
+local CurrencyNet = require(RS.Shared.Remote.CurrencyNet)
 local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 local UpgradeNet = require(RS.Shared.Remote.UpgradeNet)
 
@@ -54,6 +57,7 @@ local GREEN       = Color3.fromRGB(96, 224, 120)
 local BLUE        = Color3.fromRGB(70, 130, 240)
 local LOCKED_SWATCH = Color3.fromRGB(22, 23, 30)   -- silhouette fill for unowned skins
 local GOLD        = Color3.fromRGB(255, 200, 40)
+local RED         = Color3.fromRGB(235, 70, 70)    -- Luck card's barrier-locked highlight
 
 local getInfoRF = CosmeticsNet.GetCosmeticInfo :: RemoteFunction
 local selectRE = CosmeticsNet.SelectCosmetic :: RemoteEvent
@@ -124,12 +128,16 @@ local openLuckTab: (() -> ())? = nil             -- set by build(); "UNLOCK FROM
 
 -- Luck upgrade card state (LUCK tab): the tier comes from ProfileChanged pushes; price/
 -- affordability are recomputed locally from UpgradeInfo (same pure math the server prices
--- with) against the Diamonds balance in `info.cc`.
+-- with). Luck is a barrier ladder now: sub-tier (+) purchases charge CASH (`cashBalance`,
+-- from CurrencyNet pushes), the every-4th barrier into the next display tier charges
+-- Diamonds (`info.cc`) — UpgradeInfo.CurrencyAt picks per tier.
 local luckTier = 0
 local luckTierLabel: TextLabel? = nil
 local luckEffectLabel: TextLabel? = nil
 local luckButton: TextButton? = nil
+local luckCardStroke: UIStroke? = nil -- card outline: GREEN normally, RED at a Diamond barrier
 local luckBuying = false -- one purchase in flight at a time
+local cashBalance = 0 -- CurrencyNet.BalanceChanged mirror, for the cash-priced sub-tiers
 
 -- Paid-random-items policy (PolicyGate): nil until the async fetch lands. Restricted
 -- players get the deterministic per-rarity direct skin purchase (RarityProducts) in the
@@ -373,14 +381,16 @@ local function runRoll(weights: { number }?, invoke: () -> RollResult, reveal: (
 	rolling = false
 end
 
--- Buy one Luck tier (Diamonds; server-authoritative through the ordinary upgrade
--- purchase remote). The fresh tier lands via ProfileChanged and the new Diamonds
--- balance via CosmeticChanged, but both are applied optimistically from the result
--- snapshot so the card can't render stale between pushes.
+-- Buy one Luck tier (server-authoritative through the ordinary upgrade purchase
+-- remote; the server charges cash for + sub-tiers, Diamonds at barriers). The fresh
+-- tier lands via ProfileChanged and the new balances via CosmeticChanged /
+-- BalanceChanged, but the tier is applied optimistically from the result snapshot so
+-- the card can't render stale between pushes.
 function CosmeticsShop.buyLuck()
 	if luckBuying then
 		return
 	end
+	local wasBarrier = UpgradeInfo.IsBarrierAt("Luck", luckTier)
 	luckBuying = true
 	local ok, result = pcall(function()
 		return purchaseUpgradeRF:InvokeServer("Luck")
@@ -390,11 +400,15 @@ function CosmeticsShop.buyLuck()
 		return
 	end
 	if result.ok then
-		WarnUI.WarnLocal("🍀 Luck upgraded!", GREEN, 3)
+		WarnUI.WarnLocal(if wasBarrier then "🍀 Luck Tier unlocked!" else "🍀 Luck upgraded!", GREEN, 3)
 		SoundService.Play({ soundId = SoundsConfig.Upgrade })
 	elseif result.reason == "cannot_afford" then
-		WarnUI.WarnLocal("Not enough Diamonds!", Color3.fromRGB(255, 120, 120))
-		DiamondsShopUI.Open() -- the fix is one purchase away
+		if wasBarrier then
+			WarnUI.WarnLocal("Not enough Diamonds!", Color3.fromRGB(255, 120, 120))
+			DiamondsShopUI.Open() -- the fix is one purchase away
+		else
+			WarnUI.WarnLocal("Not enough Cash!", Color3.fromRGB(255, 120, 120))
+		end
 	end
 	local upgrades = result.upgrades
 	if type(upgrades) == "table" and type(upgrades.Luck) == "table" and type(upgrades.Luck.tier) == "number" then
@@ -532,21 +546,39 @@ local function setupFreeCratePad(inst: Instance)
 	end)
 end
 
--- Luck card: tier, current -> next roll-odds multiplier, and the buy button's price/
--- affordability (against the Diamonds balance — same UpgradeInfo math the server uses).
+-- Luck card: tier ("Tier 1++" ladder label), current -> next roll-odds multiplier, and
+-- the buy button's price/affordability — against the balance of whichever currency the
+-- NEXT tier charges (cash for + sub-tiers, Diamonds at a barrier; same UpgradeInfo math
+-- the server uses). At a barrier the card locks visually: red outline, red tier label,
+-- and the button sells the unlock into the next display tier.
 local function refreshLuck()
-	local luckInfo = UpgradeInfo.Build("Luck", luckTier, info.cc)
+	local balance = if UpgradeInfo.CurrencyAt("Luck", luckTier) == "Diamonds" then info.cc else cashBalance
+	local luckInfo = UpgradeInfo.Build("Luck", luckTier, balance)
 	if not luckInfo then
 		return
 	end
+	local atBarrier = luckInfo.barrier and not luckInfo.maxed
 	if luckTierLabel then
-		luckTierLabel.Text = "Tier " .. luckInfo.tier
+		luckTierLabel.Text = "Tier " .. UpgradeInfo.TierLabel("Luck", luckInfo.tier)
+		luckTierLabel.TextColor3 = if atBarrier then RED else YELLOW
+	end
+	if luckCardStroke then
+		luckCardStroke.Color = if atBarrier then RED else GREEN
 	end
 	if luckEffectLabel then
 		local cur = ProfileStats.GetDisplayString("Luck", luckInfo.tier)
-		luckEffectLabel.Text = if luckInfo.maxed
-			then "Rare odds " .. cur
-			else ("Rare odds %s  ➜  %s"):format(cur, ProfileStats.GetDisplayString("Luck", luckInfo.tier + 1))
+		if luckInfo.maxed then
+			luckEffectLabel.Text = "Rare odds " .. cur
+			luckEffectLabel.TextColor3 = SUBTLE
+		elseif atBarrier then
+			luckEffectLabel.Text = ("🔒 Unlock Tier %s with Diamonds"):format(
+				UpgradeInfo.TierLabel("Luck", luckInfo.tier + 1))
+			luckEffectLabel.TextColor3 = RED
+		else
+			luckEffectLabel.Text = ("Rare odds %s  ➜  %s"):format(
+				cur, ProfileStats.GetDisplayString("Luck", luckInfo.tier + 1))
+			luckEffectLabel.TextColor3 = SUBTLE
+		end
 	end
 	local btn = luckButton
 	if btn then
@@ -554,8 +586,12 @@ local function refreshLuck()
 			btn.Text = "MAXED"
 			btn.BackgroundColor3 = Color3.fromRGB(70, 76, 96)
 			btn.Active = false
+		elseif atBarrier then
+			btn.Text = ("UNLOCK  💎 %s"):format(StringUtils.FormatShort(luckInfo.price :: number))
+			btn.BackgroundColor3 = if luckInfo.canAfford then GREEN else Color3.fromRGB(70, 76, 96)
+			btn.Active = true
 		else
-			btn.Text = ("UPGRADE  💎 %s"):format(StringUtils.FormatShort(luckInfo.price :: number))
+			btn.Text = ("UPGRADE  💰 %s"):format(StringUtils.FormatShort(luckInfo.price :: number))
 			btn.BackgroundColor3 = if luckInfo.canAfford then GREEN else Color3.fromRGB(70, 76, 96)
 			btn.Active = true
 		end
@@ -714,8 +750,9 @@ end
 -- The Luck upgrade card: tier, current -> next odds multiplier, Diamond-priced UPGRADE
 -- button (refreshLuck fills all three). Luck persists through rebirth — say so on the card.
 local function buildLuckCard(parent: Instance, order: number)
-	local _, btn, centered = buildLuckTabCard(parent, order, "LUCK", "🍀", GREEN)
-	luckTierLabel = centered("Tier 0", 0.45, 0.10, YELLOW)
+	local card, btn, centered = buildLuckTabCard(parent, order, "LUCK", "🍀", GREEN)
+	luckCardStroke = card:FindFirstChildOfClass("UIStroke")
+	luckTierLabel = centered("Tier 1", 0.45, 0.10, YELLOW)
 	luckEffectLabel = centered("", 0.56, 0.07, SUBTLE)
 	local keepL = centered("Boosts every roll • kept through Rebirth", 0.64, 0.07, Color3.fromRGB(140, 200, 255))
 	keepL.TextWrapped = true
@@ -946,6 +983,26 @@ function CosmeticsShop.Init()
 	end
 	local profileChangedRE = ProfileNet.ProfileChanged :: RemoteEvent
 	profileChangedRE.OnClientEvent:Connect(setLuckFromProfile)
+
+	-- Cash balance for the Luck card's cash-priced sub-tiers (mirrors what
+	-- BalanceUIController listens to; the server stays the pricing authority).
+	local balanceChangedRE = CurrencyNet.BalanceChanged :: RemoteEvent
+	balanceChangedRE.OnClientEvent:Connect(function(newBalance: number)
+		if type(newBalance) == "number" then
+			cashBalance = newBalance
+			refreshLuck()
+		end
+	end)
+	task.spawn(function()
+		local getBalanceRF = CurrencyNet.GetBalance :: RemoteFunction
+		local ok, balance = pcall(function()
+			return getBalanceRF:InvokeServer()
+		end)
+		if ok and type(balance) == "number" then
+			cashBalance = balance
+			refreshLuck()
+		end
+	end)
 	task.spawn(function()
 		local getProfileRF = ProfileNet.GetProfile :: RemoteFunction
 		local ok, profile = pcall(function()

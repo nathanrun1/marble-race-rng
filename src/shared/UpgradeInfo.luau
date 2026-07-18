@@ -26,7 +26,9 @@ export type UpgradeDef = {
 	Widths: { number }?,                       -- Arc: tier cap = #Widths - 1
 	Ranges: { { Min: number, Max: number } }?, -- continuous axes: cap = #Ranges - 1
 	MaxTier: number?,
-	Currency: string?,                         -- "Diamonds" for CC-priced tracks (Luck); nil/absent = cash
+	Currency: string?,                         -- "Diamonds" for wholly CC-priced tracks; nil/absent = cash
+	BarrierEvery: number?,                     -- barrier ladder (Luck): every Nth purchase is a Diamond barrier
+	BarrierCost: { Base: number, Growth: number }?, -- Diamond curve at barriers, geometric in barriers crossed
 	PersistsRebirth: boolean?,                 -- true: ProfileService.ResetProfile leaves the tier alone
 }
 
@@ -39,7 +41,8 @@ export type Info = {
 	maxTier: number?, -- nil = unbounded
 	maxed: boolean,
 	price: number?,   -- nil if maxed
-	currency: string, -- "Cash" | "Diamonds" — what `price` is denominated in
+	currency: string, -- "Cash" | "Diamonds" — what `price` is denominated in (per-TIER on barrier tracks)
+	barrier: boolean, -- barrier-ladder tracks: the next purchase is the Diamond barrier into the next display tier
 	canAfford: boolean,
 	-- NOTE: per-track "Locked" gating is gone — upgrade gating is now the world
 	-- UpgradeLock models (server UpgradeLockService / client UpgradeLocks), which sit
@@ -74,9 +77,45 @@ function UpgradeInfo.MaxTierOf(def: UpgradeDef): number?
 	return nil
 end
 
+-- Barrier-ladder tracks (BarrierEvery, currently Luck): is the purchase
+-- currentTier -> currentTier+1 the Diamond barrier into the next display tier?
+function UpgradeInfo.IsBarrierAt(track: string, currentTier: number): boolean
+	local def = Defs[track]
+	local every = def and def.BarrierEvery
+	return every ~= nil and (currentTier + 1) % every == 0
+end
+
+-- The currency the NEXT purchase on `track` charges: "Diamonds" for wholly
+-- Diamond-priced tracks and for barrier purchases on barrier-ladder tracks,
+-- otherwise "Cash". The single authority both UpgradeService (real deduct) and
+-- the shop UIs (display/affordability) price from.
+function UpgradeInfo.CurrencyAt(track: string, currentTier: number): string
+	local def = Defs[track]
+	if def and def.Currency == "Diamonds" then
+		return "Diamonds"
+	end
+	if UpgradeInfo.IsBarrierAt(track, currentTier) then
+		return "Diamonds"
+	end
+	return "Cash"
+end
+
+-- Display label for a tier. Barrier-ladder tracks read "1", "1+", "1++", "1+++",
+-- "2", ... (display tier = internal // BarrierEvery + 1, one "+" per sub-tier);
+-- everything else is the plain tier number.
+function UpgradeInfo.TierLabel(track: string, tier: number): string
+	local def = Defs[track]
+	local every = def and def.BarrierEvery
+	if every then
+		return tostring(tier // every + 1) .. string.rep("+", tier % every)
+	end
+	return tostring(tier)
+end
+
 -- Cost to buy currentTier -> currentTier+1, or nil if already maxed (or unknown track).
 -- Geometric: first tier costs Base (or the flat Initial), each further tier multiplies
--- by Growth.
+-- by Growth. Barrier purchases (IsBarrierAt) price off BarrierCost instead — geometric
+-- in the number of barriers already crossed, i.e. one Growth step per display tier.
 function UpgradeInfo.PriceAt(track: string, currentTier: number): number?
 	local def = Defs[track]
 	if not def then
@@ -89,12 +128,17 @@ function UpgradeInfo.PriceAt(track: string, currentTier: number): number?
 	if maxTier and currentTier >= maxTier then
 		return nil
 	end
+	local barrierCost = def.BarrierCost
+	if barrierCost and UpgradeInfo.IsBarrierAt(track, currentTier) then
+		local barriersCrossed = (currentTier + 1) // (def.BarrierEvery :: number) - 1
+		return math.floor(barrierCost.Base * (barrierCost.Growth ^ barriersCrossed))
+	end
 	return math.floor(def.Cost.Base * (def.Cost.Growth ^ currentTier))
 end
 
 -- One track's shop Info, computed from an explicit tier + balance. `points` must be the
--- balance of the track's OWN currency (cash for most tracks, Diamonds for Luck) — the
--- caller picks; canAfford is computed against whatever it passes.
+-- balance of the NEXT purchase's currency (CurrencyAt — cash for most tracks, Diamonds
+-- at Luck's barriers) — the caller picks; canAfford is computed against whatever it passes.
 function UpgradeInfo.Build(track: string, tier: number, points: number): Info?
 	local def = Defs[track]
 	if not def then
@@ -110,7 +154,8 @@ function UpgradeInfo.Build(track: string, tier: number, points: number): Info?
 		maxTier = UpgradeInfo.MaxTierOf(def),
 		maxed = price == nil,
 		price = price,
-		currency = def.Currency or "Cash",
+		currency = UpgradeInfo.CurrencyAt(track, tier),
+		barrier = UpgradeInfo.IsBarrierAt(track, tier),
 		canAfford = price ~= nil and points >= price,
 	}
 end

@@ -125,17 +125,30 @@ local Upgrades = {
 		-- crate/free-roll rarity sampling toward rarer results (CosmeticService's rollRarity)
 		-- without changing the displayed base "1 in X" odds. EXPONENTIAL on purpose: for the
 		-- thin tail rarities, P(hit) ≈ (luck+1) × base odds, so a linear per-tier luck would
-		-- feel logarithmic (each tier a smaller relative gain) — doubling per tier makes every
-		-- tier double your effective tail odds instead. PLACEHOLDER magnitudes — tune in playtest.
+		-- feel logarithmic (each tier a smaller relative gain) — a fixed growth per tier makes
+		-- every tier multiply your effective tail odds instead. PLACEHOLDER magnitudes — tune
+		-- in playtest.
 		--
-		-- Luck is the odd one out: priced in DIAMONDS (Currency below; UpgradeService charges
-		-- CosmeticService's CC instead of cash) and it SURVIVES rebirth (PersistsRebirth;
-		-- ProfileService.ResetProfile skips it) — it's the permanent meta-progression track,
-		-- sold from the cosmetics shop's LUCK tab rather than a cash kiosk.
+		-- BARRIER LADDER: internal tiers group into display tiers of BarrierEvery sub-tiers
+		-- ("Tier 1, 1+, 1++, 1+++, Tier 2, ..." — see UpgradeInfo.TierLabel). Sub-tier (+)
+		-- purchases are ordinary CASH buys off Cost, so the track progresses without rebirth
+		-- or Diamonds; every BarrierEvery-th purchase crosses into the next display tier and
+		-- is priced in DIAMONDS off BarrierCost (geometric in the number of barriers crossed
+		-- — the old all-Diamond curve, one step per display tier). UpgradeInfo.CurrencyAt is
+		-- the single authority on which purchase charges which currency.
+		--
+		-- LuckGrowth 1.19 ≈ 2^(1/4): a full display tier (4 sub-tiers) still doubles the
+		-- effective tail odds, same pacing per Diamond spent as the old doubling-per-tier.
+		--
+		-- Luck still SURVIVES rebirth (PersistsRebirth; ProfileService.ResetProfile skips it)
+		-- — it's the permanent meta-progression track, sold from the cosmetics shop's LUCK
+		-- tab rather than a cash kiosk. Cash Cost grows steeply (2.2) BECAUSE it persists:
+		-- cheap persistent tiers would be farmable across rebirths.
 		Luck = {
-			LuckGrowth = 2,
-			Cost = { Base = 200, Growth = 1.8 },
-			Currency = "Diamonds",
+			LuckGrowth = 1.19,
+			Cost = { Base = 500, Growth = 2.2 },
+			BarrierEvery = 4,
+			BarrierCost = { Base = 200, Growth = 1.8 },
 			PersistsRebirth = true,
 			Name = "Luck", Short = "Luck", Desc = "Improves your odds of rolling rarer balls.",
 			Icon = "🍀",

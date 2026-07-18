@@ -1,7 +1,10 @@
 --!strict
 -- Plot balls: when a dropped marble banks at a destroy target, a claimable "ghost" copy of it
 -- (same appearance, same final value) spawns at the player's plot for them to walk over and
--- collect. PLACEHOLDER: everyone's plot balls arrive at the single part tagged
+-- collect. This claim IS the payout: banking mints the plot ball but credits nothing
+-- (ScoreHandler.BankBall no longer touches the balance) — the launch stake only comes back,
+-- with its winnings, when the plot ball is collected. PLACEHOLDER: everyone's plot balls
+-- arrive at the single part tagged
 -- TagsConfig.PlotSpawn for now (no real per-player plots yet), shot out of the part tagged
 -- TagsConfig.PlotShoot along a collision-free curved arc.
 --
@@ -42,7 +45,9 @@ local PlotNet = require(RS.Shared.Remote.PlotNet)
 local BallPlotService = {}
 
 local ID_WRAP = 2 ^ 31
-local PLOT_VALUE_FRACTION = 1 / 3 -- a plot ball is only worth a third of what it actually banked
+-- A plot ball is worth exactly what it banked: the plot claim is the ONLY payout path
+-- (was 1/3 back when banking also credited the balance directly).
+local PLOT_VALUE_FRACTION = 1
 
 -- Same non-collidable-with-players group shape as CollisionService's "Player" group for real
 -- balls; plot balls additionally don't collide with each other.
@@ -129,13 +134,18 @@ function BallPlotService.InitServer()
 				if entry then
 					perPlayer[id] = nil
 					total += entry.value
+					-- One credit PER BALL, with the load-bearing "Ball " reason prefix: this is
+					-- now where banked money actually lands, so the per-ball consumers
+					-- (StatsService's $/marble window, MoneyPerBallUI, the tutorial's score-N
+					-- step) must see each marble as its own "Ball ..." grant — a summed batch
+					-- credit would read as one giant marble.
+					CurrencyService.AddPoints(player, entry.value, "Ball claimed from plot")
 				end
 			end
 		end
 		if total <= 0 then
 			return
 		end
-		CurrencyService.AddPoints(player, total, "Plot ball claimed")
 		local flyRE = FxNet.PlayCurrencyFly
 		if flyRE then
 			-- Single walked-over claims fly a small fixed count (they happen constantly while

@@ -169,16 +169,19 @@ end
 
 -- World upgrade locks bought this prestige (lock id -> true). Returned by reference;
 -- mutate only through SetLockUnlocked.
--- Per-slot AUTO purchases (stringified slot number -> true). Mutate via SetSlotAuto only.
+-- Per-slot AUTO purchases (stringified slot number -> enabled). Key PRESENT = owned;
+-- the VALUE is whether auto is currently switched on (the AutoSign's post-purchase
+-- toggle). Mutate via SetSlotAuto only.
 function ProfileService.GetAutoSlots(player: Player): { [string]: boolean }
 	return get(player).autoSlots
 end
 
--- Mark a slot's one-time AUTO as owned. Only BallLaunchService's purchase flow
--- should call this (it owns validation + the cash deduct).
-function ProfileService.SetSlotAuto(player: Player, slot: number)
+-- Mark a slot's one-time AUTO as owned and set its on/off state (purchase defaults to
+-- on; the toggle flips it). Only BallLaunchService should call this (it owns
+-- validation + the cash deduct).
+function ProfileService.SetSlotAuto(player: Player, slot: number, enabled: boolean?)
 	local profile = get(player)
-	profile.autoSlots[tostring(slot)] = true
+	profile.autoSlots[tostring(slot)] = enabled ~= false
 	ProfileService.Changed:Fire(player, profile)
 	ProfileChangedRE:FireClient(player, profile)
 end
@@ -360,9 +363,11 @@ function ProfileService.ApplyData(player: Player, saved: Profile?)
 			end
 		end
 		if type(saved.autoSlots) == "table" then
+			-- Key present = owned; the boolean VALUE is the on/off toggle state (false =
+			-- owned but switched off — must survive the round trip, not read as unowned).
 			for slotStr, on in saved.autoSlots do
-				if type(slotStr) == "string" and on == true then
-					profile.autoSlots[slotStr] = true
+				if type(slotStr) == "string" and type(on) == "boolean" then
+					profile.autoSlots[slotStr] = on
 				end
 			end
 		end

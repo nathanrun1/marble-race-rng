@@ -19,7 +19,6 @@ local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local SoundService = require(RS.Shared.SoundService)
 local Signal = require(RS.Shared.Utility.Signal)
-local CurrencyService = require(SSS.Scripts.Services.CurrencyService)
 local BallService = require(SSS.Scripts.Services.BallService)
 local ProfileService = require(SSS.Scripts.Services.ProfileService)
 local PrestigeService = require(SSS.Scripts.Services.PrestigeService)
@@ -71,8 +70,9 @@ export type BallState = {
 -- yet) — see BallBanked below if you need the truly final credited amount.
 ScoreHandler.BallScored = Signal.new()
 -- (player, ball, finalAmount) — fired once ALL multipliers are applied, right before the ball
--- is despawned (ball is still valid here). finalAmount is exactly what CurrencyService.AddPoints
--- is about to credit.
+-- is despawned (ball is still valid here). finalAmount is the ball's fully-multiplied worth —
+-- NOT credited here: BallPlotService turns it into a claimable plot ball, and walking over
+-- that (or the collect-all pad) is what actually pays out.
 ScoreHandler.BallBanked = Signal.new()
 -- (ball, effectiveValue) — after each non-destroying hit.
 ScoreHandler.EffectiveValueChanged = Signal.new()
@@ -225,8 +225,9 @@ function ScoreHandler.BankBall(player: Player, ball: BasePart, state: BallState,
 	-- A slot bank scores instantly but lets the ball keep falling into the slot's hole for
 	-- DestroyDelay before it's destroyed (it is logically despawned immediately). A stuck
 	-- force-bank vanishes on the spot — it's wedged, there's nothing left for it to fall into.
+	-- No balance credit here: banking only MINTS the claimable plot ball (BallPlotService's
+	-- BallBanked hook above); the money lands when the player walks over it in the plot.
 	BallService.Despawn(ball, if stuck then nil else ScoringConfig.DestroyDelay)
-	CurrencyService.AddPoints(player, info.banked, if stuck then "Ball stuck (timeout): " .. ball.Name else "Ball destroyed at target: " .. targetName)
 end
 
 -- Hit sub-handlers. Each mutates state and fires effects for one concern.

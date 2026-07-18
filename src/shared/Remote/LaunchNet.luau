@@ -29,8 +29,10 @@ return {
 	-- that slot's equipped ball (silently ignored while the slot is cooling down / empty /
 	-- not yet unlocked); with no slot, launches every ready slot (the HUD LAUNCH button).
 	RequestLaunch = remoteEvent("RequestLaunch"),
-	-- Server -> Client: (slot: number, cooldown: number) — this slot just fired; it is on
-	-- cooldown for `cooldown` seconds (client SlotInteract renders the countdown from this).
+	-- Server -> Client: (slot: number, cooldown: number, stake: number) — this slot just
+	-- fired; it is on cooldown for `cooldown` seconds (client SlotInteract renders the
+	-- countdown from this) and `stake` was just deducted for the ball's value (SlotInteract
+	-- pops a red "-$X" over the pad).
 	SlotLaunched = remoteEvent("SlotLaunched"),
 	-- Client -> Server invoke: () -> number — the server's current launcher swivel phase
 	-- (0..1), so the client aim preview stays in sync.
@@ -39,4 +41,9 @@ return {
 	-- one-time AUTO launch for a slot (Config/SlotAuto price; reasons: "invalid_slot" |
 	-- "locked" | "owned" | "cannot_afford"). Ownership lands in the profile's autoSlots.
 	PurchaseSlotAuto = remoteFunction("PurchaseSlotAuto"),
+	-- Client -> Server invoke: (slot: number) -> { ok: boolean, enabled: boolean?, reason:
+	-- string? } — flip an OWNED slot's AUTO on/off (the AutoSign's post-purchase click;
+	-- reasons: "invalid_slot" | "not_owned"). The new state lands in the autoSlots value
+	-- and replicates via ProfileChanged.
+	ToggleSlotAuto = remoteFunction("ToggleSlotAuto"),
 }

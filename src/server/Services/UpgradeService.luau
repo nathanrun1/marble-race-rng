@@ -52,13 +52,12 @@ local DISABLED_TRACKS: { [string]: boolean } = {}
 local maxTierOf = UpgradeInfo.MaxTierOf
 local priceAt = UpgradeInfo.PriceAt
 
--- The balance of the track's own currency: cash for most tracks, Diamonds (CC) for
--- Currency = "Diamonds" ones (Luck). CosmeticService is lazy-required (same pattern as
--- PrestigeService) so this module adds no load-time edge toward the known ProductService
--- -> DataService -> CosmeticService require chain.
+-- The balance of the NEXT purchase's currency (UpgradeInfo.CurrencyAt): cash for most
+-- purchases, Diamonds (CC) at Luck's barrier tiers. CosmeticService is lazy-required
+-- (same pattern as PrestigeService) so this module adds no load-time edge toward the
+-- known ProductService -> DataService -> CosmeticService require chain.
 local function balanceFor(player: Player, track: string): number
-	local def = UpgradeDefs[track]
-	if def and def.Currency == "Diamonds" then
+	if UpgradeInfo.CurrencyAt(track, ProfileService.GetUpgradeTier(player, track)) == "Diamonds" then
 		local CosmeticService = require(SSS.Scripts.Services.CosmeticService)
 		return CosmeticService.GetCC(player)
 	end
@@ -111,10 +110,10 @@ function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	if not price then
 		return { ok = false, reason = "maxed", upgrades = UpgradeService.GetAllInfo(player) }
 	end
-	-- Deduct in the track's own currency. Both paths are atomic against concurrent
-	-- requests (no yield between check and deduct; SpendCC re-checks internally).
-	local def = UpgradeDefs[track]
-	if def.Currency == "Diamonds" then
+	-- Deduct in this PURCHASE's currency (per-tier on barrier-ladder tracks: Luck's
+	-- barrier tiers charge Diamonds, its sub-tiers cash). Both paths are atomic against
+	-- concurrent requests (no yield between check and deduct; SpendCC re-checks internally).
+	if UpgradeInfo.CurrencyAt(track, tier) == "Diamonds" then
 		local CosmeticService = require(SSS.Scripts.Services.CosmeticService)
 		if not CosmeticService.SpendCC(player, price) then
 			return { ok = false, reason = "cannot_afford", upgrades = UpgradeService.GetAllInfo(player) }

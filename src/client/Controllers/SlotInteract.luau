@@ -15,7 +15,9 @@
 --     advertises the one-time AUTO purchase (Config/SlotAuto price by slot index): this
 --     controller fills its SurfaceGui and wires a local ClickDetector + ProximityPrompt,
 --     both of which open ShopUI's slot-AUTO purchase screen (ShopUI.OpenSlotAuto) —
---     buying happens there, and the server then auto-fires the slot.
+--     buying happens there, and the server then auto-fires the slot. Once OWNED, the same
+--     click/prompt becomes the on/off toggle (LaunchNet.ToggleSlotAuto): the sign paints
+--     green while auto is on, red while off.
 --   * Slots beyond the next — completely hidden, Interact included.
 -- Hiding is client-local (LocalTransparencyModifier + local CanCollide) — the slot models
 -- are shared world content, and each client sees its own unlock progress on them.
@@ -25,6 +27,7 @@ local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
+local BallEffects = require(RS.Shared.BallEffects)
 local ProfileStats = require(RS.Shared.ProfileStats)
 local UpgradeInfo = require(RS.Shared.UpgradeInfo)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
@@ -46,12 +49,17 @@ local SlotInteract = {}
 local GREEN = Color3.fromRGB(0, 255, 0)
 local RED = Color3.fromRGB(255, 0, 0)
 local GRAY = Color3.fromRGB(150, 150, 150) -- unlocked but empty: "Equip"
-local GOLD = Color3.fromRGB(255, 200, 40)  -- AUTO sign price row
-local AUTO_OWNED_GREEN = Color3.fromRGB(107, 223, 101) -- sign body once AUTO is owned (local repaint)
+local GOLD = Color3.fromRGB(255, 200, 40)  -- AUTO sign title
+local AUTO_ON_GREEN = Color3.fromRGB(107, 223, 101)  -- sign body: owned + auto ON (local repaint)
+local AUTO_OFF_RED = Color3.fromRGB(223, 101, 101)   -- sign body: owned + auto OFF
 local UNLOCK_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 local ZONE_LOCKED_COLOR = Color3.fromRGB(130, 130, 130) -- matches BallLaunchUI's locked LaunchBtn tint
 local TOUCH_DEBOUNCE = 0.4 -- seconds; one step-on fires Touched once per limb
 local AUTO_CLICK_DISTANCE = 40 -- ClickDetector range while the AUTO sign is buyable (0 = dead)
+local STAKE_POPUP_COLOR = Color3.fromRGB(255, 70, 70) -- the "-$X" spent readout over a firing pad
+-- Anchor for the stake popup: BallEffects.ShowValuePopup floats 2.5 -> 4.5 studs above its
+-- anchor, so this lifts it clear of the pad's own "Launch" billboard (at +2).
+local STAKE_POPUP_LIFT = Vector3.new(0, 1.5, 0)
 
 type Rig = {
 	model: Model,
@@ -63,7 +71,7 @@ type Rig = {
 	lastTouch: number,
 	cooling: boolean, -- countdown loop renders the label while true
 	autoGui: SurfaceGui?,      -- built onto the authored "AutoSign" part, if the model has one
-	autoPriceLabel: TextLabel?, -- price row ("$X" / "OWNED ✓")
+	autoPriceLabel: TextLabel?, -- second row: "$X" while unowned, "AUTO: ON"/"AUTO: OFF" once owned
 	autoSign: BasePart?,        -- the sign part itself (recoloured locally when owned)
 	autoSignColor: Color3?,     -- its authored colour, restored while not owned
 	autoPrompt: ProximityPrompt?, -- "E to buy" on the sign; disabled once owned
@@ -83,10 +91,15 @@ local function slotEmpty(slotNum: number): boolean
 	return loadout[tostring(slotNum)] == nil
 end
 
--- Latest server-pushed AUTO ownership (ProfileChanged; profile.autoSlots).
+-- Latest server-pushed AUTO state (ProfileChanged; profile.autoSlots): key present =
+-- owned, value = currently toggled on.
 local autoSlots: { [string]: boolean } = {}
 
 local function autoOwned(slotNum: number): boolean
+	return autoSlots[tostring(slotNum)] ~= nil
+end
+
+local function autoEnabled(slotNum: number): boolean
 	return autoSlots[tostring(slotNum)] == true
 end
 
@@ -135,32 +148,40 @@ local function render(rig: Rig)
 	if rig.autoGui then
 		rig.autoGui.Enabled = n <= unlocked
 		local owned = autoOwned(n)
+		local enabled = autoEnabled(n)
 		local priceL = rig.autoPriceLabel
 		if priceL then
 			if owned then
-				priceL.Text = "OWNED ✓"
-				priceL.TextColor3 = GREEN
+				priceL.Text = if enabled then "AUTO: ON" else "AUTO: OFF"
+				priceL.TextColor3 = if enabled then GREEN else RED
 			else
 				priceL.Text = "$" .. StringUtils.FormatShort(SlotAutoConfig.PriceFor(n))
 				priceL.TextColor3 = GOLD
 			end
 		end
 		-- Local repaint only (like PegHeatView's peg colours): the sign is shared world
-		-- content, but ownership is per-player.
+		-- content, but ownership is per-player. Owned reads its toggle state at a glance:
+		-- green = auto on, red = off.
 		if rig.autoSign then
-			rig.autoSign.Color = if owned then AUTO_OWNED_GREEN else rig.autoSignColor :: Color3
+			rig.autoSign.Color = if not owned then rig.autoSignColor :: Color3
+				elseif enabled then AUTO_ON_GREEN
+				else AUTO_OFF_RED
 		end
-		-- The prompt and click detector only offer what's actually buyable: gone once owned
-		-- or while locked. (ClickDetector has no Enabled — zeroing its range kills both the
-		-- click AND the cursor highlight on the invisible sign of a locked slot.)
-		local buyable = n <= unlocked and not owned
+		-- The prompt and click detector sell while buyable and TOGGLE once owned; both are
+		-- dead only while the slot itself is locked. (ClickDetector has no Enabled — zeroing
+		-- its range kills both the click AND the cursor highlight on the invisible sign of a
+		-- locked slot.)
+		local interactive = n <= unlocked
 		local prompt = rig.autoPrompt
 		if prompt then
-			prompt.Enabled = buyable
-			prompt.ActionText = "Buy AUTO — $" .. StringUtils.FormatShort(SlotAutoConfig.PriceFor(n))
+			prompt.Enabled = interactive
+			prompt.ActionText = if not owned
+				then "Buy AUTO — $" .. StringUtils.FormatShort(SlotAutoConfig.PriceFor(n))
+				elseif enabled then "Turn AUTO Off"
+				else "Turn AUTO On"
 		end
 		if rig.autoClick then
-			rig.autoClick.MaxActivationDistance = if buyable then AUTO_CLICK_DISTANCE else 0
+			rig.autoClick.MaxActivationDistance = if interactive then AUTO_CLICK_DISTANCE else 0
 		end
 	end
 
@@ -285,18 +306,36 @@ local function makeBillboard(interact: BasePart): (BillboardGui, TextLabel)
 	return billboard, label
 end
 
--- The sign is a storefront, not a buy button: clicking it (or its prompt) opens ShopUI's
--- slot-AUTO purchase screen — the actual purchase happens there, server-validated.
+-- Unowned: the sign is a storefront — clicking it (or its prompt) opens ShopUI's
+-- slot-AUTO purchase screen (the actual purchase happens there, server-validated).
+-- Owned: the same interaction is the on/off toggle; the fresh state replicates back via
+-- ProfileChanged, which re-renders the sign's red/green.
+local toggling: { [number]: boolean } = {} -- one toggle in flight per slot
 local function onAutoClicked(rig: Rig)
 	local n = rig.slotNum
-	if n > unlockedSlots() or autoOwned(n) then
+	if n > unlockedSlots() then
 		return
 	end
-	ShopUI.OpenSlotAuto(n)
+	if not autoOwned(n) then
+		ShopUI.OpenSlotAuto(n)
+		return
+	end
+	if toggling[n] then
+		return
+	end
+	toggling[n] = true
+	SoundService.PlayClick()
+	task.spawn(function()
+		pcall(function()
+			(LaunchNet.ToggleSlotAuto :: RemoteFunction):InvokeServer(n)
+		end)
+		toggling[n] = nil
+	end)
 end
 
 -- Fill the authored AutoSign panel: same billboard styling as the pads (FredokaOne,
--- TextScaled, black stroke). Three rows — title / what it does / price. The GUI and the
+-- TextScaled, black stroke). Two rows — the "⚡ AUTO" title and the unowned/owned line
+-- ("$X" to buy; "AUTO: ON"/"AUTO: OFF" once owned, matching the body colour). The GUI and the
 -- ClickDetector are client-built on the shared part, so each player sees their own
 -- price/OWNED state and clicks are handled locally.
 local function buildAutoSign(rig: Rig, sign: BasePart)
@@ -324,10 +363,8 @@ local function buildAutoSign(rig: Rig, sign: BasePart)
 		return l
 	end
 
-	row(0.02, 0.40, "⚡ AUTO", GOLD)
-	local desc = row(0.44, 0.22, "Launches this slot automatically", Color3.new(1, 1, 1))
-	desc.TextTransparency = 0.1
-	rig.autoPriceLabel = row(0.70, 0.28, "", GOLD)
+	row(0.06, 0.52, "⚡ AUTO", GOLD)
+	rig.autoPriceLabel = row(0.62, 0.32, "", GOLD)
 	rig.autoGui = gui
 	rig.autoSign = sign
 	rig.autoSignColor = sign.Color
@@ -424,7 +461,7 @@ function SlotInteract.Init()
 	-- ("Zone Locked", grey) — re-render the moment that state flips either way.
 	BallLaunchUI.ZoneLockedChanged:Connect(renderAll)
 
-	;(LaunchNet.SlotLaunched :: RemoteEvent).OnClientEvent:Connect(function(slot: unknown, cooldown: unknown)
+	;(LaunchNet.SlotLaunched :: RemoteEvent).OnClientEvent:Connect(function(slot: unknown, cooldown: unknown, stake: unknown)
 		if type(slot) ~= "number" or type(cooldown) ~= "number" then
 			return
 		end
@@ -432,6 +469,16 @@ function SlotInteract.Init()
 		local rig = rigs[slot]
 		if rig then
 			render(rig)
+			-- The money just spent, floating off the pad that fired — same popup rig the
+			-- board's score readouts use (BallEffects), red for "this is a cost".
+			if type(stake) == "number" and stake > 0 then
+				BallEffects.ShowValuePopup(
+					nil,
+					CFrame.new(rig.interact.Position + STAKE_POPUP_LIFT),
+					"-$" .. StringUtils.FormatShort(stake),
+					STAKE_POPUP_COLOR
+				)
+			end
 			-- THE launch sound, at the pad that fired, on EVERY launch — pad step, HUD
 			-- button, or auto-launch — since the server pushes SlotLaunched for all of
 			-- them. Positional so a multi-slot volley reads as separate pads. Sole owner:
