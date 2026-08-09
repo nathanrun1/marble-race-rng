@@ -35,11 +35,21 @@ function CosmeticBonus.StarOf(copies: number): number
 end
 
 -- Bet multiplier a ball of `rarity` carries (PER-SLOT LAUNCH REWORK): a launched ball's
--- $ value = current bet size × this. Geometric in rarity — common ×1, uncommon ×2, rare
--- ×4, ... with the step configurable (CosmeticsConfig.RarityBetFactor). Shared so the
+-- $ value = current bet size × this. Geometric in rarity — common ×1, then
+-- ×RarityBetFactor per tier — with high tiers (RarityBetRoundFrom+) rounded UP to the
+-- nearest multiple of RarityBetRoundStep so their values read clean. Shared so the
 -- server's launch valuation and every client preview (roll sample readouts) can't drift.
 function CosmeticBonus.RarityBetMult(rarity: number): number
-	return CosmeticsConfig.RarityBetFactor ^ (math.max(rarity, 1) - 1)
+	local override = CosmeticsConfig.RarityBetOverrides[rarity]
+	if override then
+		return override
+	end
+	local mult = CosmeticsConfig.RarityBetFactor ^ (math.max(rarity, 1) - 1)
+	if rarity >= CosmeticsConfig.RarityBetRoundFrom then
+		local step = CosmeticsConfig.RarityBetRoundStep
+		mult = math.ceil(mult / step) * step
+	end
+	return mult
 end
 
 -- Duplicates still needed for the next star, or nil if already at max star.

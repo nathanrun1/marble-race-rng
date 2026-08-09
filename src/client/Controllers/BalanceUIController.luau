@@ -21,6 +21,16 @@ local diamondsLabels: { [Instance]: TextLabel } = {}
 local cash = 0
 local diamonds = 0
 
+-- Live-sum override (driven by CurrencyFlyUI): while at least one currency fly "holds" a
+-- currency, its labels show a COSMETIC live sum instead of the real balance. The sum is
+-- seeded from whatever was displayed when the first hold began and bumped only by
+-- AddFlyAmount (one bump per landing fly icon) — it deliberately does NOT track the real
+-- balance, which keeps updating underneath and snaps back into view when the last hold
+-- releases.
+export type FlyKind = "Cash" | "Diamonds"
+local flyHolds: { [string]: number } = { Cash = 0, Diamonds = 0 }
+local liveSum: { [string]: number } = { Cash = 0, Diamonds = 0 }
+
 -- Direct children only (not a recursive descendant search) — a deep search risks
 -- grabbing an unrelated nested label if the tagged container happens to hold more than
 -- one TextLabel anywhere inside it (e.g. a shared currency-row prefab with both a Cash
@@ -33,11 +43,11 @@ local function resolveLabel(inst: Instance): TextLabel?
 end
 
 local function renderCash(label: TextLabel)
-	label.Text = StringUtils.FormatMoney(cash)
+	label.Text = StringUtils.FormatMoney(if flyHolds.Cash > 0 then liveSum.Cash else cash)
 end
 
 local function renderDiamonds(label: TextLabel)
-	label.Text = StringUtils.FormatShort(diamonds, true, 2)
+	label.Text = StringUtils.FormatShort(if flyHolds.Diamonds > 0 then liveSum.Diamonds else diamonds, true, 2)
 end
 
 local function renderAllCash()
@@ -49,6 +59,42 @@ end
 local function renderAllDiamonds()
 	for _, label in diamondsLabels do
 		renderDiamonds(label)
+	end
+end
+
+local function renderAllFor(kind: FlyKind)
+	if kind == "Cash" then
+		renderAllCash()
+	else
+		renderAllDiamonds()
+	end
+end
+
+-- Take a live-sum hold. The FIRST hold seeds the sum from the currently-displayed value
+-- (call BEFORE the grant's BalanceChanged can land, or the sum seeds post-grant and the
+-- arriving fly icons double-count).
+function BalanceUIController.BeginFlyHold(kind: FlyKind)
+	flyHolds[kind] += 1
+	if flyHolds[kind] == 1 then
+		liveSum[kind] = if kind == "Cash" then cash else diamonds
+		renderAllFor(kind)
+	end
+end
+
+-- One fly icon landed: bump the live sum (no-op unless something holds the currency).
+function BalanceUIController.AddFlyAmount(kind: FlyKind, amount: number)
+	if flyHolds[kind] <= 0 or amount == 0 then
+		return
+	end
+	liveSum[kind] += amount
+	renderAllFor(kind)
+end
+
+-- Drop one hold; the LAST release snaps the labels back to the authentic balance.
+function BalanceUIController.ReleaseFlyHold(kind: FlyKind)
+	flyHolds[kind] = math.max(flyHolds[kind] - 1, 0)
+	if flyHolds[kind] == 0 then
+		renderAllFor(kind)
 	end
 end
 

@@ -8,6 +8,14 @@
 -- reads "UNLOCK ZONE" and, when pressed, runs the same PurchaseUpgrade("MaxBet") flow the
 -- upgrade shop uses. That locked preview rung is purely client-local: it's never sent to
 -- the server (SetBetTier would just clamp it back down to the owned tier anyway).
+--
+-- LaunchBtn is dual-purpose, switching on Controller.IsZoneLocked(): previewing a locked
+-- rung, it's the real "UNLOCK ZONE" purchase button (unchanged). Sitting on an owned
+-- (unlocked) rung — the normal-play state — it stops being a button at all: it's a
+-- disabled "ZONE <roman numeral>" readout styled with that zone's own board colors
+-- (Config/BoardAppearance, via Utility/BoardColors — the SAME ramp the board itself
+-- repaints from, so this can't drift from what the player is standing on). Firing marbles
+-- in that state is entirely the slot pads' / AUTO's job now.
 
 local Players: Players = game:GetService("Players")
 local RS               = game:GetService("ReplicatedStorage")
@@ -18,6 +26,8 @@ local SoundService = require(RS.Shared.SoundService)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
 local UIButton = require(RS.Shared.Utility.UIButton)
 local ProductService = require(RS.Shared.ProductService)
+local BoardAppearanceConfig = require(RS.Shared.Config.BoardAppearance)
+local BoardColors = require(RS.Shared.Utility.BoardColors)
 local MonetizationConfig = require(RS.Shared.Config.Monetization)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local WarnUI = require(RS.Shared.WarnUI)
@@ -27,6 +37,8 @@ local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 local UpgradeNet = require(RS.Shared.Remote.UpgradeNet)
 
 local player = Players.LocalPlayer
+
+local ShopUI = require(script.Parent.ShopUI)
 
 local GetProfileRF          = ProfileNet.GetProfile :: RemoteFunction
 local SetBetTierRF          = ProfileNet.SetBetTier :: RemoteFunction
@@ -42,8 +54,8 @@ local BottomBar = MainGui:WaitForChild("BottomBar")
 
 local Controller = {}
 
-local LAUNCH_WORD = "LAUNCH ALL"
 local UNLOCK_WORD = "UNLOCK ZONE"
+local ZONE_WORD_PREFIX = "ZONE " -- + roman numeral of the currently selected (owned) rung
 -- Both words overflow the authored 88px word size (TextWrapped wraps them and the
 -- second line clips outside the button), so both states drop to this size.
 local WORD_TEXT_SIZE = 64
@@ -53,6 +65,29 @@ local WORD_TEXT_SIZE = 64
 local LOCKED_COLOR = Color3.fromRGB(130, 130, 130)
 local PRICE_GREEN = Color3.fromRGB(96, 224, 120) -- matches the $/marble green used elsewhere
 
+-- Standard subtractive-notation Roman numerals for the "ZONE <n>" readout. The zone ladder
+-- starts at 1 (tier 0 = Zone I) and only grows, so no need to handle 0/negatives.
+type RomanEntry = { value: number, numeral: string }
+local ROMAN_TABLE: { RomanEntry } = {
+	{ value = 1000, numeral = "M" }, { value = 900, numeral = "CM" },
+	{ value = 500, numeral = "D" }, { value = 400, numeral = "CD" },
+	{ value = 100, numeral = "C" }, { value = 90, numeral = "XC" },
+	{ value = 50, numeral = "L" }, { value = 40, numeral = "XL" },
+	{ value = 10, numeral = "X" }, { value = 9, numeral = "IX" },
+	{ value = 5, numeral = "V" }, { value = 4, numeral = "IV" },
+	{ value = 1, numeral = "I" },
+}
+local function toRoman(n: number): string
+	local out = {}
+	for _, entry in ROMAN_TABLE do
+		while n >= entry.value do
+			table.insert(out, entry.numeral)
+			n -= entry.value
+		end
+	end
+	return table.concat(out)
+end
+
 Controller.STYLE = {
 	autoOffColor = Color3.fromRGB(255, 120, 120),
 	autoOnColor = Color3.fromRGB(4, 255, 0),
@@ -60,6 +95,8 @@ Controller.STYLE = {
 
 local launchHost = BottomBar:WaitForChild("LaunchBtn")
 local launchButton = launchHost:WaitForChild("Button") :: GuiButton
+local launchShadow = launchHost:WaitForChild("Shadow") :: GuiObject
+local launchStroke = launchButton:WaitForChild("UIStroke") :: UIStroke
 local betSizeLabel = launchButton:WaitForChild("BetSize") :: TextLabel
 local ORIGINAL_BETSIZE_COLOR = betSizeLabel.TextColor3
 -- "Text" is a CHILD TextLabel (same sibling pattern as BetSize), NOT launchButton's own
@@ -67,7 +104,10 @@ local ORIGINAL_BETSIZE_COLOR = betSizeLabel.TextColor3
 -- that name, so `launchButton.Text = ...` silently writes to the (invisible/unused) native
 -- property instead of this label. Must go through WaitForChild, which isn't fooled by that.
 local launchWordLabel = launchButton:WaitForChild("Text") :: TextLabel
-local ORIGINAL_LAUNCH_COLOR = launchButton.BackgroundColor3
+local ORIGINAL_SHADOW_VISIBLE = launchShadow.Visible
+-- Authored Transparency = 1 (invisible) — both branches now paint the stroke themselves
+-- (locked: solid white; unlocked: the zone's wall color), so nothing reads it as "off".
+local UNLOCK_STROKE_COLOR = Color3.new(1, 1, 1)
 
 local raiseHost = BottomBar:WaitForChild("RaiseBtn")
 local lowerHost = BottomBar:WaitForChild("LowerBtn")
@@ -84,6 +124,9 @@ local autoShadow = autoHost:WaitForChild("Shadow") :: GuiObject
 -- currently displayed/selected rung, 0 .. ownedTier + 1 (the "+1" is the locked preview).
 local ownedTier = 0
 local selectedTier = 0
+-- Launch slots the player owns (ProfileStats.GetMaxSlots off the NumSlots upgrade tier) —
+-- what the "N x $P" line counts now, regardless of each slot's live cooldown/AUTO state.
+local ownedSlots = 0
 
 -- The locked-preview selection is client-local, but other surfaces render off it too
 -- (SlotInteract greys its launch pads to "Zone Locked"): exposed as a getter + a Signal
@@ -94,10 +137,6 @@ local lastZoneLocked = false
 function Controller.IsZoneLocked(): boolean
 	return selectedTier > ownedTier
 end
--- The latest profile.upgrades pushed by the server (ProfileChanged / the Init pull) —
--- lets launch clicks compute their countdown locally instead of a GetProfile round trip.
-local latestUpgrades: any = {}
-
 -- Bound inside Controller.Init (assigned before render()/onRaise()/onLower() can ever
 -- actually run — they're only reachable via button clicks or the heartbeat, both wired
 -- up at the end of Init), but typed optional since Luau can't see that ordering.
@@ -106,7 +145,6 @@ local raiseHandle: UIButton.Handle? = nil
 local lowerHandle: UIButton.Handle? = nil
 
 local doAutoLaunch = false
-local launchBtnActive = true
 
 -- The price to buy ownedTier -> ownedTier+1 (shown in place of the bet size while
 -- locked/previewing that rung). Only re-fetched when ownedTier actually changes (see
@@ -115,33 +153,81 @@ local launchBtnActive = true
 local lastPricedTier: number? = nil
 local nextTierPrice: number? = nil
 
--- Equipped marbles (entries in the server-pushed loadout), for the "N x $P" cost line
--- under LAUNCH ALL — N balls fire, each staking the zone's bet value.
-local equippedCount = 0
+-- Slots this button would actually fire RIGHT NOW: equipped (in the server-pushed
+-- loadout), not running its per-slot server AUTO (those fire themselves), and off its
+-- client-mirrored cooldown (slotReadyAt, fed by SlotLaunched). All client-side state. Only
+-- feeds onLaunchClicked's no-op guard now — the "N x $P" line counts ownedSlots instead
+-- (LaunchBtn is Interactable=false whenever this guard would matter anyway, since it only
+-- stays a real button while previewing a locked rung).
+local latestLoadout: { [string]: string } = {}
+local autoSlots: { [string]: boolean } = {} -- profile.autoSlots: value true = AUTO running
+local slotReadyAt: { [number]: number } = {} -- os.clock() when a launched slot is ready again
+
+local function availableCount(): number
+	local n = 0
+	local now = os.clock()
+	for slotStr in latestLoadout do
+		local slot = tonumber(slotStr)
+		if slot and autoSlots[slotStr] ~= true and (slotReadyAt[slot] or 0) <= now then
+			n += 1
+		end
+	end
+	return n
+end
 
 local function render()
 	local locked = selectedTier > ownedTier
-	if locked and nextTierPrice then
-		-- Previewing the locked rung: show what it costs to unlock, in green, instead of
-		-- the (inaccessible) launch cost.
-		betSizeLabel.Text = StringUtils.FormatMoney(nextTierPrice)
-		betSizeLabel.TextColor3 = PRICE_GREEN
+	if locked then
+		-- Previewing the locked rung: the real "UNLOCK ZONE" button, unchanged — stays
+		-- CLICKABLE (pressing it attempts the Unlock purchase), tinted via SetColor rather
+		-- than SetDisabled, restores the shadow, and gives it a solid white outline (the
+		-- authored stroke is Transparency 1 — invisible — since nothing painted it before
+		-- the zone-color feature existed).
+		if nextTierPrice then
+			-- Show what it costs to unlock, in green, instead of the (inaccessible) launch cost.
+			betSizeLabel.Text = StringUtils.FormatMoney(nextTierPrice)
+			betSizeLabel.TextColor3 = PRICE_GREEN
+		else
+			betSizeLabel.Text = ("%d x %s"):format(
+				ownedSlots,
+				StringUtils.FormatMoney(ProfileStats.GetBetSizeAtTier(selectedTier))
+			)
+			betSizeLabel.TextColor3 = ORIGINAL_BETSIZE_COLOR
+		end
+		launchWordLabel.Text = UNLOCK_WORD
+		launchWordLabel.TextSize = WORD_TEXT_SIZE
+		launchButton.Interactable = true
+		launchShadow.Visible = ORIGINAL_SHADOW_VISIBLE
+		launchStroke.Color = UNLOCK_STROKE_COLOR
+		launchStroke.Transparency = 0
+		if launchHandle then
+			launchHandle.SetColor(LOCKED_COLOR)
+		end
 	else
+		-- Owned rung selected — the normal-play state: LaunchBtn is no longer a button at
+		-- all, just a "ZONE <n>" readout painted with THIS zone's own board colors (floor
+		-- -> bg, wall -> stroke), so it reads as "you're here" rather than a control.
+		-- Firing marbles is entirely the slot pads'/AUTO's job now.
 		betSizeLabel.Text = ("%d x %s"):format(
-			equippedCount,
+			ownedSlots,
 			StringUtils.FormatMoney(ProfileStats.GetBetSizeAtTier(selectedTier))
 		)
 		betSizeLabel.TextColor3 = ORIGINAL_BETSIZE_COLOR
+		launchWordLabel.Text = ZONE_WORD_PREFIX .. toRoman(selectedTier + 1)
+		launchWordLabel.TextSize = WORD_TEXT_SIZE
+		launchButton.Interactable = false
+		launchShadow.Visible = false
+		local floorColor = BoardColors.Lookup(BoardAppearanceConfig.Floor, selectedTier, BoardAppearanceConfig.MaxTier)
+		local wallColor = BoardColors.Lookup(BoardAppearanceConfig.Side, selectedTier, BoardAppearanceConfig.MaxTier)
+		if launchHandle then
+			launchHandle.SetColor(floorColor)
+		end
+		launchStroke.Color = wallColor
+		launchStroke.Transparency = 0
 	end
-	launchWordLabel.Text = if locked then UNLOCK_WORD else LAUNCH_WORD
-	launchWordLabel.TextSize = WORD_TEXT_SIZE
-	-- LaunchBtn stays CLICKABLE while locked (pressing it attempts the Unlock purchase),
-	-- so it's tinted via SetColor rather than SetDisabled. Raise/Lower actually should do
-	-- nothing at their respective edges, so they use the real UIButton.SetDisabled (which
-	-- greys both the button and its shadow, and blocks clicks, without pressing it down).
-	if launchHandle then
-		launchHandle.SetColor(if locked then LOCKED_COLOR else ORIGINAL_LAUNCH_COLOR)
-	end
+	-- Raise/Lower actually should do nothing at their respective edges, so they use the
+	-- real UIButton.SetDisabled (which greys both the button and its shadow, and blocks
+	-- clicks, without pressing it down).
 	if raiseHandle then
 		raiseHandle.SetDisabled(locked) -- never more than one rung past owned
 	end
@@ -172,9 +258,12 @@ end
 -- selectedTier from loadout.BetTier (never above ownedTier — the locked preview only
 -- ever exists client-side, so the server never reports it).
 local function onProfileChanged(profile: any)
-	latestUpgrades = profile.upgrades or {}
 	ownedTier = (profile.upgrades and profile.upgrades.MaxBet) or 0
 	selectedTier = (profile.loadout and profile.loadout.BetTier) or ownedTier
+	if type(profile.autoSlots) == "table" then
+		autoSlots = profile.autoSlots -- AUTO-running slots are excluded from availableCount()
+	end
+	ownedSlots = ProfileStats.GetMaxSlots(if type(profile.upgrades) == "table" then profile.upgrades else {})
 	if ownedTier ~= lastPricedTier then
 		refreshPrice() -- also renders
 	else
@@ -231,54 +320,46 @@ end
 -- (matching the old "just click max after upgrading" habit); can't-afford -> offer the
 -- instant-tiers dev product, same as the shop.
 local function attemptUnlock()
-	local result = PurchaseUpgradeRF:InvokeServer("MaxBet")
-	if type(result) ~= "table" then
-		return
-	end
-	if result.ok then
-		SoundService.Play({ soundId = SoundsConfig.Upgrade })
-		local info = result.upgrades and result.upgrades.MaxBet
-		local newOwnedTier = if info then info.tier else ownedTier + 1
-		ownedTier = newOwnedTier
-		selectTier(newOwnedTier) -- optimistic render + background SetBetTier reconcile
-		refreshPrice() -- also renders; the newly-unlocked tier needs its OWN next price cached
-	elseif result.reason == "cannot_afford" then
-		local productId = RequestUpgradeBoostRF:InvokeServer("MaxBet")
-		if productId then
-			-- Throttled (shared cooldown with ShopUI's promptBoost, keyed by productId) so
-			-- clicking LAUNCH/UNLOCK repeatedly while broke doesn't reopen the Robux dialog
-			-- on every click.
-			ProductService.PromptThrottled(productId, MonetizationConfig.UpgradeBoostPromptCooldown)
-		end
-	end
+	ShopUI.OpenShop("MaxBet")
+	-- local result = PurchaseUpgradeRF:InvokeServer("MaxBet")
+	-- if type(result) ~= "table" then
+	-- 	return
+	-- end
+	-- if result.ok then
+	-- 	SoundService.Play({ soundId = SoundsConfig.Upgrade })
+	-- 	local info = result.upgrades and result.upgrades.MaxBet
+	-- 	local newOwnedTier = if info then info.tier else ownedTier + 1
+	-- 	ownedTier = newOwnedTier
+	-- 	selectTier(newOwnedTier) -- optimistic render + background SetBetTier reconcile
+	-- 	refreshPrice() -- also renders; the newly-unlocked tier needs its OWN next price cached
+	-- elseif result.reason == "cannot_afford" then
+	-- 	local productId = RequestUpgradeBoostRF:InvokeServer("MaxBet")
+	-- 	if productId then
+	-- 		-- Throttled (shared cooldown with ShopUI's promptBoost, keyed by productId) so
+	-- 		-- clicking LAUNCH/UNLOCK repeatedly while broke doesn't reopen the Robux dialog
+	-- 		-- on every click.
+	-- 		ProductService.PromptThrottled(productId, MonetizationConfig.UpgradeBoostPromptCooldown)
+	-- 	end
+	-- end
 end
 
+-- Bound as LaunchBtn's onClick, but only reachable while previewing a locked rung —
+-- render() sets Button.Interactable = false on every owned/unlocked rung, so Activated
+-- (and this whole function) never fires in that state; the launch fallthrough below is a
+-- defensive leftover from when this button also fired ready slots directly.
 local function onLaunchClicked()
 	if selectedTier > ownedTier then
 		attemptUnlock()
 		return
 	end
-	if not launchBtnActive then
-		return
+	if availableCount() == 0 then
+		return -- greyed out: nothing this button could fire (auto slots fire themselves)
 	end
-	launchBtnActive = false
-
 	-- No press sound here: SlotInteract plays the launch sound at each pad that actually
 	-- fires (driven by the server's SlotLaunched push), covering manual, HUD, and auto.
+	-- No countdown either — the "N x $P" line drops as SlotLaunched pushes arrive and
+	-- recovers as the mirrored cooldowns lapse.
 	RequestLaunchRE:FireServer() -- no slot arg = every READY slot fires
-
-	-- Client-authored countdown, mirroring the server's per-slot cooldown (PER-SLOT LAUNCH
-	-- REWORK: this button fires every READY slot; the countdown shows the Frequency-scaled
-	-- delay after which the slots just fired become ready again).
-	local delay = ProfileStats.GetLaunchDelay(latestUpgrades)
-	local start = os.clock()
-	while os.clock() - start < delay do
-		launchWordLabel.Text = string.format("%.1f", delay - (os.clock() - start))
-		task.wait(0.1)
-	end
-
-	render() -- restores LAUNCH/UNLOCK text (and everything else) correctly
-	launchBtnActive = true
 end
 
 -- Auto-launch never fires while the selection is parked on the locked preview rung (it
@@ -317,6 +398,18 @@ local function onSlotLaunched(slot: unknown, cooldown: unknown)
 	if type(slot) ~= "number" or type(cooldown) ~= "number" then
 		return
 	end
+	-- Mirror the slot's cooldown into slotReadyAt (availableCount()'s source — still feeds
+	-- onLaunchClicked's no-op guard even though the "N x $P" line itself no longer counts
+	-- it); re-render when it lapses (only if this entry is still the latest for the slot —
+	-- a newer launch supersedes the pending re-render).
+	local readyAt = os.clock() + cooldown
+	slotReadyAt[slot] = readyAt
+	render()
+	task.delay(cooldown + 0.05, function()
+		if slotReadyAt[slot] == readyAt then
+			render()
+		end
+	end)
 	-- Scheduled even while AUTO is off (checked at fire time), so toggling AUTO on during
 	-- a cooldown still picks the slot up when it lapses (plus the toggle's own kick).
 	task.delay(cooldown + RELAUNCH_BUFFER, function()
@@ -356,15 +449,11 @@ function Controller.Init()
 		autoKick() -- a new slot/tier may be ready to join the auto cycle
 	end)
 	-- Equipping a skin into a previously empty slot has no SlotLaunched chain yet — the
-	-- loadout push is what brings it into the cycle. It also carries the equipped-marble
-	-- count the "N x $P" cost line renders from.
+	-- loadout push is what brings it into the cycle. It also carries the equipped-slot
+	-- map availableCount() reads from.
 	local function applyLoadout(info: any)
 		if type(info) == "table" and type(info.loadout) == "table" then
-			local n = 0
-			for _ in info.loadout do
-				n += 1
-			end
-			equippedCount = n
+			latestLoadout = info.loadout
 			render()
 		end
 	end

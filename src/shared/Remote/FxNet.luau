@@ -30,7 +30,9 @@ return {
 	-- Server -> Client: (effect: string, ball: BasePart, ...args) — dispatch a BallEffects
 	-- visual on this client (SetValueUI, ShowComboPopup, EmitBounce, ...).
 	BallEffect = remoteEvent("BallEffect"),
-	-- Server -> Client: (kind: "Cash" | "Diamonds" | "Crate", count: number?) — play the
-	-- currency-fly celebration into the matching HUD icon (CurrencyFlyUI).
+	-- Server -> Client: (kind: "Cash" | "Diamonds" | "Crate", count: number?, amount: number?)
+	-- — play the currency-fly celebration into the matching HUD icon (CurrencyFlyUI). With an
+	-- amount, the flight drives the balance readout's live sum — granters MUST fire this
+	-- BEFORE applying the grant, so the hold seeds from the pre-grant balance.
 	PlayCurrencyFly = remoteEvent("PlayCurrencyFly"),
 }

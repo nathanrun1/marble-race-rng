@@ -244,41 +244,17 @@ function BallLaunchService.GetPhase(): number
 	return (os.clock() % LAUNCHER_ROT_PERIOD) / LAUNCHER_ROT_PERIOD
 end
 
--- Buy the one-time AUTO launch for a slot (the world AutoSign's click). Server-
--- authoritative: slot validity, unlock state, prior ownership, and funds are all checked
--- here; no yield between the funds check and the deduct, so it's atomic against
--- concurrent requests. Ownership lands in the profile (autoSlots), which replicates via
--- ProfileChanged and is swept by Start's auto loop below.
-local function purchaseSlotAuto(player: Player, slot: unknown): { ok: boolean, reason: string? }
+-- Flip a slot's AUTO on/off (the world AutoSign's interaction). AUTO is a free built-in
+-- per-slot feature — no purchase/ownership; the autoSlots value is just the on/off state
+-- the Start sweep obeys. Only the slot's unlock state gates the flip.
+local function toggleSlotAuto(player: Player, slot: unknown): { ok: boolean, enabled: boolean?, reason: string? }
 	if type(slot) ~= "number" or slot ~= math.floor(slot) or slot < 1 then
 		return { ok = false, reason = "invalid_slot" }
 	end
 	if slot > LoadoutService.GetMaxSlots(player) then
 		return { ok = false, reason = "locked" }
 	end
-	if ProfileService.GetAutoSlots(player)[tostring(slot)] ~= nil then
-		return { ok = false, reason = "owned" } -- owned even if currently toggled off
-	end
-	local price = SlotAutoConfig.PriceFor(slot)
-	if CurrencyService.GetPoints(player) < price then
-		return { ok = false, reason = "cannot_afford" }
-	end
-	CurrencyService.AddPoints(player, -price, "SlotAuto: " .. slot)
-	ProfileService.SetSlotAuto(player, slot) -- defaults to enabled
-	return { ok = true }
-end
-
--- Flip an owned slot's AUTO on/off (the AutoSign's post-purchase interaction). Ownership
--- is the key existing in autoSlots; the value is the on/off state the Start sweep obeys.
-local function toggleSlotAuto(player: Player, slot: unknown): { ok: boolean, enabled: boolean?, reason: string? }
-	if type(slot) ~= "number" or slot ~= math.floor(slot) or slot < 1 then
-		return { ok = false, reason = "invalid_slot" }
-	end
-	local current = ProfileService.GetAutoSlots(player)[tostring(slot)]
-	if current == nil then
-		return { ok = false, reason = "not_owned" }
-	end
-	local enabled = not current
+	local enabled = not (ProfileService.GetAutoSlots(player)[tostring(slot)] == true)
 	ProfileService.SetSlotAuto(player, slot, enabled)
 	return { ok = true, enabled = enabled }
 end
@@ -306,12 +282,11 @@ function BallLaunchService.Init()
 		return BallLaunchService.GetPhase()
 	end
 
-	LaunchNet.PurchaseSlotAuto.OnServerInvoke = purchaseSlotAuto
 	LaunchNet.ToggleSlotAuto.OnServerInvoke = toggleSlotAuto
 end
 
--- Auto-launch sweep: every SweepInterval, fire each AUTO-owned slot that's ready AND
--- switched on (the autoSlots value — owned-but-toggled-off slots sit out). launchSlot's
+-- Auto-launch sweep: every SweepInterval, fire each slot whose AUTO toggle is switched
+-- on (the autoSlots value; toggled-off/untouched slots sit out). launchSlot's
 -- own guards (unlock, equip, cooldown, ball cap, stake) are the real gate — the sweep
 -- just asks. pcall around the profile read: a player can be in Players before
 -- DataService has seeded their profile (join race), and GetAutoSlots asserts on that.

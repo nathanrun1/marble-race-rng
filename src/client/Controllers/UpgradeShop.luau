@@ -406,10 +406,6 @@ local function setupShopAt(inst: Instance)
 		local now = os.clock()
 		if now - (lastTouch[inst] or 0) < TOUCH_DEBOUNCE then return end
 		lastTouch[inst] = now
-		if ShopUI.IsOpen() then
-			ShopUI.LoadTrack(track)
-			return
-		end
 		ShopUI.OpenShop(track)
 	end)
 

@@ -4,10 +4,10 @@
 -- "just a couple more minutes" retention hook, but only works as one if the player can
 -- actually see it ticking without digging into a menu.
 --
--- (The free-box countdown used to live here too, but Config.Crates.Free.Interval is now just
--- a ~2s anti-spam floor rather than a real wait — a chip counting that down would just flash
--- "READY!" constantly, so it's not worth surfacing here anymore. CosmeticsShop's own claim
--- button/pad still show it.)
+-- (The free-box countdown used to live here too. During the fast phase (Free.Interval,
+-- ~10s) a chip would flash "READY!" near-constantly so it stays unsurfaced; once the
+-- cadence steps up to SlowInterval (~90s after FastClaims lifetime claims) a chip might
+-- be worth reintroducing. CosmeticsShop's own claim button/pad still show the timer.)
 --
 -- Data source (already pushed for other UIs, no new remotes):
 --   Playtime — PlaytimeBonusService's Info.total / Info.nextTime (nextTime is the NEXT rung's

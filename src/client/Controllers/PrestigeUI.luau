@@ -227,7 +227,7 @@ local function render(info: PrestigeInfo)
 		local ccGained = math.floor(info.nextCost * CosmeticsConfig.RebirthCCRatio)
 		diamondsGainLabel.Text = "💎 +" .. StringUtils.FormatShort(ccGained) .. " on Rebirth"
 	end
-	statNum.Text  = info.count .. " → " .. (info.count + 1)
+	statNum.Text  = info.count .. " -> " .. (info.count + 1) -- ASCII: "→" isn't in the UI font
 
 	local frac = math.clamp(moneyRequired > 0 and moneyProgress / moneyRequired or 0, 0, 1)
 	TweenService:Create(pgFill, TweenInfo.new(0.4, Enum.EasingStyle.Quad), { Size = UDim2.new(frac, 0, 1, 0) }):Play()
@@ -290,6 +290,10 @@ local function onPrestigePressed()
 	if not lastInfo or not lastInfo.canPrestige then
 		return
 	end
+	-- Mirrors the server payout (floor(nextCost × RebirthCCRatio)), captured pre-invoke so
+	-- the fly can split the exact amount; the hold starts before the grant push can land.
+	local ccGain = math.floor(lastInfo.nextCost * CosmeticsConfig.RebirthCCRatio)
+	local release = CurrencyFlyUI.HoldBalance("Diamonds")
 	local result: { ok: boolean, reason: string?, info: PrestigeInfo } = PrestigeRF:InvokeServer()
 	if result and result.ok then
 		lastInfo = result.info
@@ -299,8 +303,9 @@ local function onPrestigePressed()
 		SoundService.Play({ soundId = SoundsConfig.Prestige })
 		-- Rebirth's currency payout is Diamonds (PrestigeService's RebirthCCRatio cut) —
 		-- cash just resets, so that's the balance worth celebrating.
-		CurrencyFlyUI.Play("Diamonds")
+		CurrencyFlyUI.Play("Diamonds", nil, ccGain)
 	end
+	release()
 end
 
 ----------------------------------------------------------------

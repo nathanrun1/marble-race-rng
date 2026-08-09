@@ -69,6 +69,13 @@ local function attemptClaim(player: Player)
 
 	local reward = math.floor(CurrencyService.GetPoints(player) * FRACTION)
 	StatsService.SetGroupRewardClaimedNow(player) -- stamp first so a re-touch is gated
+	-- Celebration FX BEFORE the grant (remote delivery is ordered): the client fly holds
+	-- the balance readout's live sum from the pre-grant value and streams the reward in
+	-- with the icons — pushed from here (not inferred from the persisted claim timestamp
+	-- replicating) so a rejoin shortly after a claim can't look like a fresh one.
+	if claimedRE then
+		claimedRE:FireClient(player, reward)
+	end
 	CurrencyService.AddPoints(player, reward, "Group Reward")
 	local percent = math.floor(FRACTION * 100 + 0.5)
 	AnnounceUI.Announce(
@@ -77,12 +84,6 @@ local function attemptClaim(player: Player)
 		GroupConfig.Reward.LabelColor
 	)
 	ScoreUI.PostMessage(player, "Group Reward: " .. StringUtils.FormatMoney(reward), GroupConfig.Reward.MsgColor)
-	-- Tell the claimer's client the grant landed, so it can run its celebration FX — pushed
-	-- from here (not inferred from the persisted claim timestamp replicating) so a rejoin
-	-- shortly after a claim can't look like a fresh one.
-	if claimedRE then
-		claimedRE:FireClient(player, reward)
-	end
 end
 
 local function addPad(inst: Instance)

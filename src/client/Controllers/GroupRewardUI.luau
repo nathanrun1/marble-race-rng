@@ -105,9 +105,11 @@ function GroupRewardUI.Init()
 		render()
 	end)
 
-	-- Server confirmed a successful claim (the grant is a cash cut of the balance): celebrate.
-	ClaimedRE.OnClientEvent:Connect(function()
-		CurrencyFlyUI.Play("Cash")
+	-- Server confirmed a successful claim (the grant is a cash cut of the balance):
+	-- celebrate. The server fires this BEFORE applying the grant, so the fly's live-sum
+	-- hold seeds from the pre-grant balance and the reward streams in with the icons.
+	ClaimedRE.OnClientEvent:Connect(function(reward: any)
+		CurrencyFlyUI.Play("Cash", nil, if type(reward) == "number" then reward else nil)
 	end)
 
 	-- Server tells us a non-member touched a pad: open the Roblox join-group dialog. Debounced

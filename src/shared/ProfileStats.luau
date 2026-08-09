@@ -74,7 +74,11 @@ end
 -- Seconds a launch slot stays on cooldown after firing (PER-SLOT LAUNCH REWORK: every
 -- owned slot launches independently; this one Frequency-scaled delay applies to each).
 function ProfileStats.GetLaunchDelay(upgrades: Upgrades): number
-	return math.max(1/60, UpgradesConfig.Tracks.Frequency.Base * (UpgradesConfig.Tracks.Frequency.PerTier ^ tier(upgrades, "Frequency")))
+	local track = UpgradesConfig.Tracks.Frequency
+	-- Clamp to MaxTier (same as GetMaxSlots): pre-rebalance saves / dev maxall can hold
+	-- tiers above the cap, which must not derive a faster delay than the cap allows.
+	local t = math.min(tier(upgrades, "Frequency"), track.MaxTier or math.huge)
+	return math.max(1/60, track.Base * (track.PerTier ^ t))
 end
 
 -- Launch/equip slots unlocked by the NumSlots tier (PER-SLOT LAUNCH REWORK: slot count is
@@ -97,8 +101,14 @@ end
 -- (LuckGrowth^t - 1) because effective tail-rarity odds scale ~(luck+1): each tier bought
 -- multiplies your rare-hit rate by LuckGrowth, instead of adding a vanishing sliver.
 function ProfileStats.GetLuck(upgrades: Upgrades): number
+	return ProfileStats.GetLuckAtTier(tier(upgrades, "Luck"))
+end
+
+-- The tier-indexed form of GetLuck, for previews that ask "what would tier N give"
+-- (e.g. the shop's roll-odds table comparing the current tier against the next).
+function ProfileStats.GetLuckAtTier(tierNum: number): number
 	local track = UpgradesConfig.Tracks.Luck
-	return track.LuckGrowth ^ tier(upgrades, "Luck") - 1
+	return track.LuckGrowth ^ tierNum - 1
 end
 
 -- Launcher swivel angle (radians) for a given phase. The launcher sweeps its aim

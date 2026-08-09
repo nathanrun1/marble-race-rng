@@ -57,8 +57,8 @@ export type Profile = {
 	-- Lives in the profile ON PURPOSE: ResetProfile (prestige) wipes it so the locks
 	-- return, and DataService persistence carries it across sessions for free.
 	unlockedLocks: { [string]: boolean },
-	-- Per-slot AUTO launch purchases this prestige (stringified slot number -> true;
-	-- see Config/SlotAuto + BallLaunchService). Same lifecycle rationale as unlockedLocks.
+	-- Per-slot AUTO toggle states (stringified slot number -> switched on; see
+	-- Config/SlotAuto + BallLaunchService). AUTO is free/built-in on every slot.
 	autoSlots: { [string]: boolean },
 }
 
@@ -105,6 +105,8 @@ local function newProfile(): Profile
 			axes = axes,
 		},
 		unlockedLocks = {},
+		-- AUTO is a free built-in per-slot toggle (no ownership/purchase): value true =
+		-- that slot's auto is switched on; a missing key just means "off".
 		autoSlots = {},
 	}
 end
@@ -169,16 +171,14 @@ end
 
 -- World upgrade locks bought this prestige (lock id -> true). Returned by reference;
 -- mutate only through SetLockUnlocked.
--- Per-slot AUTO purchases (stringified slot number -> enabled). Key PRESENT = owned;
--- the VALUE is whether auto is currently switched on (the AutoSign's post-purchase
--- toggle). Mutate via SetSlotAuto only.
+-- Per-slot AUTO toggles (stringified slot number -> switched on). AUTO is free and
+-- built-in on every slot; a missing key just means "off". Mutate via SetSlotAuto only.
 function ProfileService.GetAutoSlots(player: Player): { [string]: boolean }
 	return get(player).autoSlots
 end
 
--- Mark a slot's one-time AUTO as owned and set its on/off state (purchase defaults to
--- on; the toggle flips it). Only BallLaunchService should call this (it owns
--- validation + the cash deduct).
+-- Set a slot's AUTO toggle state. Only BallLaunchService should call this (it owns the
+-- slot validation).
 function ProfileService.SetSlotAuto(player: Player, slot: number, enabled: boolean?)
 	local profile = get(player)
 	profile.autoSlots[tostring(slot)] = enabled ~= false
@@ -317,7 +317,7 @@ function ProfileService.ResetProfile(player: Player)
 	local d = UpgradesConfig.LoadoutDefaults
 	profile.loadout = { Bet = ProfileStats.GetBetSizeAtTier(0), BetTier = 0, LaunchPhase = 0, axes = axes }
 	profile.unlockedLocks = {} -- world upgrade locks return on prestige
-	profile.autoSlots = {} -- per-slot AUTO purchases reset too, same as the locks
+	profile.autoSlots = {} -- AUTO toggles reset to off (AUTO itself is free/built-in)
 	ProfileService.Changed:Fire(player, profile)
 	ProfileChangedRE:FireClient(player, profile)
 end
@@ -363,8 +363,8 @@ function ProfileService.ApplyData(player: Player, saved: Profile?)
 			end
 		end
 		if type(saved.autoSlots) == "table" then
-			-- Key present = owned; the boolean VALUE is the on/off toggle state (false =
-			-- owned but switched off — must survive the round trip, not read as unowned).
+			-- The boolean VALUE is the free built-in toggle's on/off state (legacy saves
+			-- from the ownership era carry the same shape and load unchanged).
 			for slotStr, on in saved.autoSlots do
 				if type(slotStr) == "string" and type(on) == "boolean" then
 					profile.autoSlots[slotStr] = on

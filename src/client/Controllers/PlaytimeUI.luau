@@ -419,10 +419,15 @@ end
 
 -- Claim one specific rung by index.
 local function claim(index: number)
+	-- Hold the Cash readout BEFORE the invoke: the grant's push lands ahead of the
+	-- invoke's return, and the fly's live sum must seed from the pre-claim balance.
+	local reward = if latestInfo and latestInfo.rungs[index] then latestInfo.rungs[index].reward else nil
+	local release = CurrencyFlyUI.HoldBalance("Cash")
 	local res = claimRF:InvokeServer(index)
 	if res and res.granted then
-		CurrencyFlyUI.Play("Cash") -- playtime rungs pay cash
+		CurrencyFlyUI.Play("Cash", nil, reward) -- playtime rungs pay cash
 	end
+	release()
 	if res and res.info then
 		onInfo(res.info)
 	end
@@ -515,6 +520,7 @@ local function triggerButtonOf(host: Instance): GuiButton?
 end
 
 function PlaytimeUI.Init()
+
 	getInfoRF = PlaytimeNet.GetPlaytimeInfo :: RemoteFunction
 	claimRF = PlaytimeNet.ClaimPlaytimeBonus :: RemoteFunction
 	changedRE = PlaytimeNet.PlaytimeChanged :: RemoteEvent
@@ -523,28 +529,32 @@ function PlaytimeUI.Init()
 	local mainGui = playerGui:WaitForChild("MainGui")
 	local leftBar = mainGui:WaitForChild("LeftBar")
 	local triggerHost = (leftBar:WaitForChild("TriggerQuad") :: Instance):FindFirstChild("PlaytimeTriggerHost", true) :: GuiObject
-	triggerHost.Visible = true
-	leftBarRef = leftBar
-	triggerHostRef = triggerHost
 
-	local tbtn = triggerButtonOf(triggerHost)
-	if tbtn then
-		defaultTriggerColor = tbtn.BackgroundColor3
-	end
 
-	triggerBtn = UIButton.bind(triggerHost, { onClick = openPlaytimePanel, hoverScale = 1.08 })
+	-- DISABLED
+	triggerHost.Visible = false
+	-- triggerHost.Visible = true
+	-- leftBarRef = leftBar
+	-- triggerHostRef = triggerHost
 
-	-- Live updates: the service pushes on load, on a rung becoming available, and on claim.
-	changedRE.OnClientEvent:Connect(function(info)
-		onInfo(info :: Info)
-	end)
-	-- Initial snapshot (may be nil if data isn't loaded yet; PlaytimeChanged will follow).
-	task.spawn(function()
-		local info = getInfoRF:InvokeServer()
-		if info then
-			onInfo(info :: Info)
-		end
-	end)
+	-- local tbtn = triggerButtonOf(triggerHost)
+	-- if tbtn then
+	-- 	defaultTriggerColor = tbtn.BackgroundColor3
+	-- end
+
+	-- triggerBtn = UIButton.bind(triggerHost, { onClick = openPlaytimePanel, hoverScale = 1.08 })
+
+	-- -- Live updates: the service pushes on load, on a rung becoming available, and on claim.
+	-- changedRE.OnClientEvent:Connect(function(info)
+	-- 	onInfo(info :: Info)
+	-- end)
+	-- -- Initial snapshot (may be nil if data isn't loaded yet; PlaytimeChanged will follow).
+	-- task.spawn(function()
+	-- 	local info = getInfoRF:InvokeServer()
+	-- 	if info then
+	-- 		onInfo(info :: Info)
+	-- 	end
+	-- end)
 end
 
 return PlaytimeUI

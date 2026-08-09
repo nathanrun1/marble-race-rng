@@ -38,6 +38,7 @@ local Tags = {
 	PlotBounds = "PlotBounds", -- CanQuery volume covering the plot; a plot ball not overlapping it after a shot is out of bounds and gets teleported back (client BallPlotService)
 	PlotCollect = "PlotCollect", -- pad that claims EVERY plot ball at once on touch; billboards the collectible total (client BallPlotService)
 	Slot = "Slot", -- A loadout-slot Model; attribute "SlotNum" is its slot index, child "Platform" is where the equipped marble's sample ball floats (client LoadoutDisplay)
+	StarterQuestGui = "StarterQuestGui", -- The Studio-authored Getting Started mission panel ScreenGui (client StarterQuestUI wires and fills it)
 }
 
 table.freeze(Tags)

@@ -149,18 +149,12 @@ local function initRightBar()
 			and stats.upgradesPurchased < MonetizationConfig.StarterPack.MaxUpgrades
 	end
 
-	-- ownsStarterPack as of the previous stats push; nil until the first snapshot seeds it,
-	-- so a player who ALREADY owns the pack doesn't get a celebration on every join — only
-	-- the false -> true edge (the grant landing server-side this session) plays the fly.
-	local prevOwnsStarter: boolean? = nil
-
+	-- Starter-pack celebration: fired by the SERVER (MonetizationService's FxNet
+	-- PlayCurrencyFly, sent before the grant so the fly's live-sum hold seeds correctly)
+	-- rather than inferred here from the ownsStarterPack stats edge.
 	local function apply(stats: Stats)
 		refreshCash(stats.cashMultiplier)
 		refreshStarter(stats)
-		if prevOwnsStarter == false and stats.ownsStarterPack then
-			CurrencyFlyUI.Play("Cash") -- the pack's payout is its cash balance grant
-		end
-		prevOwnsStarter = stats.ownsStarterPack
 	end
 
 	statsChanged.OnClientEvent:Connect(apply)

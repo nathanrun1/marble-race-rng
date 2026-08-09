@@ -25,12 +25,13 @@ local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local BoardAppearanceConfig = require(RS.Shared.Config.BoardAppearance)
+local BoardColors = require(RS.Shared.Utility.BoardColors)
 local TagsConfig = require(RS.Shared.Config.Tags)
 local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 local BoardAppearanceView = {}
 
 -- Material is optional so the Grass ramp (color-only keyframes) shares the same lookup.
-type Keyframe = { Tier: number, Color: Color3, Material: Enum.Material? }
+type Keyframe = BoardColors.Keyframe
 
 local FLOOR: { Keyframe } = BoardAppearanceConfig.Floor
 local SIDE: { Keyframe } = BoardAppearanceConfig.Side
@@ -55,39 +56,13 @@ local bobCount = 0
 -- at nextZoneTier instead of currentTier).
 local partKind: { [BasePart]: string } = {}
 
--- (color, material) for `tier` within a keyframe list (ascending Tier): Color lerps
--- linearly between the two keyframes straddling the tier; Material holds the LOWER
--- keyframe's value until the tier reaches the next one. Clamped to [0, MaxTier], so a
--- tier past the last keyframe holds that keyframe's look.
-local function lookup(keyframes: { Keyframe }, tier: number): (Color3, Enum.Material?)
-	tier = math.clamp(tier, 0, MAX_TIER)
-	local lo = keyframes[1]
-	local hi = keyframes[#keyframes]
-	for _, kf in keyframes do
-		if kf.Tier <= tier and kf.Tier >= lo.Tier then
-			lo = kf
-		end
-	end
-	for i = #keyframes, 1, -1 do
-		local kf = keyframes[i]
-		if kf.Tier >= tier then
-			hi = kf
-		end
-	end
-	if lo.Tier == hi.Tier then
-		return lo.Color, lo.Material
-	end
-	local t = (tier - lo.Tier) / (hi.Tier - lo.Tier)
-	return lo.Color:Lerp(hi.Color, t), lo.Material
-end
-
 local function paintOne(part: BasePart)
 	local kind = partKind[part]
 	local ramp = if kind == "Side" or kind == "PreviewSide" then SIDE
 		elseif kind == "Grass" or kind == "PreviewGrass" then GRASS
 		else FLOOR
 	local tier = if string.sub(kind, 1, 7) == "Preview" then nextZoneTier else currentTier
-	local color, material = lookup(ramp, tier)
+	local color, material = BoardColors.Lookup(ramp, tier, MAX_TIER)
 	part.Color = color
 	if material then -- Grass keyframes carry no Material: color-only, keep the authored material
 		part.Material = material

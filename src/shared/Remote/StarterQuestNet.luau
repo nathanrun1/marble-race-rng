@@ -25,7 +25,7 @@ local function remoteFunction(name: string): RemoteFunction
 end
 
 return {
-	-- Server -> Client: (info: ChainInfo) — current step/progress after any change.
+	-- Server -> Client: (info: ChainInfo) — the live mission window after any change.
 	StarterQuestChanged = remoteEvent("StarterQuestChanged"),
 	-- Client -> Server invoke: () -> ChainInfo.
 	GetStarterQuestInfo = remoteFunction("GetStarterQuestInfo"),

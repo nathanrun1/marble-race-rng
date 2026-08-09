@@ -1,12 +1,14 @@
 --!strict
--- Top-of-screen "average money per ball" readout (green, always visible). Shows the server-
--- authoritative average (StatsService.GetAvgMoneyPerBall, mirrored here via BallAverage.Compute
--- on the same recentBalls list the server sends) — the same number the leaderstats column and
--- the global leaderboard use — instead of a locally computed figure, so the player never sees a
--- different value here than everywhere else.
+-- Top-RIGHT Luck-rank + Global-Rank readouts (always visible). The luck rank is named off
+-- the server-authoritative average $/marble (StatsService.GetAvgMoneyPerBall, mirrored here
+-- via BallAverage.Compute on the same recentBalls list the server sends) — the same number
+-- the leaderstats column and the global leaderboard use, so the rank here never disagrees
+-- with them. The average itself is no longer displayed on screen (the overhead billboard
+-- above the player's head already shows it).
 --
 -- Data source: BalanceChanged tells us a ball banked (reason starts with "Ball "), which
--- schedules a throttled GetStats pull; the display then eases toward whatever that pull returns.
+-- schedules a throttled GetStats pull; the rank value then eases toward whatever that pull
+-- returns.
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -23,14 +25,13 @@ local StatsNet = require(RS.Shared.Remote.StatsNet)
 local MoneyPerBallUI = {}
 
 local GREEN = Color3.fromRGB(96, 224, 120)
-local SMOOTH_RATE = 3.0     -- per-second rate the shown number eases toward the target (higher =
-                            -- snappier). Eases every frame so it glides rather than snapping.
-local UPDATE_PERIOD = 1.0   -- how often the shown $/marble text updates
+local SMOOTH_RATE = 3.0     -- per-second rate the tracked average eases toward the target (higher =
+                            -- snappier), so the luck rank never hard-steps across tiers.
+local UPDATE_PERIOD = 1.0   -- how often the luck-rank text refreshes
 local PULL_INTERVAL = 0.75  -- min seconds between GetStats pulls (coalesces bursts of balls)
 
-local target = 0    -- server-reported average the display glides toward
-local displayed = 0 -- the eased value actually shown
-local label: TextLabel? = nil
+local target = 0    -- server-reported average the tracked value glides toward
+local displayed = 0 -- the eased value the luck rank is derived from
 
 local rankLabel: TextLabel? = nil
 local luckLabel: TextLabel? = nil
@@ -76,23 +77,20 @@ local function schedulePull()
 	end)
 end
 
--- Per frame: ease the shown number toward the target so it always moves smoothly — no hard step
--- when a fresh pull changes it. Frame-rate independent.
+-- Per frame: ease the tracked average toward the target so the derived rank moves smoothly —
+-- no hard step when a fresh pull changes it. Frame-rate independent.
 local function step(dt: number)
 	displayed += (target - displayed) * (1 - math.exp(-SMOOTH_RATE * dt))
-	if label and (os.clock() - prevUpdate) > UPDATE_PERIOD then
+	if luckLabel and (os.clock() - prevUpdate) > UPDATE_PERIOD then
 		prevUpdate = os.clock()
-		label.Text = "💰 Average $/Marble: $" .. StringUtils.FormatShort(displayed) .. " 💰"
-		-- Luck rank rides the same value: named tier + how far to the next one (shared
+		-- Luck rank rides the eased average: named tier + how far to the next one (shared
 		-- LuckRanks scale — matches the "Luck" leaderstat column exactly). ApplyToLabel
 		-- handles the flat color / top-rank gradient styling.
-		if luckLabel then
-			local rank, nextRank = LuckRanks.RankFor(displayed)
-			luckLabel.Text = if nextRank
-				then string.format("🍀 Luck: %s  (next: %s at $%s)", rank.Name, nextRank.Name, StringUtils.FormatShort(nextRank.Threshold))
-				else "🍀 Luck: " .. rank.Name
-			LuckRanks.ApplyToLabel(luckLabel, rank)
-		end
+		local rank, nextRank = LuckRanks.RankFor(displayed)
+		luckLabel.Text = if nextRank
+			then string.format("🍀 Luck: %s  (next: %s at $%s)", rank.Name, nextRank.Name, StringUtils.FormatShort(nextRank.Threshold))
+			else "🍀 Luck: " .. rank.Name
+		LuckRanks.ApplyToLabel(luckLabel, rank)
 	end
 end
 
@@ -103,17 +101,17 @@ local function createUI(playerGui: PlayerGui)
 	screenGui.IgnoreGuiInset = false
 	screenGui.Parent = playerGui
 
-	-- All three rows live in one container so they scale AND stack together: a UIScale
+	-- Both rows live in one container so they scale AND stack together: a UIScale
 	-- parented to a label only scales that label's own Size, not its Position offset
-	-- relative to the ScreenGui — so three independently-positioned/autoscaled labels
-	-- drift apart as the viewport shrinks (their fixed-pixel gaps don't shrink with them).
+	-- relative to the ScreenGui — so independently-positioned/autoscaled labels drift
+	-- apart as the viewport shrinks (their fixed-pixel gaps don't shrink with them).
 	-- Putting them in a single Frame with ONE UIScale + a UIListLayout fixes both: the
 	-- list layout removes manual offsets entirely, and the shared UIScale scales the
-	-- whole stack (including the layout's padding) as one unit.
+	-- whole stack (including the layout's padding) as one unit. Anchored top-RIGHT.
 	local container = Instance.new("Frame")
 	container.Name = "TopHUD"
-	container.AnchorPoint = Vector2.new(0.5, 0)
-	container.Position = UDim2.new(0.5, 0, 0.045, 0)
+	container.AnchorPoint = Vector2.new(1, 0)
+	container.Position = UDim2.new(1, -14, 0, 10)
 	container.Size = UDim2.new(0, 620, 0, 0)
 	container.AutomaticSize = Enum.AutomaticSize.Y
 	container.BackgroundTransparency = 1
@@ -122,31 +120,14 @@ local function createUI(playerGui: PlayerGui)
 	local listLayout = Instance.new("UIListLayout")
 	listLayout.FillDirection = Enum.FillDirection.Vertical
 	listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	listLayout.Padding = UDim.new(0, 2)
 	listLayout.Parent = container
 
-	local lbl = Instance.new("TextLabel")
-	lbl.Name = "PerBall"
-	lbl.LayoutOrder = 1
-	lbl.Size = UDim2.new(1, 0, 0, 56)
-	lbl.BackgroundTransparency = 1
-	lbl.Text = "💰 Average $/Marble: $0 💰"
-	lbl.TextColor3 = GREEN
-	lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
-	lbl.TextStrokeTransparency = 0.4
-	lbl.TextScaled = false
-	lbl.TextSize = 40
-	lbl.Font = Enum.Font.FredokaOne
-	lbl.Active = false      -- never sink input: clicks (incl. world SurfaceGuis behind it) pass through
-	lbl.Interactable = false
-	lbl.Parent = container
-	label = lbl
-
-	-- Luck rank (named tier for the average), directly below the $/marble readout.
+	-- Luck rank (named tier for the average).
 	local luckLbl = Instance.new("TextLabel")
 	luckLbl.Name = "LuckRank"
-	luckLbl.LayoutOrder = 2
+	luckLbl.LayoutOrder = 1
 	luckLbl.Size = UDim2.new(1, 0, 0, 30)
 	luckLbl.BackgroundTransparency = 1
 	luckLbl.Text = "🍀 Luck: " .. LuckRanks.Ranks[1].Name
@@ -155,8 +136,9 @@ local function createUI(playerGui: PlayerGui)
 	luckLbl.TextStrokeTransparency = 0.4
 	luckLbl.TextScaled = false
 	luckLbl.TextSize = 26
+	luckLbl.TextXAlignment = Enum.TextXAlignment.Right
 	luckLbl.Font = Enum.Font.FredokaOne
-	luckLbl.Active = false
+	luckLbl.Active = false -- never sink input: clicks (incl. world SurfaceGuis behind it) pass through
 	luckLbl.Interactable = false
 	luckLbl.Parent = container
 	luckLabel = luckLbl
@@ -164,7 +146,7 @@ local function createUI(playerGui: PlayerGui)
 	-- Global ranking, below the luck rank.
 	local rankLbl = Instance.new("TextLabel")
 	rankLbl.Name = "GlobalRank"
-	rankLbl.LayoutOrder = 3
+	rankLbl.LayoutOrder = 2
 	rankLbl.Size = UDim2.new(1, 0, 0, 32)
 	rankLbl.BackgroundTransparency = 1
 	rankLbl.Text = "Global Rank: —"
@@ -173,6 +155,7 @@ local function createUI(playerGui: PlayerGui)
 	rankLbl.TextStrokeTransparency = 0.4
 	rankLbl.TextScaled = false
 	rankLbl.TextSize = 24
+	rankLbl.TextXAlignment = Enum.TextXAlignment.Right
 	rankLbl.Font = Enum.Font.FredokaOne
 	rankLbl.Active = false
 	rankLbl.Interactable = false

@@ -2,7 +2,7 @@
 -- Database of available ball skins (cosmetics). A skin is purely cosmetic: a base colour, zero or
 -- more AMBIENT ParticleEmitters the ball constantly emits, and an optional BOUNCE burst — a short
 -- one-off particle Emit fired each time the ball bounces (and showcased periodically on the shop
--- sample ball). Each entry carries a display name, a rarity 1 (common) .. 5 (rarest), and a CC price.
+-- sample ball). Each entry carries a display name, a rarity 1 (common) .. 12 (rarest), and a CC price.
 --
 -- Particles are configured per skin across the full ParticleEmitter property set; a skin may LAYER
 -- several ambient emitters. Intensity scales hard with rarity. BallEffects.ApplyAppearance builds the
@@ -92,7 +92,7 @@ export type SkinData = {
 
 export type BallSkin = {
 	name: string,
-	rarity: number,            -- 1 (common) .. 9 (Transcendent, rarest)
+	rarity: number,            -- 1 (common) .. 12 (Omega, rarest)
 	price: number,             -- CC cost (0 = free / owned by default)
 	data: SkinData,
 }
@@ -109,10 +109,14 @@ local RARITY_COLORS: { [number]: Color3 } = {
 	[7] = Color3.fromRGB(110, 225, 255), -- Celestial (ice cyan)
 	[8] = Color3.fromRGB(255, 240, 150), -- Divine (radiant gold-white)
 	[9] = Color3.fromRGB(255, 90, 230),  -- Transcendent (hyper magenta)
+	[10] = Color3.fromRGB(85, 105, 255), -- Astral (ultramarine starlight)
+	[11] = Color3.fromRGB(150, 255, 70), -- Primordial (elemental acid green)
+	[12] = Color3.fromRGB(245, 250, 255), -- Omega (blinding white)
 }
 local RARITY_NAMES: { [number]: string } = {
 	[1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary",
 	[6] = "Mythic", [7] = "Celestial", [8] = "Divine", [9] = "Transcendent",
+	[10] = "Astral", [11] = "Primordial", [12] = "Omega",
 }
 
 -- A size sequence that swells then shrinks (a soft pulse).
@@ -1037,6 +1041,350 @@ local Skins: { [string]: BallSkin } = {
 			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.2, 0.7, 0.7), offset = Vector3.new(1.5, 0, 0), orientation = Vector3.new(0, 0, -90), color = Color3.fromRGB(255, 240, 120), material = Enum.Material.Metal, followRotation = true },
 			{ shape = Enum.PartType.Wedge, size = Vector3.new(0.2, 0.7, 0.7), offset = Vector3.new(-1.5, 0, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 240, 120), material = Enum.Material.Metal, followRotation = true },
 		} },
+	},
+	----------------------------------------------------------------------------
+	-- 2026-07 top-tier expansion: Celestial/Divine/Transcendent counts doubled, plus the
+	-- three new tiers above them (Astral 10, Primordial 11, Omega 12) — see RARITY_NAMES.
+	----------------------------------------------------------------------------
+	-- Celestial additions (ice/sky)
+	aurora = {
+		name = "Aurora", rarity = 7, price = 8000,
+		data = {
+			color = Color3.fromRGB(180, 245, 235),
+			shapes = {
+				{ size = Vector3.new(0.12, 1.9, 0.6), offset = Vector3.new(0.85, 0.8, 0), orientation = Vector3.new(0, 0, 24), color = Color3.fromRGB(120, 255, 200), transparency = 0.4 },
+				{ size = Vector3.new(0.12, 1.7, 0.6), offset = Vector3.new(-0.85, 0.8, 0), orientation = Vector3.new(0, 0, -24), color = Color3.fromRGB(150, 200, 255), transparency = 0.45 },
+				{ size = Vector3.new(0.12, 1.5, 0.6), offset = Vector3.new(0, 0.9, 0.85), orientation = Vector3.new(-22, 0, 0), color = Color3.fromRGB(220, 160, 255), transparency = 0.5 },
+			},
+			bounce = burst(cseq({ 0, 120, 255, 200 }, { 1, 150, 200, 255 }), 24, 0.45),
+		},
+	},
+	frostring = {
+		name = "Frost Ring", rarity = 7, price = 8000,
+		data = {
+			color = Color3.fromRGB(200, 240, 255),
+			shapes = {
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.08, 2.9, 2.9), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(170, 230, 255), material = Enum.Material.Glass, transparency = 0.3, followRotation = true },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.08, 2.9, 2.9), offset = Vector3.zero, orientation = Vector3.new(90, 0, 90), color = Color3.fromRGB(220, 245, 255), material = Enum.Material.Glass, transparency = 0.45, followRotation = true },
+			},
+			bounce = burst(cseq({ 0, 220, 245, 255 }, { 1, 110, 200, 255 }), 22, 0.45),
+		},
+	},
+	polaris = {
+		name = "Polaris", rarity = 7, price = 8000,
+		data = {
+			color = Color3.fromRGB(240, 250, 255),
+			shapes = {
+				{ size = Vector3.new(0.16, 2.6, 0.16), offset = Vector3.zero, color = Color3.fromRGB(255, 255, 255), transparency = 0.1, followRotation = true },
+				{ size = Vector3.new(0.16, 2.6, 0.16), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 255, 255), transparency = 0.1, followRotation = true },
+				{ size = Vector3.new(0.16, 2.6, 0.16), offset = Vector3.zero, orientation = Vector3.new(90, 0, 0), color = Color3.fromRGB(200, 235, 255), transparency = 0.25, followRotation = true },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 110, 225, 255 }), 24, 0.45, SPARKLES),
+		},
+	},
+	glacier = {
+		name = "Glacier", rarity = 7, price = 8500,
+		data = {
+			color = Color3.fromRGB(165, 225, 250),
+			shapes = {
+				{ size = Vector3.new(1.3, 0.5, 1.1), offset = Vector3.new(0, 0.75, 0), orientation = Vector3.new(4, 15, -3), color = Color3.fromRGB(190, 235, 255), material = Enum.Material.Glass, transparency = 0.3 },
+				{ size = Vector3.new(1.0, 0.45, 0.9), offset = Vector3.new(0.15, 1.2, -0.1), orientation = Vector3.new(-5, -20, 4), color = Color3.fromRGB(215, 245, 255), material = Enum.Material.Glass, transparency = 0.4 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.6, 0.6, 0.8), offset = Vector3.new(-0.2, 1.7, 0.1), orientation = Vector3.new(0, 40, 0), color = Color3.fromRGB(235, 250, 255), material = Enum.Material.Glass, transparency = 0.35 },
+			},
+			bounce = burst(cseq({ 0, 190, 235, 255 }, { 1, 255, 255, 255 }), 24, 0.5),
+		},
+	},
+	moonlet = {
+		name = "Moonlet", rarity = 7, price = 8500,
+		data = {
+			color = Color3.fromRGB(150, 210, 250),
+			orbits = {
+				{ shape = Enum.PartType.Ball, size = Vector3.new(0.7, 0.7, 0.7), offset = Vector3.new(1.9, 0, 0), color = Color3.fromRGB(205, 205, 215), material = Enum.Material.Slate, transparency = 0, speed = 2.4, axis = Vector3.new(0.2, 1, 0).Unit },
+				orbit(1.35, 4.5, 1.57, Color3.fromRGB(220, 240, 255), 0.18),
+			},
+			bounce = burst(cseq({ 0, 205, 205, 215 }, { 1, 110, 225, 255 }), 22, 0.45),
+		},
+	},
+	-- Divine additions (radiant gold/white)
+	sunforge = {
+		name = "Sunforge", rarity = 8, price = 15000,
+		data = {
+			color = Color3.fromRGB(255, 200, 90),
+			shapes = {
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.2, 2.8, 2.8), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 170, 60), material = Enum.Material.Metal, transparency = 0.15, followRotation = true },
+			},
+			particles = {
+				{
+					texture = FIRE, color = cseq({ 0, 255, 200, 90 }, { 1, 255, 120, 40 }),
+					rate = 26, lifetime = NumberRange.new(0.4, 0.8), speed = NumberRange.new(1.5, 3),
+					size = pulse(0.8), transparency = NumberSequence.new(0.2, 1),
+					lightEmission = 1, brightness = 3,
+				},
+			},
+			bounce = burst(cseq({ 0, 255, 240, 150 }, { 1, 255, 120, 40 }), 28, 0.55, FIRE),
+		},
+	},
+	archangel = {
+		name = "Archangel", rarity = 8, price = 15000,
+		data = {
+			color = Color3.fromRGB(255, 252, 240),
+			shapes = {
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.16, 1.2, 1.9), offset = Vector3.new(1.0, 0.65, 0.35), orientation = Vector3.new(0, 105, 30), color = Color3.fromRGB(255, 255, 255), transparency = 0.12 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.16, 1.2, 1.9), offset = Vector3.new(-1.0, 0.65, 0.35), orientation = Vector3.new(0, -105, 30), color = Color3.fromRGB(255, 255, 255), transparency = 0.12 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.14, 0.9, 1.4), offset = Vector3.new(0.85, 0.35, -0.5), orientation = Vector3.new(0, 75, 22), color = Color3.fromRGB(255, 246, 210), transparency = 0.25 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.14, 0.9, 1.4), offset = Vector3.new(-0.85, 0.35, -0.5), orientation = Vector3.new(0, -75, 22), color = Color3.fromRGB(255, 246, 210), transparency = 0.25 },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.09, 1.5, 1.5), offset = Vector3.new(0, 1.8, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 230, 120), transparency = 0.08 },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 255, 230, 120 }), 30, 0.55),
+		},
+	},
+	lightspire = {
+		name = "Light Spire", rarity = 8, price = 15000,
+		data = {
+			color = Color3.fromRGB(255, 245, 200),
+			shapes = {
+				{ size = Vector3.new(0.34, 2.6, 0.34), offset = Vector3.new(0, 1.3, 0), color = Color3.fromRGB(255, 250, 220), transparency = 0.25 },
+				{ size = Vector3.new(0.2, 3.3, 0.2), offset = Vector3.new(0, 1.5, 0), color = Color3.fromRGB(255, 255, 255), transparency = 0.5 },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 1.6, 1.6), offset = Vector3.new(0, -0.55, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 240, 150), transparency = 0.2 },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 255, 240, 150 }), 28, 0.55, SPARKLES),
+		},
+	},
+	providence = {
+		name = "Providence", rarity = 8, price = 15000,
+		data = {
+			color = Color3.fromRGB(30, 26, 40),
+			shapes = {
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.1, 2.5, 2.5), offset = Vector3.zero, orientation = Vector3.new(0, 0, 0), color = Color3.fromRGB(255, 240, 150), transparency = 0.3 },
+				{ shape = Enum.PartType.Ball, size = Vector3.new(0.65, 0.65, 0.65), offset = Vector3.new(0, 0, -0.75), color = Color3.fromRGB(255, 240, 150) },
+			},
+			orbits = {
+				orbit(1.9, 3.4, 0, Color3.fromRGB(255, 240, 150), 0.26),
+				orbit(1.9, 3.4, 3.14, Color3.fromRGB(255, 255, 255), 0.26),
+			},
+			bounce = burst(cseq({ 0, 255, 240, 150 }, { 1, 120, 90, 40 }), 28, 0.55),
+		},
+	},
+	-- Transcendent additions (impossible objects)
+	fracture = {
+		name = "Fracture", rarity = 9, price = 25000,
+		data = {
+			color = Color3.fromRGB(255, 90, 230),
+			shapes = {
+				{ size = Vector3.new(0.1, 1.7, 0.9), offset = Vector3.new(0.7, 0.5, 0.2), orientation = Vector3.new(20, 35, 15), color = Color3.fromRGB(255, 90, 230), material = Enum.Material.Glass, transparency = 0.3, followRotation = true },
+				{ size = Vector3.new(0.1, 1.4, 0.8), offset = Vector3.new(-0.7, -0.3, 0.4), orientation = Vector3.new(-30, -20, 40), color = Color3.fromRGB(140, 90, 255), material = Enum.Material.Glass, transparency = 0.35, followRotation = true },
+				{ size = Vector3.new(0.1, 1.2, 0.7), offset = Vector3.new(0.2, -0.6, -0.7), orientation = Vector3.new(50, 10, -25), color = Color3.fromRGB(90, 230, 255), material = Enum.Material.Glass, transparency = 0.35, followRotation = true },
+				{ size = Vector3.new(0.1, 1.0, 0.6), offset = Vector3.new(-0.3, 0.8, -0.5), orientation = Vector3.new(-15, 60, 30), color = Color3.fromRGB(255, 255, 255), material = Enum.Material.Glass, transparency = 0.4, followRotation = true },
+			},
+			bounce = burst(cseq({ 0, 255, 90, 230 }, { 1, 90, 230, 255 }), 30, 0.55),
+		},
+	},
+	tesseractgate = {
+		name = "Tesseract Gate", rarity = 9, price = 25000,
+		data = {
+			color = Color3.fromRGB(20, 12, 30),
+			shapes = {
+				{ size = Vector3.new(2.0, 2.0, 0.14), offset = Vector3.zero, color = Color3.fromRGB(255, 90, 230), transparency = 0.5, followRotation = true },
+				{ size = Vector3.new(0.14, 2.0, 2.0), offset = Vector3.zero, color = Color3.fromRGB(140, 90, 255), transparency = 0.5, followRotation = true },
+				{ size = Vector3.new(2.0, 0.14, 2.0), offset = Vector3.zero, color = Color3.fromRGB(90, 230, 255), transparency = 0.5, followRotation = true },
+				{ size = Vector3.new(1.3, 1.3, 1.3), offset = Vector3.zero, orientation = Vector3.new(45, 45, 45), color = Color3.fromRGB(255, 255, 255), transparency = 0.75, followRotation = true },
+			},
+			bounce = burst(cseq({ 0, 255, 90, 230 }, { 1, 140, 90, 255 }), 30, 0.55),
+		},
+	},
+	wormhole = {
+		name = "Wormhole", rarity = 9, price = 25000,
+		data = {
+			color = Color3.fromRGB(12, 8, 22),
+			shapes = {
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.3, 2.6, 2.6), offset = Vector3.new(0, 0.9, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 90, 230), transparency = 0.35 },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.3, 2.0, 2.0), offset = Vector3.new(0, 1.35, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(190, 90, 245), transparency = 0.45 },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.3, 1.4, 1.4), offset = Vector3.new(0, 1.8, 0), orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(140, 90, 255), transparency = 0.55 },
+			},
+			bounce = burst(cseq({ 0, 255, 90, 230 }, { 1, 40, 20, 80 }), 30, 0.55),
+		},
+	},
+	paradox = {
+		name = "Paradox", rarity = 9, price = 25000,
+		data = {
+			color = Color3.fromRGB(255, 255, 255),
+			shapes = {
+				{ size = Vector3.new(1.5, 1.5, 0.75), offset = Vector3.new(0, 0, 0.45), color = Color3.fromRGB(250, 250, 255), transparency = 0.4, followRotation = true },
+				{ size = Vector3.new(1.5, 1.5, 0.75), offset = Vector3.new(0, 0, -0.45), color = Color3.fromRGB(15, 10, 25), transparency = 0.25, followRotation = true },
+			},
+			orbits = {
+				orbit(1.9, 5, 0, Color3.fromRGB(255, 255, 255), 0.24),
+				{ offset = Vector3.new(1.9, 0, 0), speed = -5, phase = 3.14, color = Color3.fromRGB(20, 12, 30), size = Vector3.one * 0.24, shape = Enum.PartType.Ball, material = Enum.Material.Neon, transparency = 0.1, axis = Vector3.yAxis },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 15, 10, 25 }), 30, 0.55),
+		},
+	},
+	-- Astral (rarity 10): ultramarine starlight
+	constellation = {
+		name = "Constellation", rarity = 10, price = 40000,
+		data = {
+			color = Color3.fromRGB(18, 22, 60),
+			particles = {
+				{
+					texture = SPARKLES, color = cseq({ 0, 160, 180, 255 }, { 1, 255, 255, 255 }),
+					rate = 40, lifetime = NumberRange.new(0.6, 1.2), speed = NumberRange.new(0.5, 1.5),
+					size = pulse(0.45), transparency = NumberSequence.new(0, 1),
+					spreadAngle = Vector2.new(180, 180), lightEmission = 1, brightness = 4,
+				},
+			},
+			orbits = {
+				orbit(1.6, 3.2, 0, Color3.fromRGB(255, 255, 255), 0.2),
+				orbit(2.0, 2.4, 2.09, Color3.fromRGB(160, 180, 255), 0.26),
+				orbit(2.4, 1.8, 4.18, Color3.fromRGB(85, 105, 255), 0.32),
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 85, 105, 255 }), 32, 0.55, SPARKLES),
+		},
+	},
+	nebulaheart = {
+		name = "Nebula Heart", rarity = 10, price = 40000,
+		data = {
+			color = Color3.fromRGB(60, 70, 200),
+			shapes = {
+				{ shape = Enum.PartType.Ball, size = Vector3.new(1.8, 1.8, 1.8), offset = Vector3.zero, color = Color3.fromRGB(85, 105, 255), transparency = 0.65 },
+				{ shape = Enum.PartType.Ball, size = Vector3.new(2.4, 2.4, 2.4), offset = Vector3.zero, color = Color3.fromRGB(140, 120, 255), transparency = 0.85 },
+			},
+			particles = {
+				{
+					texture = SMOKE, color = cseq({ 0, 85, 105, 255 }, { 1, 200, 120, 255 }),
+					rate = 14, lifetime = NumberRange.new(0.9, 1.6), speed = NumberRange.new(0.4, 1),
+					size = pulse(1.4), transparency = NumberSequence.new(0.5, 1),
+					lightEmission = 0.8, brightness = 2,
+				},
+			},
+			bounce = burst(cseq({ 0, 140, 120, 255 }, { 1, 85, 105, 255 }), 32, 0.6),
+		},
+	},
+	starforge = {
+		name = "Starforge", rarity = 10, price = 40000,
+		data = {
+			color = Color3.fromRGB(230, 240, 255),
+			shapes = {
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.22, 3.0, 3.0), offset = Vector3.zero, orientation = Vector3.new(30, 0, 90), color = Color3.fromRGB(90, 110, 255), material = Enum.Material.Metal, transparency = 0.1, followRotation = true },
+				{ size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(0, 1.7, 0), orientation = Vector3.new(45, 45, 0), color = Color3.fromRGB(255, 255, 255), transparency = 0.15 },
+				{ size = Vector3.new(0.5, 0.5, 0.5), offset = Vector3.new(0, -1.7, 0), orientation = Vector3.new(45, 0, 45), color = Color3.fromRGB(255, 255, 255), transparency = 0.15 },
+			},
+			particles = {
+				{
+					texture = SPARKLES, color = cseq({ 0, 90, 110, 255 }, { 1, 255, 255, 255 }),
+					rate = 30, lifetime = NumberRange.new(0.4, 0.9), speed = NumberRange.new(1, 2.5),
+					size = pulse(0.5), transparency = NumberSequence.new(0, 1),
+					lightEmission = 1, brightness = 5,
+				},
+			},
+			bounce = burst(cseq({ 0, 90, 110, 255 }, { 1, 255, 255, 255 }), 34, 0.6, SPARKLES),
+		},
+	},
+	-- Primordial (rarity 11): elemental acid green
+	genesis = {
+		name = "Genesis", rarity = 11, price = 65000,
+		data = {
+			color = Color3.fromRGB(40, 70, 25),
+			shapes = {
+				{ shape = Enum.PartType.Ball, size = Vector3.new(1.7, 1.7, 1.7), offset = Vector3.zero, color = Color3.fromRGB(150, 255, 70), material = Enum.Material.Glass, transparency = 0.55 },
+				{ shape = Enum.PartType.Ball, size = Vector3.new(2.3, 2.3, 2.3), offset = Vector3.zero, color = Color3.fromRGB(200, 255, 140), material = Enum.Material.Glass, transparency = 0.8 },
+			},
+			particles = {
+				{
+					color = cseq({ 0, 150, 255, 70 }, { 1, 90, 200, 60 }),
+					rate = 24, lifetime = NumberRange.new(0.8, 1.5), speed = NumberRange.new(0.6, 1.6),
+					size = pulse(0.4), transparency = NumberSequence.new(0.2, 1),
+					spreadAngle = Vector2.new(180, 180), lightEmission = 0.9, brightness = 3,
+				},
+			},
+			bounce = burst(cseq({ 0, 200, 255, 140 }, { 1, 90, 200, 60 }), 32, 0.6),
+		},
+	},
+	leviathan = {
+		name = "Leviathan", rarity = 11, price = 65000,
+		data = {
+			color = Color3.fromRGB(20, 60, 45),
+			shapes = {
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.18, 1.4, 2.1), offset = Vector3.new(0, 1.0, -0.6), orientation = Vector3.new(-18, 180, 0), color = Color3.fromRGB(150, 255, 70), transparency = 0.25 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.16, 0.9, 1.4), offset = Vector3.new(0.9, 0.2, -0.4), orientation = Vector3.new(-10, 160, 35), color = Color3.fromRGB(110, 230, 90), transparency = 0.35 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.16, 0.9, 1.4), offset = Vector3.new(-0.9, 0.2, -0.4), orientation = Vector3.new(-10, 200, -35), color = Color3.fromRGB(110, 230, 90), transparency = 0.35 },
+			},
+			orbits = {
+				orbit(2.1, -3.6, 0, Color3.fromRGB(150, 255, 70), 0.3),
+			},
+			bounce = burst(cseq({ 0, 150, 255, 70 }, { 1, 20, 60, 45 }), 32, 0.6),
+		},
+	},
+	worldroot = {
+		name = "World Root", rarity = 11, price = 65000,
+		data = {
+			color = Color3.fromRGB(70, 50, 30),
+			shapes = {
+				{ size = Vector3.new(0.35, 2.2, 0.35), offset = Vector3.new(0, 1.2, 0), orientation = Vector3.new(0, 0, 8), color = Color3.fromRGB(110, 80, 50), material = Enum.Material.Wood },
+				{ shape = Enum.PartType.Ball, size = Vector3.new(1.5, 1.1, 1.5), offset = Vector3.new(0.1, 2.3, 0), color = Color3.fromRGB(150, 255, 70), transparency = 0.3 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.25, 0.7, 1.1), offset = Vector3.new(0.7, -0.5, 0.3), orientation = Vector3.new(30, 40, 100), color = Color3.fromRGB(110, 80, 50), material = Enum.Material.Wood },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.25, 0.7, 1.1), offset = Vector3.new(-0.6, -0.55, -0.3), orientation = Vector3.new(-25, -50, -100), color = Color3.fromRGB(110, 80, 50), material = Enum.Material.Wood },
+			},
+			particles = {
+				{
+					color = cseq({ 0, 150, 255, 70 }, { 1, 200, 255, 140 }),
+					rate = 16, lifetime = NumberRange.new(1, 1.8), speed = NumberRange.new(0.4, 1),
+					size = pulse(0.35), transparency = NumberSequence.new(0.3, 1),
+					acceleration = Vector3.new(0, -2, 0), lightEmission = 0.7, brightness = 2,
+				},
+			},
+			bounce = burst(cseq({ 0, 150, 255, 70 }, { 1, 110, 80, 50 }), 30, 0.55),
+		},
+	},
+	-- Omega (rarity 12): blinding white
+	omega = {
+		name = "Omega", rarity = 12, price = 100000,
+		data = {
+			color = Color3.fromRGB(255, 255, 255),
+			shapes = {
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.1, 3.1, 3.1), offset = Vector3.zero, orientation = Vector3.new(0, 0, 90), color = Color3.fromRGB(255, 255, 255), transparency = 0.2, followRotation = true },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.1, 3.1, 3.1), offset = Vector3.zero, orientation = Vector3.new(90, 0, 90), color = Color3.fromRGB(255, 255, 255), transparency = 0.2, followRotation = true },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.1, 3.1, 3.1), offset = Vector3.zero, orientation = Vector3.new(0, 90, 0), color = Color3.fromRGB(255, 255, 255), transparency = 0.2, followRotation = true },
+			},
+			particles = {
+				{
+					texture = SPARKLES, color = cseq({ 0, 255, 255, 255 }, { 1, 245, 250, 255 }),
+					rate = 50, lifetime = NumberRange.new(0.5, 1), speed = NumberRange.new(1, 3),
+					size = pulse(0.6), transparency = NumberSequence.new(0, 1),
+					spreadAngle = Vector2.new(180, 180), lightEmission = 1, brightness = 8,
+				},
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 245, 250, 255 }), 38, 0.65, SPARKLES),
+		},
+	},
+	finality = {
+		name = "Finality", rarity = 12, price = 100000,
+		data = {
+			color = Color3.fromRGB(245, 250, 255),
+			shapes = {
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.2, 2.6, 1.0), offset = Vector3.new(0, 1.6, 0), orientation = Vector3.new(0, 0, 180), color = Color3.fromRGB(255, 255, 255), transparency = 0.1 },
+				{ shape = Enum.PartType.Wedge, size = Vector3.new(0.2, 2.6, 1.0), offset = Vector3.new(0, -1.6, 0), color = Color3.fromRGB(255, 255, 255), transparency = 0.1 },
+			},
+			orbits = {
+				{ offset = Vector3.new(2.6, 0, 0), speed = 1.6, phase = 0, color = Color3.fromRGB(255, 255, 255), size = Vector3.new(0.12, 1.8, 0.12), shape = Enum.PartType.Block, material = Enum.Material.Neon, transparency = 0.2, axis = Vector3.yAxis, spin = Vector3.new(0, 4, 0) },
+				{ offset = Vector3.new(2.6, 0, 0), speed = 1.6, phase = 3.14, color = Color3.fromRGB(255, 255, 255), size = Vector3.new(0.12, 1.8, 0.12), shape = Enum.PartType.Block, material = Enum.Material.Neon, transparency = 0.2, axis = Vector3.yAxis, spin = Vector3.new(0, 4, 0) },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 1, 200, 220, 255 }), 36, 0.65),
+		},
+	},
+	duality = {
+		name = "Duality", rarity = 12, price = 100000,
+		data = {
+			color = Color3.fromRGB(245, 250, 255),
+			shapes = {
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.9, 2.9), offset = Vector3.zero, orientation = Vector3.new(20, 0, 90), color = Color3.fromRGB(255, 255, 255), transparency = 0.2, followRotation = true },
+				{ shape = Enum.PartType.Cylinder, size = Vector3.new(0.12, 2.9, 2.9), offset = Vector3.zero, orientation = Vector3.new(-20, 0, 90), color = Color3.fromRGB(15, 10, 25), transparency = 0.2, followRotation = true },
+			},
+			orbits = {
+				orbit(2.1, 4.4, 0, Color3.fromRGB(255, 255, 255), 0.3),
+				{ offset = Vector3.new(2.1, 0, 0), speed = -4.4, phase = 3.14, color = Color3.fromRGB(15, 10, 25), size = Vector3.one * 0.3, shape = Enum.PartType.Ball, material = Enum.Material.Neon, transparency = 0.1, axis = Vector3.yAxis },
+			},
+			bounce = burst(cseq({ 0, 255, 255, 255 }, { 0.5, 245, 250, 255 }, { 1, 15, 10, 25 }), 36, 0.65),
+		},
 	},
 }
 

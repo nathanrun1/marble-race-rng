@@ -14,6 +14,7 @@
 --   /diamonds <n>          alias of /cc (Diamonds IS the cosmetics currency)
 --   /skin <name>           grant + equip a marble by display name or id (case-insensitive,
 --                          partial matches OK; repeat for extra copies/stars)
+--   /allskins              grant one copy of EVERY marble (repeat for extra copies/stars)
 --   /loadout <slot> <name|clear>  put an owned skin in a bonus-loadout/launch-batch slot (or
 --                          clear it); slot count is LoadoutService.GetMaxSlots (NumSlots tier)
 --   /policy [on|off|clear] force ArePaidRandomItemsRestricted for you (no arg = toggle;
@@ -993,7 +994,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, cc, diamonds, skin, loadout, policy, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
+		return "commands: tier, maxall, bet, axis, money, cc, diamonds, skin, allskins, loadout, policy, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -1067,6 +1068,12 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		local skin = BallSkins.Get(matchId)
 		return string.format("granted + equipped %s (%s, %s)", matchName, matchId,
 			BallSkins.RarityName(if skin then skin.rarity else 1))
+	elseif cmd == "allskins" then
+		local newCount = CosmeticService.GrantAllSkins(player)
+		if not newCount then
+			return "grant failed (cosmetic data not loaded yet?)"
+		end
+		return string.format("granted every marble (+1 copy each, %d newly owned)", newCount)
 	elseif cmd == "loadout" then
 		local slot = tonumber(a2)
 		if not slot then

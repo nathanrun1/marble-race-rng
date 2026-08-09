@@ -44,4 +44,7 @@ return {
 	-- Server -> Client: (result: RollResult) — a crate roll landed (drives the reel reveal for
 	-- rolls the server initiated, e.g. Robux crate products).
 	CrateRolled = remoteEvent("CrateRolled"),
+	-- Client -> Server: () — the roll reveal (reel + marble-fly) finished; commit the oldest
+	-- pending roll into the inventory (no-op when nothing is pending).
+	FinishCrateRoll = remoteEvent("FinishCrateRoll"),
 }

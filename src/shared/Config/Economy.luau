@@ -7,12 +7,18 @@ local Economy = {
 	-- new players could only buy near-useless cheap axes and bled out. 1000 buys ~3 core tiers
 	-- up front so the first decisions are impactful ones. Axes were repriced to ~1.5–2k so they
 	-- sit ABOVE the core tracks (mid-game purchases), not below them.
-	StartingBalance = 1000,
+	StartingBalance = 1500, -- 2026-07 rebalance: buys auto #1 (500) + most of zone 1 (2000)
 
 	StartMaxBet = 40, -- guideline §4; anchor for the MaxBet ladder from tier 1 up (see Upgrades.Tracks.MaxBet)
 	StartBetSize = 10, -- tier 0's bet size: the free starting rung, below StartMaxBet's old tier-0 value
 	TrickleFraction = 0.05, -- × currentMaxBet, free per batch (§1.2)
-	VJackFraction = 0.55, -- V_JACK = this × currentMaxBet (§1.3 jackpot gate)
+	-- V_JACK = this × currentMaxBet (§1.3 jackpot gate). DELIBERATELY > 1 (2026-07
+	-- rebalance): a ball's value is stake × its skin's rarity mult, so at max bet only
+	-- rarity-multiplied balls (rarity 3+, ×4) clear the gate — the 12× jackpot EV routes
+	-- through rare marbles, and a common-only loadout bleeds (house edge) as intended.
+	-- At the old 0.55 the gate was always open when betting your max tier, which made
+	-- the whole board +EV (see BALANCE_RESULTS.md).
+	VJackFraction = 2.5,
 	BasePriceGrowth = 4.5, -- default upgrade Cost.Growth (price multiplier per tier)
 
 	-- Beginner's Luck: a one-time, free timed cash boost for brand-new accounts only (granted by

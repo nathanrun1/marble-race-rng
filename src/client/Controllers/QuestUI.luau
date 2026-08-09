@@ -389,10 +389,15 @@ end
 ----------------------------------------------------------------
 
 local function claim(index: number)
+	-- Hold the Diamonds readout BEFORE the invoke: the grant's push lands ahead of the
+	-- invoke's return, and the fly's live sum must seed from the pre-claim balance.
+	local reward = if latestInfo and latestInfo.quests[index] then latestInfo.quests[index].reward else nil
+	local release = CurrencyFlyUI.HoldBalance("Diamonds")
 	local res = claimRF:InvokeServer(index)
 	if res and res.granted then
-		CurrencyFlyUI.Play("Diamonds") -- quest rewards pay Diamonds
+		CurrencyFlyUI.Play("Diamonds", nil, reward) -- quest rewards pay Diamonds
 	end
+	release()
 	if res and res.info then
 		QuestUI.onInfo(res.info :: Info)
 	end

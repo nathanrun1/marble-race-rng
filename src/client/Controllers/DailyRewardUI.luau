@@ -386,6 +386,22 @@ local WARN_TEXT: { [string]: (any) -> string } = {
 	end,
 }
 
+-- The grant lands server-side at CLAIM time — seconds before the reel finishes — so the
+-- reward kind's balance readout must be held from before the claim invoke until the fly
+-- takes over in finishSpin. The kind isn't known until the invoke returns, so both
+-- currencies get held; holding an untouched one is invisible (its live sum just sits on
+-- the unchanged balance).
+local spinHoldReleases: { () -> () } = {}
+local function takeSpinHolds()
+	spinHoldReleases = { CurrencyFlyUI.HoldBalance("Cash"), CurrencyFlyUI.HoldBalance("Diamonds") }
+end
+local function releaseSpinHolds()
+	for _, release in spinHoldReleases do
+		release()
+	end
+	table.clear(spinHoldReleases)
+end
+
 -- The spin has landed: ding, let the winning cell sit visibly for a beat, then close the
 -- whole UI, banner the reward, and fire the currency-fly celebration (the grant itself
 -- already happened server-side at claim time). No confirm press. Yields; runs on the
@@ -400,11 +416,13 @@ local function finishSpin(result: RewardResult)
 	if textFn then
 		WarnUI.WarnLocal(textFn(result), GOLD, WARN_LIFETIME)
 	end
-	-- Currencies fly to their balances. A Crate result doesn't fly anything here: the box
-	-- opens immediately and CosmeticsShop's CrateRolled presentation flies the won marble.
+	-- Currencies fly to their balances (the fly's own live-sum hold takes over from the
+	-- spin holds below). A Crate result doesn't fly anything here: the box opens
+	-- immediately and CosmeticsShop's CrateRolled presentation flies the won marble.
 	if result.Kind == "Cash" or result.Kind == "Diamonds" then
-		CurrencyFlyUI.Play(result.Kind)
+		CurrencyFlyUI.Play(result.Kind, nil, result.Amount)
 	end
+	releaseSpinHolds()
 end
 
 local function startSpin(result: RewardResult)
@@ -454,6 +472,8 @@ local function startSpin(result: RewardResult)
 		tickConn:Disconnect()
 		if state == Enum.PlaybackState.Completed then
 			finishSpin(result)
+		else
+			releaseSpinHolds() -- interrupted spin: don't leave the readouts held forever
 		end
 	end)
 	tween:Play()
@@ -461,11 +481,13 @@ end
 
 function onClaimClicked()
 	claimHandle.SetDisabled(true)
+	takeSpinHolds() -- before the invoke: the grant push lands ahead of the return
 	local ok, res = pcall(function()
 		return claimRF:InvokeServer()
 	end)
 	claimHandle.SetDisabled(false)
 	if not ok or type(res) ~= "table" or not res.ok or not res.reward then
+		releaseSpinHolds()
 		return
 	end
 	startSpin(res.reward :: RewardResult)
@@ -529,6 +551,7 @@ local function doClaim()
 		return
 	end
 	claiming = true
+	takeSpinHolds() -- before the invoke: the grant push lands ahead of the return
 	local ok, res = pcall(function()
 		return claimRF:InvokeServer()
 	end)
@@ -542,6 +565,8 @@ local function doClaim()
 		promptFrame.Visible = false -- pad flow skips the prompt; straight to the reel
 		screenGui.Enabled = true
 		startSpin(res.reward :: RewardResult)
+	else
+		releaseSpinHolds()
 	end
 	claiming = false
 end

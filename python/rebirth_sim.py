@@ -28,19 +28,19 @@ from pathlib import Path
 import balance as B
 
 # ---------------------------------------------------------------------------
-# LIVE config mirror (src/shared/Config, 2026-07-18) — keep in sync
+# LIVE config mirror (src/shared/Config, post 2026-07 rebalance) — keep in sync
 # ---------------------------------------------------------------------------
 START_BET = 10.0            # Economy.StartBetSize (zone tier 0)
 START_MAX_BET = 40.0        # Economy.StartMaxBet (zone tier 1)
-ZONE_PERTIER = 1.5          # Tracks.MaxBet.PerTier
+ZONE_PERTIER = 4.0          # Tracks.MaxBet.PerTier
 TRICKLE_FRAC = 0.05         # Economy.TrickleFraction (x owned max bet, per bank)
-STARTING_BALANCE = 1000.0
+STARTING_BALANCE = 1500.0
 
 FLAT_BASE, FLAT_PERTIER = 0.2, 1.85
 BADD_C1 = 0.05
-FREQ_BASE, FREQ_PERTIER, FREQ_MAXTIER = 2.0, 0.82, 12
+FREQ_BASE, FREQ_PERTIER, FREQ_MAXTIER = 2.0, 0.88, 8
 PEGHEAT_PERTIER = 0.05
-MIN_COMBO = 17              # Scoring.MinCombo (live; balance.py's 5 is stale)
+MIN_COMBO = 14              # Scoring.MinCombo
 JACKPOT_MULT = 12.0
 SLOT_HALF = [None, 2.6, 1.8, 1.3, 1.1, 0.62, 0.52, 0.45, 0.4]  # S5; None = jackpot
 BADD_MAXTIER = 12
@@ -48,23 +48,23 @@ BADD_MAXTIER = 12
 NUMSLOTS_MAXTIER = 9        # +9 -> 10 slots
 AUTO_SWEEP = 0.25
 
-PRESTIGE_SCALE, PRESTIGE_EXP = 18820.0, 0.35
-PRESTIGE_COSTBASE, PRESTIGE_COSTGROWTH, PRESTIGE_MULTPER = 50.0, 1.1525, 1.25
+PRESTIGE_SCALE, PRESTIGE_EXP = 282300000.0, 0.35
+PRESTIGE_COSTBASE, PRESTIGE_COSTGROWTH, PRESTIGE_MULTPER = 50.0, 2.4, 1.15
 
 # Cost curves (Base, Growth); price of tier t->t+1 = Base * Growth^t.
 COST = {
-    "MaxBet": (250.0, 1.9),
-    "FlatRate": (260.0, 1.9),
-    "BaseAdditive": (300.0, 1.7),
-    "Frequency": (230.0, 1.9),
-    "PegHeat": (220.0, 1.7),
-    "NumSlots": (400.0, 2.2),
+    "MaxBet": (2000.0, 5.0),
+    "FlatRate": (600.0, 2.9),
+    "BaseAdditive": (600.0, 2.9),
+    "Frequency": (800.0, 3.4),
+    "PegHeat": (480.0, 2.9),
+    "NumSlots": (400.0, 6.0),
     "Elasticity": (1500.0, 4.5),
     "Size": (2000.0, 1.8),
     "Angle": (1500.0, 4.5),
     "Arc": (1500.0, 4.5),
 }
-AUTO_BASE, AUTO_GROWTH = 500.0, 2.0    # SlotAuto.PriceFor(slot)
+AUTO_BASE, AUTO_GROWTH = 500.0, 6.0    # SlotAuto.PriceFor(slot)
 
 # Side income (rough, deliberately coarse): coins ~ E[value]/spawn-interval.
 # Coin EV ~ 50 + 25*6.8 = 220 per coin, every ~45 s -> ~5/s. Playtime rungs added at
@@ -95,7 +95,7 @@ def rolls_at(T: float) -> float:
     return fast_n + (T - fast_T) / slow_int
 
 
-ROLL_CADENCE = (0, 0.0, ROLL_INTERVAL)   # (fast rolls, fast interval, slow interval)
+ROLL_CADENCE = (40, 10.0, 90.0)   # (fast rolls, fast interval, slow interval) — Crates.Free
 
 BEGINNERS_LUCK = (1.15, 15 * 60)         # Economy.BeginnersLuck (run-1 only)
 
@@ -189,7 +189,7 @@ class Tunables:
     min_combo = MIN_COMBO
     starting_balance = STARTING_BALANCE
     zone_maxtier = 30
-    vjack_frac = 0.55   # Economy.VJackFraction; gate opens iff ballMult >= this (betting max)
+    vjack_frac = 2.5    # Economy.VJackFraction; gate opens iff ballMult >= this (betting max)
     name = "live"
 
 
@@ -343,7 +343,7 @@ def compare(builds, cfgs, n_rebirths=6):
               f"combo={arch.combo:.1f} hot={arch.hot:.1f} cold={arch.cold:.1f} ==")
         for cfg in cfgs:
             global ROLL_CADENCE
-            ROLL_CADENCE = getattr(cfg, "cadence", (0, 0.0, ROLL_INTERVAL))
+            ROLL_CADENCE = getattr(cfg, "cadence", (40, 10.0, 90.0))
             e0 = arch.e_slot(cfg.slot_half, cfg.jackpot_mult, 0.0, 0)
             t_total = 0.0
             times = []

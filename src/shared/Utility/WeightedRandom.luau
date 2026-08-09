@@ -4,6 +4,33 @@
 
 local WeightedRandom = {}
 
+-- The exact per-index probabilities PickIndexLuckBiased rolls with (no pity floor /
+-- sparseness): its pick is total·u^(1/(l+1)), whose CDF over the cumulative-weight
+-- fraction x is x^(l+1), so P(i) = (c_i/total)^(l+1) - (c_(i-1)/total)^(l+1) with c_i the
+-- cumulative weight through index i. Display code uses this so shown odds are derived
+-- from the SAME math as the roll, not a reimplementation. Returns {} when nothing has
+-- positive weight.
+function WeightedRandom.LuckBiasedOdds(weights: { number }, luck: number?): { number }
+	local total = 0
+	for _, w in weights do
+		total += w
+	end
+	if total <= 0 then
+		return {}
+	end
+	local exponent = (luck or 0) + 1
+	local odds = table.create(#weights, 0)
+	local cum = 0
+	local prevF = 0
+	for i, w in weights do
+		cum += w
+		local f = (cum / total) ^ exponent
+		odds[i] = f - prevF
+		prevF = f
+	end
+	return odds
+end
+
 -- Luck-biased pick of an INDEX from index->weight, optionally sparse (has(i) filters out
 -- indices with no candidates, e.g. rarities with no skins) and floored at minIndex (pity).
 --

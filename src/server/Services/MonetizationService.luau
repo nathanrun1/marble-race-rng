@@ -21,6 +21,7 @@ local SoundService = require(RS.Shared.SoundService)
 local ScoreUI = require(RS.Shared.ScoreUI)
 local AnnounceUI = require(RS.Shared.AnnounceUI)
 local ProductService = require(RS.Shared.ProductService)
+local FxNet = require(RS.Shared.Remote.FxNet)
 local StatsService = require(SSS.Scripts.Services.StatsService)
 local CurrencyService = require(SSS.Scripts.Services.CurrencyService)
 local DataService = require(SSS.Scripts.Services.DataService)
@@ -63,6 +64,13 @@ local function grantStarterPack(player: Player)
 	end
 	if StatsService.OwnsStarterPack(player) then
 		return
+	end
+	-- Flies BEFORE the grants (ordered delivery): the client's live-sum holds must seed
+	-- from the pre-grant balances, then stream each payout in with its icons.
+	local flyRE = FxNet.PlayCurrencyFly
+	if flyRE then
+		flyRE:FireClient(player, "Cash", nil, MonetizationConfig.StarterPack.Balance)
+		flyRE:FireClient(player, "Diamonds", nil, MonetizationConfig.StarterPack.Diamonds)
 	end
 	CurrencyService.AddPoints(player, MonetizationConfig.StarterPack.Balance, "Starter Pack")
 	CosmeticService.AddCC(player, MonetizationConfig.StarterPack.Diamonds)

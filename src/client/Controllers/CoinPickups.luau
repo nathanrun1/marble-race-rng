@@ -55,6 +55,7 @@ type CoinVisual = {
 	phase: number,
 	active: boolean,
 	isBlue: boolean, -- current activation's reward type (Diamonds vs cash)
+	value: number?, -- current activation's payout (server-sent), for the fly's live sum
 	pending: boolean, -- claim sent, awaiting server deactivate
 }
 
@@ -150,6 +151,7 @@ local HIDDEN_TRANSPARENCY = 1
 local function setActive(cv: CoinVisual, active: boolean, value: number?, isBlue: boolean?)
 	cv.active = active
 	cv.isBlue = isBlue == true
+	cv.value = if active then value else nil
 	local transparency = if active then SHOWN_TRANSPARENCY else HIDDEN_TRANSPARENCY
 	for _, p in cv.parts do
 		p.Transparency = transparency
@@ -176,10 +178,11 @@ local function onTouched(cv: CoinVisual, obj: BasePart)
 		return
 	end
 	cv.pending = true
-	-- Same optimism as the hide below: celebrate at touch, before the server confirms. Read
-	-- isBlue BEFORE setActive, which resets it. Smaller burst than the claim-panel flows —
-	-- coins are picked up constantly during normal play.
-	CurrencyFlyUI.Play(if cv.isBlue then "Diamonds" else "Cash", math.random(4, 6))
+	-- Same optimism as the hide below: celebrate at touch, before the server confirms (so
+	-- the fly's live-sum hold naturally starts pre-grant). Read isBlue/value BEFORE
+	-- setActive, which resets them. Smaller burst than the claim-panel flows — coins are
+	-- picked up constantly during normal play.
+	CurrencyFlyUI.Play(if cv.isBlue then "Diamonds" else "Cash", math.random(4, 6), cv.value)
 	setActive(cv, false) -- optimistic hide for snappy feedback
 	claimRE:FireServer(cv.coin)
 end

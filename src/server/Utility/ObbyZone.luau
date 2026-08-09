@@ -72,9 +72,11 @@ function ObbyZone.New(obby: Model)
 		self.debounce[player.UserId] = true
 
 		print("obby complete")
+		-- Fly BEFORE the grant (ordered delivery): the client's live-sum hold must seed
+		-- from the pre-grant balance, then stream the prize in with the icons.
+		flyRE:FireClient(player, "Cash", nil, self.prize)
 		CurrencyService.AddPoints(player, self.prize, "Completed Obby, prize: " .. self.prize)
 		ScoreUI.PostMessage(player, "Obby Complete! +"..StringUtils.FormatMoney(self.prize))
-		flyRE:FireClient(player, "Cash") -- 💰 fly-to-balance celebration
 		SoundService.Play({ soundId = SoundsConfig.Upgrade })
 		tpPlayerToPart(player, self.startPart)
 

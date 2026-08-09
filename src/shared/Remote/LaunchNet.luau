@@ -37,13 +37,9 @@ return {
 	-- Client -> Server invoke: () -> number — the server's current launcher swivel phase
 	-- (0..1), so the client aim preview stays in sync.
 	GetLauncherPhase = remoteFunction("GetLauncherPhase"),
-	-- Client -> Server invoke: (slot: number) -> { ok: boolean, reason: string? } — buy the
-	-- one-time AUTO launch for a slot (Config/SlotAuto price; reasons: "invalid_slot" |
-	-- "locked" | "owned" | "cannot_afford"). Ownership lands in the profile's autoSlots.
-	PurchaseSlotAuto = remoteFunction("PurchaseSlotAuto"),
 	-- Client -> Server invoke: (slot: number) -> { ok: boolean, enabled: boolean?, reason:
-	-- string? } — flip an OWNED slot's AUTO on/off (the AutoSign's post-purchase click;
-	-- reasons: "invalid_slot" | "not_owned"). The new state lands in the autoSlots value
-	-- and replicates via ProfileChanged.
+	-- string? } — flip a slot's free built-in AUTO on/off (the AutoSign's click; reasons:
+	-- "invalid_slot" | "locked"). The new state lands in the autoSlots value and
+	-- replicates via ProfileChanged.
 	ToggleSlotAuto = remoteFunction("ToggleSlotAuto"),
 }

@@ -38,6 +38,8 @@ export type CosmeticData = {
 	copies: { [string]: number }, -- total copies per owned skin (dupes star it up — CosmeticBonus)
 	pity: { [string]: number },   -- per-crate rolls since the last MinRarity+ hit
 	boxes: { [string]: number },  -- unopened boxes held per crate id (bought to hoard)
+	freeClaims: number,           -- LIFETIME free-box claims — drives the front-loaded
+	                              -- cadence (Free.Interval until FastClaims, then SlowInterval)
 }
 
 export type CosmeticInfo = {
@@ -83,6 +85,7 @@ local function defaults(): CosmeticData
 		copies = { [DEFAULT_SKIN] = 1 },
 		pity = {},
 		boxes = {},
+		freeClaims = 0,
 	}
 end
 
@@ -195,6 +198,57 @@ local function addCopy(d: CosmeticData, skinId: string): number
 	return d.copies[skinId]
 end
 
+--------------------------------------------------------------------------------
+-- Deferred crate-roll commits
+--------------------------------------------------------------------------------
+-- A crate roll's skin is NOT committed to the inventory at roll time: it waits in this
+-- FIFO until the client reports the reveal finished (reel + marble-fly; CosmeticsNet
+-- FinishCrateRoll), or COMMIT_TIMEOUT elapses (client hung / never reported). The
+-- RESULT is still locked in server-side at roll time — deferral only moves WHEN it
+-- lands, so the finish report can't change or mint anything. SerializeData folds
+-- pending rolls into the snapshot so a save racing a reveal never loses the skin.
+local COMMIT_TIMEOUT = 30 -- seconds a pending roll may wait on the client's finish report
+
+local pendingRolls: { [number]: { { skinId: string, token: number } } } = {}
+local nextToken = 0
+
+-- Commit the OLDEST pending roll (FIFO — reveals play in roll order client-side).
+local function commitNext(player: Player): boolean
+	local q = pendingRolls[player.UserId]
+	local d = data[player.UserId]
+	if not q or #q == 0 or not d then
+		return false
+	end
+	local grant = table.remove(q, 1)
+	addCopy(d, grant.skinId)
+	announce(player)
+	return true
+end
+
+-- The client's "reveal finished" report. With nothing pending it's a no-op, so the
+-- remote can't be abused; firing it early merely commits sooner.
+function CosmeticService.FinishCrateRoll(player: Player)
+	commitNext(player)
+end
+
+-- Grant one copy of EVERY skin (DevService /allskins). One announce at the end, no
+-- equip change. Returns how many were newly owned, or nil before data loads.
+function CosmeticService.GrantAllSkins(player: Player): number?
+	local d = data[player.UserId]
+	if not d then
+		return nil
+	end
+	local newCount = 0
+	for id in BallSkins.GetAll() do
+		if not d.owned[id] then
+			newCount += 1
+		end
+		addCopy(d, id)
+	end
+	announce(player)
+	return newCount
+end
+
 -- Grant a skin outright (no CC cost) and equip it — used by the Robux fallback product.
 function CosmeticService.GrantSkin(player: Player, skinId: string): boolean
 	local d = data[player.UserId]
@@ -292,10 +346,38 @@ local function rollFrom(player: Player, d: CosmeticData, box: BoxDef): RollResul
 
 	local pool = skinsByRarity[rarity] :: { string }
 	local skinId = pool[math.random(#pool)]
-	local isNew = d.owned[skinId] ~= true
-	local copies = addCopy(d, skinId)
 
-	announce(player)
+	-- Defer the inventory commit until the client's reveal finishes (or the timeout /
+	-- serialize fallbacks — see the Deferred crate-roll commits block). The returned
+	-- copies/star/isNew are the PROJECTED post-commit values, counting rolls of the
+	-- same skin already waiting ahead in the queue.
+	local q = pendingRolls[player.UserId]
+	if not q then
+		q = {}
+		pendingRolls[player.UserId] = q
+	end
+	local pendingSame = 0
+	for _, g in q do
+		if g.skinId == skinId then
+			pendingSame += 1
+		end
+	end
+	local isNew = d.owned[skinId] ~= true and pendingSame == 0
+	local copies = (d.copies[skinId] or 0) + pendingSame + 1
+	nextToken += 1
+	local token = nextToken
+	table.insert(q, { skinId = skinId, token = token })
+	task.delay(COMMIT_TIMEOUT, function()
+		-- Commit anything still waiting up to and including this roll, in FIFO order.
+		local queue = pendingRolls[player.UserId]
+		while queue and queue[1] and queue[1].token <= token do
+			if not commitNext(player) then
+				break
+			end
+		end
+	end)
+
+	announce(player) -- cc/pity moved; owned/copies still show the pre-commit state
 	return {
 		ok = true,
 		skinId = skinId,
@@ -386,7 +468,8 @@ function CosmeticService.GrantCrateRollAnnounced(player: Player, boxId: string):
 	return result
 end
 
--- Claim the session free box (FirstDelay after join, Interval after each claim).
+-- Claim the session free box (FirstDelay after join; then the front-loaded cadence:
+-- Interval until FastClaims lifetime claims, SlowInterval after — see Config/Crates.Free).
 function CosmeticService.ClaimFreeCrate(player: Player): RollResult
 	local d = data[player.UserId]
 	if not d then
@@ -396,7 +479,11 @@ function CosmeticService.ClaimFreeCrate(player: Player): RollResult
 	if not due or os.clock() < due then
 		return { ok = false, reason = "not_ready" }
 	end
-	freeDue[player.UserId] = os.clock() + CratesConfig.Free.Interval
+	d.freeClaims += 1
+	local interval = if d.freeClaims < CratesConfig.Free.FastClaims
+		then CratesConfig.Free.Interval
+		else CratesConfig.Free.SlowInterval
+	freeDue[player.UserId] = os.clock() + interval
 	return rollFrom(player, d, (CratesConfig.Free :: any) :: BoxDef)
 end
 
@@ -460,6 +547,9 @@ function CosmeticService.ApplyData(player: Player, saved: CosmeticData?)
 				end
 			end
 		end
+		if type(saved.freeClaims) == "number" and saved.freeClaims >= 0 then
+			d.freeClaims = math.floor(saved.freeClaims)
+		end
 	end
 	d.owned[DEFAULT_SKIN] = true -- the default skin is always owned
 	-- Migration: pre-crate saves have owned skins but no copy counts — seed them at 1
@@ -476,13 +566,29 @@ function CosmeticService.ApplyData(player: Player, saved: CosmeticData?)
 end
 
 function CosmeticService.SerializeData(player: Player): CosmeticData
-	return get(player.UserId)
+	local d = get(player.UserId)
+	local q = pendingRolls[player.UserId]
+	if not q or #q == 0 then
+		return d
+	end
+	-- Fold pending (not-yet-revealed) rolls into the snapshot WITHOUT committing them:
+	-- a save racing the reveal must never lose the skin, but committing here would cut
+	-- the reveal deferral short on every autosave.
+	local merged = table.clone(d)
+	merged.owned = table.clone(d.owned)
+	merged.copies = table.clone(d.copies)
+	for _, g in q do
+		merged.owned[g.skinId] = true
+		merged.copies[g.skinId] = (merged.copies[g.skinId] or 0) + 1
+	end
+	return merged
 end
 
 function CosmeticService.Clear(player: Player)
 	data[player.UserId] = nil
 	selected[player.UserId] = nil
 	freeDue[player.UserId] = nil
+	pendingRolls[player.UserId] = nil
 end
 
 --------------------------------------------------------------------------------
@@ -517,6 +623,9 @@ function CosmeticService.Init()
 	;CosmeticsNet.ClaimFreeCrate.OnServerInvoke = function(player: Player)
 		return CosmeticService.ClaimFreeCrate(player)
 	end
+	;CosmeticsNet.FinishCrateRoll.OnServerEvent:Connect(function(player: Player)
+		CosmeticService.FinishCrateRoll(player)
+	end)
 	;CosmeticsNet.BuyCrate.OnServerInvoke = function(player: Player, boxId: any)
 		if type(boxId) ~= "string" then
 			return { ok = false, reason = "invalid" }
@@ -558,8 +667,10 @@ function CosmeticService.Init()
 				if not data[player.UserId] then
 					return false -- data not loaded yet; ProcessReceipt retries
 				end
+				-- Fly BEFORE the grant (ordered delivery): the client's live-sum hold
+				-- seeds from the pre-grant balance, then the pack streams in.
+				flyRE:FireClient(player, "Diamonds", nil, amount)
 				CosmeticService.AddCC(player, amount)
-				flyRE:FireClient(player, "Diamonds") -- 💎 fly-to-balance celebration
 				return true
 			end)
 		end

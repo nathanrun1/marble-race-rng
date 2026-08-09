@@ -100,14 +100,22 @@ function UpgradeInfo.CurrencyAt(track: string, currentTier: number): string
 	return "Cash"
 end
 
--- Display label for a tier. Barrier-ladder tracks read "1", "1+", "1++", "1+++",
--- "2", ... (display tier = internal // BarrierEvery + 1, one "+" per sub-tier);
--- everything else is the plain tier number.
+-- Roman numeral suffix for a barrier-ladder sub-tier (1..BarrierEvery-1).
+local SUB_TIER_NUMERAL = { "I", "II", "III", "IV", "V", "VI", "VII" }
+
+-- Display label for a tier. Barrier-ladder tracks read "1", "1-I", "1-II", "1-III",
+-- "2", ... (display tier = internal // BarrierEvery + 1, roman-numeral suffix per
+-- sub-tier); everything else is the plain tier number.
 function UpgradeInfo.TierLabel(track: string, tier: number): string
 	local def = Defs[track]
 	local every = def and def.BarrierEvery
 	if every then
-		return tostring(tier // every + 1) .. string.rep("+", tier % every)
+		local base = tostring(tier // every + 1)
+		local sub = tier % every
+		if sub == 0 then
+			return base
+		end
+		return base .. "-" .. (SUB_TIER_NUMERAL[sub] or tostring(sub))
 	end
 	return tostring(tier)
 end

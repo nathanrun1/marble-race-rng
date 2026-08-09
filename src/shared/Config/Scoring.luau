@@ -4,7 +4,10 @@
 
 local Scoring = {
 	DefaultCooldown = 1.5,
-	MinCombo = 17, -- lowered 8→5: the ball-speed cap cut bounce counts (~18→11), so combo needs an easier gate
+	-- 2026-07 rebalance: 17 → 14. Geotest means: no-build ~12 bounces, dedicated
+	-- big+bouncy build ~16.6 — at 17 even the chaos build never triggered combo; 14
+	-- lets invested bouncy builds pay while no-build stays (mostly) below the gate.
+	MinCombo = 14,
 	-- Minimum scoretarget multiplier (×) on a hit that triggers high-point FX.
 	SpecialFXMinMultiplier = 1.25,
 	-- Seconds a ball may stay alive before it is force-banked at 1× and despawned

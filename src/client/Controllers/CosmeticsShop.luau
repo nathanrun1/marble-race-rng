@@ -32,6 +32,7 @@ local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local ProfileStats = require(RS.Shared.ProfileStats)
 local UpgradeInfo = require(RS.Shared.UpgradeInfo)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
+local WeightedRandom = require(RS.Shared.Utility.WeightedRandom)
 local ProductService = require(RS.Shared.ProductService)
 local WarnUI = require(RS.Shared.WarnUI)
 local SoundService = require(RS.Shared.SoundService)
@@ -64,6 +65,11 @@ local selectRE = CosmeticsNet.SelectCosmetic :: RemoteEvent
 local changedRE = CosmeticsNet.CosmeticChanged :: RemoteEvent
 local claimFreeRF = CosmeticsNet.ClaimFreeCrate :: RemoteFunction
 local equipRE = CosmeticsNet.EquipCosmetic :: RemoteEvent
+local finishRollRE = CosmeticsNet.FinishCrateRoll :: RemoteEvent
+
+-- FinishCrateRoll fires this long after the reveal banner, covering the marble-fly
+-- flight (CurrencyFlyUI FLY_TIME + jitter) so the inventory commit lands with it.
+local ROLL_COMMIT_DELAY = 0.7
 local purchaseUpgradeRF = UpgradeNet.PurchaseUpgrade :: RemoteFunction
 
 type Info = {
@@ -138,6 +144,7 @@ local luckButton: TextButton? = nil
 local luckCardStroke: UIStroke? = nil -- card outline: GREEN normally, RED at a Diamond barrier
 local luckBuying = false -- one purchase in flight at a time
 local cashBalance = 0 -- CurrencyNet.BalanceChanged mirror, for the cash-priced sub-tiers
+local luckOddsRows: { { name: TextLabel, odds: TextLabel } } = {} -- ODDS card, one row per rarity
 
 -- Paid-random-items policy (PolicyGate): nil until the async fetch lands. Restricted
 -- players get the deterministic per-rarity direct skin purchase (RarityProducts) in the
@@ -377,6 +384,14 @@ local function runRoll(weights: { number }?, invoke: () -> RollResult, reveal: (
 			end
 		end
 		presentRoll(result)
+		-- Reveal done, marble-fly in the air: tell the server to commit the rolled skin
+		-- (it holds crate rolls out of the inventory until this lands; see
+		-- CosmeticService's deferred-commit block).
+		if result.ok and result.skinId then
+			task.delay(ROLL_COMMIT_DELAY, function()
+				finishRollRE:FireServer()
+			end)
+		end
 	end
 	rolling = false
 end
@@ -459,14 +474,19 @@ end
 -- Timer labels on the world free-crate pads (billboards), updated by the same ticker.
 local padTimerLabels: { TextLabel } = {}
 
--- No "free box available!" banner: the pad's READY billboard is the whole announcement —
--- the roll interval is seconds, so a banner every cycle would be pure spam.
+-- The pad billboard is ONLY the countdown: visible while the roll is cooling down,
+-- hidden entirely once it's ready (the pad itself is the announcement — the roll
+-- interval is seconds, so any per-cycle banner would be pure spam).
 local function refreshFreeButton()
 	local remaining = freeReadyAt - os.clock()
-	local ready = remaining <= 0
+	-- freeReadyAt is math.huge until the first server info lands — treat that as
+	-- "not counting down" rather than formatting an infinite countdown.
+	local counting = remaining > 0 and remaining ~= math.huge
 	for _, label in padTimerLabels do
-		label.Text = if ready then "READY — step on!" else formatCountdown(remaining)
-		label.TextColor3 = if ready then GREEN else TEXT
+		label.Visible = counting
+		if counting then
+			label.Text = formatCountdown(remaining)
+		end
 	end
 end
 
@@ -494,34 +514,27 @@ local function setupFreeCratePad(inst: Instance)
 	padLastTouch[pad] = 0 -- doubles as the "already wired" marker
 
 	-- The billboard SHELL is Studio-authored (Billboard.BillboardGui, positioned in-world by
-	-- hand, on either the pad or the tagged instance); this only fills in the title + timer.
+	-- hand, on either the pad or the tagged instance); this only fills in the countdown.
 	local holder = pad:FindFirstChild("Billboard") or inst:FindFirstChild("Billboard")
 	local bb = holder and holder:FindFirstChild("BillboardGui")
 	if bb and bb:IsA("BillboardGui") then
-		if not bb:FindFirstChild("FreeCrateTitle") then
-			local title = Instance.new("TextLabel")
-			title.Name = "FreeCrateTitle"
-			title.BackgroundTransparency = 1
-			title.Size = UDim2.new(1, 0, 0.5, 0)
-			title.Font = Enum.Font.FredokaOne
-			title.TextScaled = true
-			title.TextColor3 = GOLD
-			title.TextStrokeColor3 = Color3.new(0, 0, 0)
-			title.TextStrokeTransparency = 0.35
-			title.Text = "🎁 FREE MARBLE ROLL"
-			title.Parent = bb
-
+		-- A copy saved from an older runtime build may carry the retired title label.
+		local staleTitle = bb:FindFirstChild("FreeCrateTitle")
+		if staleTitle then
+			staleTitle:Destroy()
+		end
+		if not bb:FindFirstChild("FreeCrateTimer") then
 			local timer = Instance.new("TextLabel")
 			timer.Name = "FreeCrateTimer"
 			timer.BackgroundTransparency = 1
-			timer.Size = UDim2.new(1, 0, 0.4, 0)
-			timer.Position = UDim2.fromScale(0, 0.55)
+			timer.Size = UDim2.fromScale(1, 1)
 			timer.Font = Enum.Font.FredokaOne
 			timer.TextScaled = true
 			timer.TextColor3 = TEXT
 			timer.TextStrokeColor3 = Color3.new(0, 0, 0)
 			timer.TextStrokeTransparency = 0.5
 			timer.Text = ""
+			timer.Visible = false -- refreshFreeButton shows it only while cooling down
 			timer.Parent = bb
 			table.insert(padTimerLabels, timer)
 		end
@@ -544,6 +557,39 @@ local function setupFreeCratePad(inst: Instance)
 			CosmeticsShop.claimFree()
 		end
 	end)
+end
+
+-- One decimal place normally; two below 0.1% (so a real chance never displays as a flat
+-- "0.0%"); "<0.01%" once it's below display resolution.
+local function formatPct(p: number): string
+	local pct = p * 100
+	if pct < 0.01 then
+		return "<0.01%"
+	elseif pct < 0.1 then
+		return string.format("%.2f%%", pct)
+	end
+	return string.format("%.1f%%", pct)
+end
+
+-- ODDS card refresh: per-rarity roll chance at the CURRENT Luck tier, and what the next
+-- tier turns it into ("cur% -> next%"; current only when maxed). Uses the free roll's
+-- weights (the shop's one roll source) through WeightedRandom.LuckBiasedOdds — the exact
+-- distribution of the server's PickIndexLuckBiased, so these numbers can't drift from
+-- the real roll.
+local function refreshLuckOdds(maxed: boolean)
+	if #luckOddsRows == 0 then
+		return
+	end
+	local weights = CratesConfig.Free.Weights
+	local cur = WeightedRandom.LuckBiasedOdds(weights, ProfileStats.GetLuckAtTier(luckTier))
+	local nxt = if maxed then nil else WeightedRandom.LuckBiasedOdds(weights, ProfileStats.GetLuckAtTier(luckTier + 1))
+	for i, row in luckOddsRows do
+		local text = formatPct(cur[i] or 0)
+		if nxt then
+			text ..= "  ->  " .. formatPct(nxt[i] or 0)
+		end
+		row.odds.Text = text
+	end
 end
 
 -- Luck card: tier ("Tier 1++" ladder label), current -> next roll-odds multiplier, and
@@ -575,7 +621,8 @@ local function refreshLuck()
 				UpgradeInfo.TierLabel("Luck", luckInfo.tier + 1))
 			luckEffectLabel.TextColor3 = RED
 		else
-			luckEffectLabel.Text = ("Rare odds %s  ➜  %s"):format(
+			-- ASCII "->": fancy arrow glyphs aren't in FredokaOne and render as boxes.
+			luckEffectLabel.Text = ("Rare odds %s  ->  %s"):format(
 				cur, ProfileStats.GetDisplayString("Luck", luckInfo.tier + 1))
 			luckEffectLabel.TextColor3 = SUBTLE
 		end
@@ -596,6 +643,7 @@ local function refreshLuck()
 			btn.Active = true
 		end
 	end
+	refreshLuckOdds(luckInfo.maxed == true)
 end
 
 function refresh()
@@ -760,6 +808,43 @@ local function buildLuckCard(parent: Instance, order: number)
 	luckButton = btn
 end
 
+-- The ODDS card next to LUCK: one row per rarity, "current% -> next-tier%" (refreshLuckOdds
+-- fills the numbers). Rows adapt to however many rarities the free roll's weights define.
+local function buildOddsCard(parent: Instance, order: number)
+	local card = Instance.new("Frame")
+	card.Name = "ODDS"
+	card.LayoutOrder = order -- size comes from the page's UIGridLayout
+	card.BackgroundColor3 = ROW_BG:Lerp(GREEN, 0.05)
+	card.Parent = parent
+	corner(card, 10)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = GREEN
+	stroke.Thickness = 2.5
+	stroke.Parent = card
+	attachHoverScale(card)
+
+	local title = makeLabel(card, "ROLL ODDS", UDim2.fromScale(0.92, 0.11), UDim2.fromScale(0.04, 0.02), TEXT)
+	title.TextScaled = true
+	title.TextXAlignment = Enum.TextXAlignment.Center
+	local sub = makeLabel(card, "this Luck tier  ->  next tier", UDim2.fromScale(0.92, 0.06), UDim2.fromScale(0.04, 0.13), SUBTLE)
+	sub.TextScaled = true
+	sub.TextXAlignment = Enum.TextXAlignment.Center
+
+	table.clear(luckOddsRows)
+	local count = #CratesConfig.Free.Weights
+	local top, height = 0.21, 0.77
+	local rowH = height / count
+	for i = 1, count do
+		local y = top + (i - 1) * rowH
+		local name = makeLabel(card, BallSkins.RarityName(i), UDim2.fromScale(0.42, rowH * 0.9), UDim2.fromScale(0.05, y), BallSkins.RarityColor(i))
+		name.TextScaled = true
+		local odds = makeLabel(card, "", UDim2.fromScale(0.5, rowH * 0.9), UDim2.fromScale(0.47, y), TEXT)
+		odds.TextScaled = true
+		odds.TextXAlignment = Enum.TextXAlignment.Right
+		luckOddsRows[i] = { name = name, odds = odds }
+	end
+end
+
 local function build(surface: SurfaceGui)
 	local existing = surface:FindFirstChild("CosmeticsShop")
 	if existing then
@@ -848,6 +933,7 @@ local function build(surface: SurfaceGui)
 	cardsGrid.Parent = luckPage
 
 	buildLuckCard(luckPage, 1)
+	buildOddsCard(luckPage, 2)
 
 	------------------------------------------------------------------
 	-- Index page: the collection grid + equip footer.
@@ -882,11 +968,6 @@ local function build(surface: SurfaceGui)
 	selectedNameLabel = makeLabel(footer, "", UDim2.new(0.5, 0, 0.42, 0), UDim2.fromScale(0, 0.12), TEXT)
 	selectedNameLabel.TextScaled = true
 
-	-- Make it unmissable that wearing ≠ power: bonuses come from the loadout, not from
-	-- whichever skin the marbles are dressed as.
-	local wearNote = makeLabel(footer, "Wearing is cosmetic only — money bonuses come from your 🎒 LOADOUT", UDim2.new(0.5, 0, 0.3, 0), UDim2.fromScale(0, 0.6), SUBTLE)
-	wearNote.TextScaled = true
-	wearNote.TextTransparency = 0.1
 
 	local function makeFooterButton(): TextButton
 		local btn = Instance.new("TextButton")
@@ -1029,6 +1110,12 @@ function CosmeticsShop.Init()
 				rolling = false
 			end
 			presentRoll(result)
+			-- Same deferred-commit report as runRoll's (server-pushed rolls queue too).
+			if result.ok and result.skinId then
+				task.delay(ROLL_COMMIT_DELAY, function()
+					finishRollRE:FireServer()
+				end)
+			end
 		end)
 	end)
 

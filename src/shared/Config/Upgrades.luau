@@ -51,14 +51,14 @@ local Upgrades = {
 		--
 		-- betSize(0) = Economy.StartBetSize (10, free, no purchase needed)
 		-- betSize(tier>=1) = Economy.StartMaxBet * (PerTier ^ (tier - 1))   [see ProfileStats.GetMaxBet]
-		-- i.e. the whole old ladder shifted up one rung: new tier 1 (40) is the old tier 0. The
-		-- geometric cost curve (Base * Growth^tier) is untouched and now applies uniformly from
-		-- tier 0 (no more Cost.Initial override) — tier 0->1 costs Base*Growth^0 = Base = 250,
-		-- exactly a quarter of the old flat 1000 unlock, and every tier after that prices exactly
-		-- like it did before the shift.
+		-- The geometric cost curve (Base * Growth^tier) applies uniformly from tier 0:
+		-- tier 0->1 costs Base.
 		MaxBet = {
-			PerTier = 1.5,
-			Cost = { Base = 250, Growth = 1.9 },
+			-- 2026-07 rebalance: constant ×4 per zone (10 → 40 → 160 → 640 ...) in both
+			-- stake and ball value, with cost growing slightly faster (×5) so zones never
+			-- get cheaper relative to the income they unlock.
+			PerTier = 4.0,
+			Cost = { Base = 2000, Growth = 5.0 },
 			Name = "Zone", Short = "Zone", Desc = "Move to the next zone; increase your marble value.",
 			Icon = "🌍",
 		},
@@ -71,7 +71,7 @@ local Upgrades = {
 		-- grows 1.9× so it's gated, not a runaway.
 		FlatRate = {
 			Base = 0.2, PerTier = 1.85,
-			Cost = { Base = 260, Growth = 1.9 },
+			Cost = { Base = 600, Growth = 2.9 },
 			Name = "Combo", Short = "Combo", Desc = "More cash per bounce during a combo (" .. Scoring.MinCombo .. " or more)",
 			Icon = "⚡",
 		},
@@ -84,7 +84,7 @@ local Upgrades = {
 		-- — not a separate additive line on the payout anymore.
 		BaseAdditive = {
 			Base = 0.0, C1 = 0.05, C2 = 0.0, C3 = 0.0,
-			Cost = { Base = 300, Growth = 1.7 },
+			Cost = { Base = 600, Growth = 2.9 },
 			Name = "Mult Bonus", Short = "Mult", Desc = "Boost the board's slot multipliers.",
 			Icon = "➕",
 		},
@@ -93,9 +93,11 @@ local Upgrades = {
 		-- this one delay applies to every slot the player owns — see ProfileStats.GetLaunchDelay).
 		-- Slot COUNT is the separate NumSlots track below.
 		Frequency = {
-			Base = 2, PerTier = 0.82,
-			MaxTier = 12,
-			Cost = { Base = 230, Growth = 1.9 },
+			-- 2026-07 rebalance: softened (0.82/12 → 0.88/8, min delay 0.72s) — the old
+			-- ×11 within-run throughput swamped every cost curve (see BALANCE_RESULTS.md).
+			Base = 2, PerTier = 0.88,
+			MaxTier = 8,
+			Cost = { Base = 800, Growth = 3.4 },
 			Name = "Frequency", Short = "Freq", Desc = "Launch marbles more often.",
 			Icon = "🔄",
 		},
@@ -108,7 +110,9 @@ local Upgrades = {
 			BaseSlots = 1, -- slots at tier 0
 			SlotsPerTier = 1, -- +1 slot per tier purchased
 			MaxTier = 9,
-			Cost = { Base = 400, Growth = 2.2 },
+			-- Growth 6.0: each slot ≈ doubles launch throughput, so slots are the
+			-- mid/late-run purchases (slot 10 ≈ 672M) — first slot stays the $400 anchor.
+			Cost = { Base = 400, Growth = 6.0 },
 			Name = "Add Slot", Short = "Slot", Desc = "Unlock another launch slot.",
 			Icon = "🔓",
 		},
@@ -117,7 +121,7 @@ local Upgrades = {
 		-- (and random cold paths cost more). Targeting channel; only pays with aim.
 		PegHeat = {
 			PerTier = 0.05, -- INFERRED magnitude; tune against the heat map
-			Cost = { Base = 220, Growth = 1.7 },
+			Cost = { Base = 480, Growth = 2.9 },
 			Name = "Heat Sense", Short = "Heat", Desc = "Hot and cold obstacles affect you more strongly.",
 			Icon = "🔥",
 		},
@@ -130,7 +134,7 @@ local Upgrades = {
 		-- in playtest.
 		--
 		-- BARRIER LADDER: internal tiers group into display tiers of BarrierEvery sub-tiers
-		-- ("Tier 1, 1+, 1++, 1+++, Tier 2, ..." — see UpgradeInfo.TierLabel). Sub-tier (+)
+		-- ("Tier 1, 1-I, 1-II, 1-III, Tier 2, ..." — see UpgradeInfo.TierLabel). Sub-tier
 		-- purchases are ordinary CASH buys off Cost, so the track progresses without rebirth
 		-- or Diamonds; every BarrierEvery-th purchase crosses into the next display tier and
 		-- is priced in DIAMONDS off BarrierCost (geometric in the number of barriers crossed

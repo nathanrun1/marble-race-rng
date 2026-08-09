@@ -2,11 +2,17 @@
 -- "Currency fly" celebration: a burst of 💰/💎 emoji labels pops in around the middle of the
 -- screen at random offsets, then each one accelerates into the matching HUD balance icon
 -- (MainGui.LeftBar.Cash.ImageLabel / MainGui.LeftBar.Diamonds.ImageLabel), which pulses as
--- they land. Purely visual — callers fire it when a grant is confirmed (quest / daily reward /
--- playtime claims) or optimistically alongside one (CoinPickups' optimistic hide); the actual
--- balance number is driven separately by BalanceUIController.
+-- they land.
 --
---   CurrencyFlyUI.Play("Cash" | "Diamonds", count?)  -- count defaults to a random 7-11
+--   CurrencyFlyUI.Play("Cash" | "Diamonds", count?, amount?)  -- count defaults to a random 7-11
+--
+-- With an `amount`, the flight DRIVES the balance readout: the grant is split across the
+-- icons (integer chunks, remainder on the last) and each landing bumps
+-- BalanceUIController's cosmetic live sum, which the labels show while any fly holds the
+-- currency (multiple concurrent flights stack holds; the last release snaps back to the
+-- authentic balance). For that seeding to be right the hold must begin BEFORE the grant's
+-- BalanceChanged repaints the label — server granters fire the FxNet fly ahead of the
+-- grant, and client claim flows wrap their invoke in HoldBalance below.
 --
 -- Safe to call before Init or if the LeftBar icons aren't present (warns once, no-op) — a
 -- missed celebration must never break a claim flow.
@@ -18,6 +24,7 @@ local RS = game:GetService("ReplicatedStorage")
 local AutoScale = require(RS.Shared.Utility.AutoScale)
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local SoundService = require(RS.Shared.SoundService)
+local BalanceUIController = require(script.Parent.BalanceUIController)
 local FxNet = require(RS.Shared.Remote.FxNet)
 
 local CurrencyFlyUI = {}
@@ -44,6 +51,10 @@ local PULSE_SCALE = 1.25   -- balance-icon pop on arrival
 local MAX_COUNT   = 20
 
 local POP_TWEEN = TweenInfo.new(POP_TIME, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+-- Upper bound on one visual's whole life (pop + hold + fly + jitters); the live-sum
+-- safety net trues-up and releases this long after launch if landings went missing
+-- (destroyed GUI, skipped tweens) so a hold can never leak.
+local FLIGHT_MAX = POP_TIME + HOLD_MIN + HOLD_JITTER + FLY_TIME + FLY_JITTER + 0.5
 
 local player = Players.LocalPlayer
 
@@ -116,7 +127,7 @@ end
 -- One flying visual (an emoji label or a marble swatch): pop in at (spawnX, spawnY) —
 -- absolute screen coords, which ARE this container's offset coords (the container sits
 -- at absolute (0, 0)) — hold, then fly into the icon.
-local function flyOne(parent: Frame, icon: GuiObject, visual: GuiObject, spawnX: number, spawnY: number, holdDelay: number)
+local function flyOne(parent: Frame, icon: GuiObject, visual: GuiObject, spawnX: number, spawnY: number, holdDelay: number, onLand: (() -> ())?)
 	-- The container works in raw AbsolutePosition coords (no UIScale — the flight targets
 	-- are absolute screen positions), so the visual's SIZE scales by the viewport factor.
 	local vs = AutoScale.GetScale()
@@ -152,6 +163,9 @@ local function flyOne(parent: Frame, icon: GuiObject, visual: GuiObject, spawnX:
 			-- copies from landing sample-aligned (which would read as one louder ding).
 			SoundService.Play({ soundId = SoundsConfig.Collect3, volume = 0.4, jitter = 0.06 })
 			pulseTarget(icon)
+			if onLand then
+				onLand()
+			end
 		end)
 		fly:Play()
 	end)
@@ -184,13 +198,18 @@ local function newSwatchVisual(color: Color3, ringColor: Color3): GuiObject
 	return swatch
 end
 
--- Shared spawn loop: makes n visuals popping around screen centre, flying into `icon`.
-local function playVisuals(icon: GuiObject, count: number?, makeVisual: () -> GuiObject)
+-- The concrete flock size for a requested count (default random 7-11, clamped).
+local function resolveCount(count: number?): number
+	return math.clamp(count or math.random(7, 11), 1, MAX_COUNT)
+end
+
+-- Shared spawn loop: makes exactly n visuals popping around screen centre, flying into
+-- `icon`; onLand (optional) fires once per visual that reaches it.
+local function playVisuals(icon: GuiObject, n: number, makeVisual: () -> GuiObject, onLand: (() -> ())?)
 	local parent = container
 	if not parent then
 		return -- Init hasn't run; a claim should still just work without the flourish
 	end
-	local n = math.clamp(count or math.random(7, 11), 1, MAX_COUNT)
 	local centerX = parent.AbsoluteSize.X * 0.5
 	local centerY = parent.AbsoluteSize.Y * 0.5
 	local vs = AutoScale.GetScale() -- spread scales with the viewport like the visual size
@@ -198,20 +217,85 @@ local function playVisuals(icon: GuiObject, count: number?, makeVisual: () -> Gu
 		local spawnX = centerX + (math.random() - 0.5) * 2 * SPREAD_X * vs
 		local spawnY = centerY + (math.random() - 0.5) * 2 * SPREAD_Y * vs
 		local holdDelay = POP_TIME + HOLD_MIN + math.random() * HOLD_JITTER
-		flyOne(parent, icon, makeVisual(), spawnX, spawnY, holdDelay)
+		flyOne(parent, icon, makeVisual(), spawnX, spawnY, holdDelay, onLand)
 	end
 end
 
 -- Fire the celebration toward `kind`'s balance icon. count defaults to a random 7-11.
-function CurrencyFlyUI.Play(kind: Kind, count: number?)
+-- With `amount` (Cash/Diamonds only), the flight also drives the balance readout: a
+-- live-sum hold begins NOW, the amount splits across the icons (floor-integer chunks,
+-- remainder on the last), each landing bumps the live sum, and the hold releases once
+-- every chunk is delivered (a timeout trues-up whatever went missing first).
+function CurrencyFlyUI.Play(kind: Kind, count: number?, amount: number?)
 	local icon = resolveTarget(kind)
 	if not icon then
 		return
 	end
 	local emoji = EMOJI[kind]
-	playVisuals(icon, count, function()
+	local heldKind: BalanceUIController.FlyKind? = if kind == "Cash" or kind == "Diamonds"
+		then kind :: BalanceUIController.FlyKind
+		else nil
+	if not (heldKind and amount and amount > 0) then
+		playVisuals(icon, resolveCount(count), function()
+			return newEmojiVisual(emoji)
+		end)
+		return
+	end
+	local balKind = heldKind :: BalanceUIController.FlyKind
+	local total = amount :: number
+
+	BalanceUIController.BeginFlyHold(balKind)
+	local n = resolveCount(count)
+	local base = math.floor(total / n)
+	local delivered = 0 -- how much of `total` has been added to the live sum so far
+	local landed = 0
+	local finished = false
+	local function finish()
+		if finished then
+			return
+		end
+		finished = true
+		if delivered < total then
+			BalanceUIController.AddFlyAmount(balKind, total - delivered)
+			delivered = total
+		end
+		BalanceUIController.ReleaseFlyHold(balKind)
+	end
+	playVisuals(icon, n, function()
 		return newEmojiVisual(emoji)
+	end, function()
+		if finished then
+			return
+		end
+		landed += 1
+		local chunk = if landed >= n then total - delivered else base
+		delivered += chunk
+		BalanceUIController.AddFlyAmount(balKind, chunk)
+		if landed >= n then
+			finish()
+		end
 	end)
+	task.delay(FLIGHT_MAX, finish)
+end
+
+-- Pre-claim flicker guard for client-invoked grants: take a live-sum hold BEFORE the
+-- claim invoke (whose grant lands via BalanceChanged before the invoke even returns), so
+-- the label can't repaint — and the live sum can't mis-seed from the post-grant value —
+-- ahead of the Play call. Returns a one-shot release: call it right after Play on
+-- success (Play's own hold carries on from there) or immediately on failure.
+function CurrencyFlyUI.HoldBalance(kind: Kind): () -> ()
+	if kind ~= "Cash" and kind ~= "Diamonds" then
+		return function() end
+	end
+	local balKind = kind :: BalanceUIController.FlyKind
+	BalanceUIController.BeginFlyHold(balKind)
+	local released = false
+	return function()
+		if not released then
+			released = true
+			BalanceUIController.ReleaseFlyHold(balKind)
+		end
+	end
 end
 
 -- A rolled marble flying home: circular colour swatches (the skin's colour, ringed in
@@ -221,7 +305,7 @@ function CurrencyFlyUI.PlayMarble(color: Color3, ringColor: Color3, count: numbe
 	if not icon then
 		return
 	end
-	playVisuals(icon, count, function()
+	playVisuals(icon, resolveCount(count), function()
 		return newSwatchVisual(color, ringColor)
 	end)
 end
@@ -247,15 +331,21 @@ function CurrencyFlyUI.Init()
 	screenGui = gui
 	container = frame
 
-	-- Server-granted rewards (obby prize) fire PlayCurrencyFly with a kind; anything
-	-- unknown is ignored. Soft-waited: the remote only exists once a server granter
-	-- that wants the flourish has created it (ObbyZone today).
+	-- Server-granted rewards (obby prize, plot claims, Robux packs) fire PlayCurrencyFly
+	-- with (kind, count?, amount?); anything unknown is ignored. Servers fire it BEFORE
+	-- the grant itself so the live-sum hold starts from the pre-grant balance (remote
+	-- delivery is ordered). Soft-waited: the remote only exists once a server granter
+	-- that wants the flourish has created it.
 	task.spawn(function()
 		local re = FxNet.PlayCurrencyFly
 		if re and re:IsA("RemoteEvent") then
-			re.OnClientEvent:Connect(function(kind: any, count: any)
+			re.OnClientEvent:Connect(function(kind: any, count: any, amount: any)
 				if type(kind) == "string" and EMOJI[kind] then
-					CurrencyFlyUI.Play(kind :: Kind, if type(count) == "number" then count else nil)
+					CurrencyFlyUI.Play(
+						kind :: Kind,
+						if type(count) == "number" then count else nil,
+						if type(amount) == "number" then amount else nil
+					)
 				end
 			end)
 		end

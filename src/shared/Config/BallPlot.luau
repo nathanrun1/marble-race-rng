@@ -18,6 +18,14 @@ local BallPlot = {
 	ShotSpread = 5, -- studs of random horizontal scatter around the landing point
 	BoundsHitSlowFactor = 0.2, -- the shot ball's velocity is multiplied by this the moment it first overlaps PlotBounds after landing
 	OutOfBoundsRescueTime = 3, -- seconds after the shot; a ball not overlapping PlotBounds by then teleports to its landing point
+
+	-- Merge direction once a skin is at MaxPerSkin and a new arrival merges into an
+	-- existing plot ball (BallPlotService.onSpawn). true (new): the FALLING ball survives —
+	-- it inherits the existing target's ids/value and the pre-existing target is what gets
+	-- destroyed, so the shot reads as "lands here, picks up value" and nothing visibly
+	-- vanishes mid-fall. false (legacy): the falling ball is what vanishes, folding its
+	-- value into the stationary target, which pulses to show it grew.
+	FallingBallAbsorbsExisting = true,
 }
 
 table.freeze(BallPlot)

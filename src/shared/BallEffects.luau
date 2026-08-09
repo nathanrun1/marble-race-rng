@@ -554,7 +554,9 @@ function BallEffects.SetValueUI(ball: BasePart, value: number)
 	end
 end
 
-function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: string, color: Color3?, strokeColor: Color3?)
+-- Shared rig for both value-popup variants: same look (FredokaOne, black stroke, float-up
+-- fade), different SIZING behavior (see the two public entries below).
+local function showValuePopup(cframe: CFrame, label: string, color: Color3?, strokeColor: Color3?, worldSized: boolean)
 	local anchor = Instance.new("Part")
 	anchor.Size = Vector3.new(0.05, 0.05, 0.05)
 	anchor.Anchored = true
@@ -566,8 +568,18 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 	anchor.Parent = workspace
 
 	local billboard = Instance.new("BillboardGui")
-	billboard.Size = UDim2.new(0, 150, 0, 75)
-	billboard.StudsOffset = POPUP_OFFSET_START
+	if worldSized then
+		-- Scale units = studs: a fixed WORLD size that shrinks with camera distance,
+		-- matching the pad billboards this variant floats beside.
+		billboard.Size = UDim2.fromScale(5, 2.5)
+	else
+		-- Pixel units: constant SCREEN size, so in-board hits stay readable (large) from
+		-- the far board camera.
+		billboard.Size = UDim2.new(0, 150, 0, 75)
+	end
+	-- World-space offset either way: the anchor takes the caller's cframe (a rotated
+	-- pad, a spinning ball) and object-space StudsOffset would follow that rotation.
+	billboard.StudsOffsetWorldSpace = POPUP_OFFSET_START
 	billboard.AlwaysOnTop = true
 	billboard.Parent = anchor
 
@@ -582,15 +594,17 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 	text.Font = Enum.Font.FredokaOne
 	text.Parent = billboard
 
+	if not worldSized then
+		-- Shrink the popup on smaller viewports (pixel sizes authored at 1080p).
+		AutoScale.Apply(text)
+	end
+
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 1
 	stroke.Color = strokeColor or Color3.new(0, 0, 0)
 	stroke.Parent = text
 
-	-- Shrink the popup on smaller viewports (sizes authored at 1080p).
-	AutoScale.Apply(text)
-
-	local t1 = TweenService:Create(billboard, POPUP_TWEEN, { StudsOffset = POPUP_OFFSET_END })
+	local t1 = TweenService:Create(billboard, POPUP_TWEEN, { StudsOffsetWorldSpace = POPUP_OFFSET_END })
 	local t2 = TweenService:Create(text, POPUP_TWEEN, {
 		TextTransparency = 1,
 		TextStrokeTransparency = 1,
@@ -604,6 +618,18 @@ function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: stri
 	t2.Completed:Connect(function()
 		anchor:Destroy()
 	end)
+end
+
+-- Ball-event popups (destroy-target banks, combos, heat, jackpot): constant SCREEN size,
+-- so they read big even from the pulled-back board camera.
+function BallEffects.ShowValuePopup(ball: BasePart?, cframe: CFrame, label: string, color: Color3?, strokeColor: Color3?)
+	showValuePopup(cframe, label, color, strokeColor, false)
+end
+
+-- World-fixture popups (the launch pads' stake popup): constant WORLDSPACE size, matching
+-- the stud-sized pad billboards they float over — NOT the ball-event variant above.
+function BallEffects.ShowValuePopupWorld(cframe: CFrame, label: string, color: Color3?, strokeColor: Color3?)
+	showValuePopup(cframe, label, color, strokeColor, true)
 end
 
 local COMBO_COLOR_NORMAL = Color3.fromRGB(222, 9, 9)

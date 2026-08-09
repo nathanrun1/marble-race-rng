@@ -22,6 +22,7 @@
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local SoundsConfig = require(RS.Shared.Config.Sounds)
 local ProfileStats = require(RS.Shared.ProfileStats)
@@ -88,6 +89,14 @@ local loadoutInfo: LoadoutInfo? = nil
 local selection: (number | "visual")? = nil
 
 local screenGui: ScreenGui? = nil
+-- ShopUI-style fly-in/out state (see Open/Close): the panel slides in from one screen
+-- width right of its authored position and back out the same way.
+local panelFrame: GuiObject? = nil
+local panelPosOpen = UDim2.new()
+local panelPosOut = UDim2.new()
+local slideTween: Tween? = nil
+local closing = false -- slide-out playing (Enabled stays true until it completes)
+local SLIDE_TWEEN = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out) -- matches ShopUI
 local slotButtons: { TextButton } = {}
 local slotStrokes: { UIStroke } = {}
 -- The invisible authored slot button (Panel.SlotsRow.Frame.Slot); rebuildSlots clones one
@@ -408,6 +417,15 @@ local function resolveUI()
 	screenGui = gui
 	local panel = gui:WaitForChild("Panel")
 
+	-- Slide anchors for the ShopUI-style fly-in/out (Open/Close below): the authored
+	-- position is "open"; "out" is one screen-width to the right of it.
+	panelFrame = panel :: GuiObject
+	panelPosOpen = (panel :: GuiObject).Position
+	panelPosOut = UDim2.new(
+		panelPosOpen.X.Scale + 1, panelPosOpen.X.Offset,
+		panelPosOpen.Y.Scale, panelPosOpen.Y.Offset
+	)
+
 	local closeBtn = panel:WaitForChild("CloseButton") :: GuiButton
 	closeBtn.Activated:Connect(function()
 		SoundService.PlayClick()
@@ -447,19 +465,52 @@ function LoadoutUI.IsOpen(): boolean
 	return screenGui ~= nil and (screenGui :: ScreenGui).Enabled
 end
 
+-- Slide in from the right (ShopUI's fly-in) — unless already open and not mid-close, in
+-- which case the refreshed content just swaps in place. Re-opening mid-close restarts
+-- the slide from off-screen.
 function LoadoutUI.Open()
-	if screenGui then
-		selection = nil
-		refresh()
-		screenGui.Enabled = true
-		LoadoutUI.Opened:Fire()
+	local gui, panel = screenGui, panelFrame
+	if not (gui and panel) then
+		return
 	end
+	selection = nil
+	refresh()
+	if gui.Enabled and not closing then
+		LoadoutUI.Opened:Fire()
+		return
+	end
+	closing = false
+	if slideTween then
+		slideTween:Cancel()
+	end
+	panel.Position = panelPosOut
+	gui.Enabled = true
+	slideTween = TweenService:Create(panel, SLIDE_TWEEN, { Position = panelPosOpen })
+	;(slideTween :: Tween):Play()
+	LoadoutUI.Opened:Fire()
 end
 
+-- Slide out to the right (ShopUI's fly-out); Enabled drops once the slide finishes, and
+-- the panel snaps back to its authored position for the next open.
 function LoadoutUI.Close()
-	if screenGui then
-		screenGui.Enabled = false
+	local gui, panel = screenGui, panelFrame
+	if not (gui and panel) or not gui.Enabled or closing then
+		return
 	end
+	closing = true
+	if slideTween then
+		slideTween:Cancel()
+	end
+	local t = TweenService:Create(panel, SLIDE_TWEEN, { Position = panelPosOut })
+	slideTween = t
+	t.Completed:Connect(function(state: Enum.PlaybackState)
+		if state == Enum.PlaybackState.Completed then
+			gui.Enabled = false
+			panel.Position = panelPosOpen
+			closing = false
+		end
+	end)
+	t:Play()
 end
 
 -- LOADOUT trigger: Studio-authored on MainGui.LeftBar (LoadoutTriggerHost, same UIButton

@@ -127,19 +127,18 @@ function BallPlotService.InitServer()
 		if not perPlayer then
 			return
 		end
+		-- Two passes: pop the claimed entries and sum them FIRST, so the fly (which must
+		-- fire before any grant for its live-sum hold to seed pre-grant) knows the total,
+		-- THEN credit the balls.
 		local total = 0
+		local claimed: { { value: number } } = {}
 		for _, id in ids :: { unknown } do
 			if type(id) == "number" then
 				local entry = perPlayer[id]
 				if entry then
 					perPlayer[id] = nil
 					total += entry.value
-					-- One credit PER BALL, with the load-bearing "Ball " reason prefix: this is
-					-- now where banked money actually lands, so the per-ball consumers
-					-- (StatsService's $/marble window, MoneyPerBallUI, the tutorial's score-N
-					-- step) must see each marble as its own "Ball ..." grant — a summed batch
-					-- credit would read as one giant marble.
-					CurrencyService.AddPoints(player, entry.value, "Ball claimed from plot")
+					table.insert(claimed, entry)
 				end
 			end
 		end
@@ -151,7 +150,15 @@ function BallPlotService.InitServer()
 			-- Single walked-over claims fly a small fixed count (they happen constantly while
 			-- walking the plot; the full celebration is too loud a beat for them). The
 			-- collect-all pad's batch claim IS the big beat: 10 icons.
-			flyRE:FireClient(player, "Cash", if collectAll == true then 10 else 3)
+			flyRE:FireClient(player, "Cash", if collectAll == true then 10 else 3, total)
+		end
+		for _, entry in claimed do
+			-- One credit PER BALL, with the load-bearing "Ball " reason prefix: this is
+			-- now where banked money actually lands, so the per-ball consumers
+			-- (StatsService's $/marble window, MoneyPerBallUI, the tutorial's score-N
+			-- step) must see each marble as its own "Ball ..." grant — a summed batch
+			-- credit would read as one giant marble.
+			CurrencyService.AddPoints(player, entry.value, "Ball claimed from plot")
 		end
 	end
 
@@ -575,6 +582,53 @@ function BallPlotService.InitClient()
 		refreshCollect()
 	end
 
+	-- BallPlotConfig.FallingBallAbsorbsExisting's merge finalize: called when the falling
+	-- ball lands (first PlotBounds overlap). The falling `ball` survives and takes over
+	-- whatever is CURRENTLY tracking `id` — resolved fresh via plotBalls[id] rather than the
+	-- mergeTarget captured at spawn time, so a chain of merges landing on the same original
+	-- ball cascades onto whichever one landed most recently instead of racing a stale
+	-- reference. The pre-existing ball is destroyed with no burst/pulse — its own falling
+	-- motion already reads as "this just arrived", so no pop tween on top of it.
+	local function absorbExistingIntoFallingBall(ball: BasePart, id: number, value: number, skinId: string)
+		local current = plotBalls[id]
+		if not current then
+			-- Claimed away (whole current target, this id included) while the shot was still
+			-- in flight; nothing left to absorb into.
+			ball:Destroy()
+			return
+		end
+
+		local ids = ballIds[current] or { id }
+		local oldValue = ballValue[current] or 0
+		local currentSkin = ballSkin[current] or skinId
+
+		removeFromSkinList(current, currentSkin)
+		for _, mid in ids do
+			plotBalls[mid] = ball
+		end
+		ballIds[current] = nil
+		ballValue[current] = nil
+		ballSkin[current] = nil
+		pulsing[current] = nil
+		current:Destroy()
+
+		ballIds[ball] = ids
+		ballValue[ball] = oldValue + value
+		ballSkin[ball] = currentSkin
+		table.insert(getSkinList(currentSkin), ball)
+		BallEffects.SetValueUI(ball, ballValue[ball])
+		refreshCollect()
+
+		local touchedConn: RBXScriptConnection
+		touchedConn = ball.Touched:Connect(function(obj: BasePart)
+			local char = Players.LocalPlayer.Character
+			if char and obj:IsDescendantOf(char) then
+				touchedConn:Disconnect()
+				claim(ball)
+			end
+		end)
+	end
+
 	local function onSpawn(id: unknown, skinIdRaw: unknown, value: unknown, sourceBall: unknown)
 		if type(id) ~= "number" or type(value) ~= "number" then
 			return
@@ -661,15 +715,22 @@ function BallPlotService.InitClient()
 		end
 
 		if mergeTarget and shootPart then
-			-- Visual-only merge shot: the ball flies in, vanishes on its first PlotBounds
-			-- overlap, and only THEN does the target visibly absorb it (value bump + pulse).
-			local target = mergeTarget
-			launchShot(ball, shootPart, landPos, dress, function()
-				ball:Destroy()
-				if ballIds[target] then -- target may have been claimed mid-shot (this id went with it)
-					showMerge(target, value)
-				end
-			end)
+			if BallPlotConfig.FallingBallAbsorbsExisting then
+				-- Flipped merge: the falling ball survives and inherits the target's
+				-- ids/value; the pre-existing target is what disappears on landing.
+				launchShot(ball, shootPart, landPos, dress, function()
+					absorbExistingIntoFallingBall(ball, id, value, skinId)
+				end)
+			else
+				-- Legacy merge: the falling ball vanishes into the target on landing.
+				local target = mergeTarget
+				launchShot(ball, shootPart, landPos, dress, function()
+					ball:Destroy()
+					if ballIds[target] then -- target may have been claimed mid-shot (this id went with it)
+						showMerge(target, value)
+					end
+				end)
+			end
 		elseif shootPart then
 			launchShot(ball, shootPart, landPos, dress)
 		else
@@ -680,8 +741,10 @@ function BallPlotService.InitClient()
 		end
 
 		if mergeTarget then
-			return -- visual-only shot: its id already belongs to the merge target, and it is
-			-- never claimable/tracked itself — launchShot's bounds hit consumes it
+			return -- its id already belongs to the merge target; the synchronous path below
+			-- (normal-case tracking) doesn't apply — launchShot's bounds hit finalizes the
+			-- merge instead, either folding this ball away (legacy) or promoting it into the
+			-- tracked ball in the target's place (FallingBallAbsorbsExisting)
 		end
 
 		ballIds[ball] = { id }
