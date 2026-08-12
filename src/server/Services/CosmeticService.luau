@@ -78,11 +78,16 @@ local changedRE: RemoteEvent
 local crateRolledRE: RemoteEvent
 
 local function defaults(): CosmeticData
+	-- Fresh players own NOTHING and have no visual equipped: the first marble must be ROLLED
+	-- (the join tutorial sends them to the free-box pad). Classic ("default") is no longer a
+	-- freebie — it stays a rollable rarity-1 skin like any other. equipped = "" reads as the
+	-- gray fallback visual everywhere until a real skin is rolled+equipped (LoadoutUI/BallEffects
+	-- both guard the empty id).
 	return {
 		cc = 0,
-		owned = { [DEFAULT_SKIN] = true },
-		equipped = DEFAULT_SKIN,
-		copies = { [DEFAULT_SKIN] = 1 },
+		owned = {},
+		equipped = "",
+		copies = {},
 		pity = {},
 		boxes = {},
 		freeClaims = 0,
@@ -551,7 +556,8 @@ function CosmeticService.ApplyData(player: Player, saved: CosmeticData?)
 			d.freeClaims = math.floor(saved.freeClaims)
 		end
 	end
-	d.owned[DEFAULT_SKIN] = true -- the default skin is always owned
+	-- (Classic is no longer force-owned — fresh players start with nothing and must roll. A
+	-- returning player who already owned it keeps it via saved.owned above.)
 	-- Migration: pre-crate saves have owned skins but no copy counts — seed them at 1
 	-- so stars/bonuses work (nobody loses a skin, everyone starts at ★1).
 	for id in d.owned do

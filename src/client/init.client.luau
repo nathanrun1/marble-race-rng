@@ -39,6 +39,7 @@ local DailyRewardUI = require(script.Controllers.DailyRewardUI)
 local RetentionTimersUI = require(script.Controllers.RetentionTimersUI)
 local StarterQuestUI = require(script.Controllers.StarterQuestUI)
 local FreeRollBallSample = require(script.Controllers.FreeRollBallSample)
+local WeatherController = require(script.Controllers.WeatherController)
 
 local BallEffects = require(RS.Shared.BallEffects)
 local ScoreUI = require(RS.Shared.ScoreUI)
@@ -92,6 +93,7 @@ PegHeatView.Init()
 DailyRewardUI.Init()
 RetentionTimersUI.Init()
 StarterQuestUI.Init()
+WeatherController.Init()
 BallPlotService.InitClient()
 
 -- Start shuffle-play background music on join (each track once per cycle, then reshuffle).

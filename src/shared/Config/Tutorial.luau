@@ -38,14 +38,30 @@
 --                                                                     CosmeticsGui-tagged storefront
 --                   { Kind = "FreeCratePad" }                      -- the free-marble-box claim pad
 --                                                                     (first FreeCratePad-tagged part)
+--                   { Kind = "LaunchPad" }                         -- the "Interact" launch pad of the
+--                                                                     FIRST plot (Slot with SlotNum 1)
+--                   { Kind = "SlotAutoSign" }                      -- the "AutoSign" auto-toggle on the
+--                                                                     first plot (SlotNum 1)
+--                   { Kind = "PlotCollectPad" }                    -- the Collect All pad (PlotCollect tag)
 --   complete    : REQUIRED — what finishes the step. Kinds:
 --                   { Kind = "LaunchBalls", Count = number } -- N of the player's own marbles launch
 --                   { Kind = "BuyUpgrade", Track = string }  -- that track's upgrade tier increases
 --                   { Kind = "CollectCoin" }                  -- the player claims any coin
 --                   { Kind = "ScoreBalls", Count = number? } -- N of the player's own marbles bank/score (default 1)
 --                   { Kind = "BuySkin" }                      -- any skin gets ADDED to the owned set (bought or otherwise earned)
+--                   { Kind = "RollCrate" }                    -- any marble box rolls (total copies rise; covers dupes)
+--                   { Kind = "OpenLoadout" }                  -- the loadout menu gets opened
+--                   { Kind = "EquipLoadoutSlot" }             -- a skin lands in a loadout slot OR Equip Best is pressed
 --                   { Kind = "OpenTuningMenu" }               -- the ball-tuning menu gets opened
 --                   { Kind = "TouchFreeCratePad" }            -- the player steps on the free-box pad
+--                   { Kind = "WatchPlotBank", Count = number? } -- SIDE EFFECT: turns the board-view camera ON on
+--                                                                entry, then completes when N of the player's marbles
+--                                                                finish falling and bank into the plot (default 1)
+--                   { Kind = "DisableBoardView" }             -- SIDE EFFECT: ensures the board-view camera is ON on
+--                                                                entry, then completes when the player presses the
+--                                                                camera button to turn it back off (teaches the toggle).
+--                                                                Pair with highlight.HighlightDim = 1 for no screen dim.
+--                   { Kind = "EnableAuto" }                   -- the player enables auto-launch on any plot
 -- Adding a new arrow/complete Kind is one handler function + one registry entry in
 -- the TutorialController — nothing else in the stepping/rendering logic changes.
 --
@@ -67,46 +83,72 @@ export type Step = {
 }
 
 local Tutorial = {
+	-- Reworked for the ball-plot loop (roll -> equip -> plot-launch -> auto -> upgrade). Mostly
+	-- SHOW, not tell: each step points a world arrow or highlights the exact control and waits
+	-- for the player to do the thing. New players own NO marble (CosmeticService defaults), so
+	-- step 1 is rolling their first one at the free-box pad.
 	Steps = {
 		{
-			text = "Launch a marble for cash!",
-			highlight = { Position = UDim2.fromOffset(960, 986), Size = UDim2.fromOffset(528, 183), HighlightDim = 0.9 },
+			-- First marble: a fresh player owns nothing, so send them to the free-box pad. The
+			-- step completes on the ROLL committing (RollCrate = total copies rising), which
+			-- lands AFTER the reveal reel finishes, so step 2 never talks over the spin.
+			text = "Welcome! Step on the glowing pad to roll your first marble.",
+			arrow = { Kind = "FreeCratePad" },
+			complete = { Kind = "RollCrate" },
+			boxPosition = UDim2.fromScale(0.5, 0.62),
+		},
+		{
+			text = "Nice marble! Open your LOADOUT to equip it.",
+			highlight = { Element = "MainGui.LeftBar.TriggerQuad.LoadoutTriggerHost" },
+			complete = { Kind = "OpenLoadout" },
+			boxPosition = UDim2.fromScale(0.62, 0.62),
+		},
+		{
+			text = "Tap EQUIP BEST to gear up your best marble.",
+			highlight = { Element = "LoadoutGui.Panel.EquipBestHost" },
+			complete = { Kind = "EquipLoadoutSlot" },
+			boxPosition = UDim2.fromScale(0.5, 0.85),
+		},
+		{
+			text = "Now head to your plot and step on it to launch your marble!",
+			arrow = { Kind = "LaunchPad" },
 			complete = { Kind = "LaunchBalls", Count = 1 },
 			boxPosition = UDim2.fromScale(0.5, 0.62),
 		},
 		{
-			-- Nudges toward the board-camera toggle (MainGui.LeftBar.Tools.CamButtonHost,
-			-- CameraController.Toggle) without forcing the view switch ourselves — a soft
-			-- highlight so a player who wants to actually see the drop can find the button,
-			-- but the step still completes on its own via ScoreBalls either way.
-			text = "Watch where the marble drops... (try the camera button!)",
-			highlight = { Element = "MainGui.LeftBar.Tools.CamButtonHost", Padding = 6 },
-			complete = { Kind = "ScoreBalls", Count = 1 },
-			boxPosition = UDim2.fromScale(0.75, 0.80),
+			-- WatchPlotBank turns the nicer board view ON, then waits for the marble to finish
+			-- falling and bank into the plot (PlotNet.SpawnPlotBall) before advancing.
+			text = "Watch your marble drop all the way into your plot!",
+			complete = { Kind = "WatchPlotBank", Count = 1 },
+			boxPosition = UDim2.fromScale(0.5, 0.82),
 		},
 		{
-			text = "Upgrade Base Bonus to increase multipliers.",
+			-- Now teach the toggle: highlight the camera button (HighlightDim = 1 so nothing else
+			-- darkens — they should still see the board), complete when they press it to turn the
+			-- board view back off. The button visual is kept in sync (MiscUI mirrors Toggled), so
+			-- one press flips it and completes this step.
+			text = "Now tap the camera button to return to your normal view.",
+			highlight = { Element = "MainGui.LeftBar.Tools.CamButtonHost", Padding = 6, HighlightDim = 1 },
+			complete = { Kind = "DisableBoardView" },
+			boxPosition = UDim2.fromScale(0.72, 0.80),
+		},
+		{
+			text = "Step on the COLLECT ALL platform to bank your marble's cash!",
+			arrow = { Kind = "PlotCollectPad" },
+			complete = { Kind = "ScoreBalls", Count = 1 },
+			boxPosition = UDim2.fromScale(0.5, 0.62),
+		},
+		{
+			text = "Turn on AUTO at your plot so it launches for you.",
+			arrow = { Kind = "SlotAutoSign" },
+			complete = { Kind = "EnableAuto" },
+			boxPosition = UDim2.fromScale(0.5, 0.62),
+		},
+		{
+			text = "Last step — upgrade your Mult bonus for bigger payouts!",
 			arrow = { Kind = "UpgradeShopTrack", Track = "BaseAdditive" },
 			complete = { Kind = "BuyUpgrade", Track = "BaseAdditive" },
 			boxPosition = UDim2.fromScale(0.75, 0.80),
-		},
-		{
-			text = "Upgrade your bet size to make more cash!",
-			arrow = { Kind = "UpgradeShopTrack", Track = "MaxBet" },
-			complete = { Kind = "BuyUpgrade", Track = "MaxBet" },
-			boxPosition = UDim2.fromScale(0.75, 0.80),
-		},
-		{
-			text = "Launch two more marbles.",
-			highlight = { Position = UDim2.fromOffset(960, 986), Size = UDim2.fromOffset(528, 183), HighlightDim = 0.9 },
-			complete = { Kind = "LaunchBalls", Count = 2 },
-			boxPosition = UDim2.fromScale(0.5, 0.62),
-		},
-		{
-			text = "Step on the pad to claim your FREE marble box!",
-			arrow = { Kind = "FreeCratePad" },
-			complete = { Kind = "TouchFreeCratePad" },
-			boxPosition = UDim2.fromScale(0.5, 0.62),
 		},
 	} :: { Step },
 	-- How dark the screen goes around a step's highlighted rect: the BackgroundTransparency of
@@ -130,27 +172,9 @@ local Tutorial = {
 			},
 		},
 	},
-	-- Third tutorial: fires the first time a skin other than the default Classic is
-	-- unlocked — step 1 opens the LOADOUT menu (auto-completes if it's already open),
-	-- step 2 waits for a skin to land in a bonus slot. Run-once
-	-- (Stats.completedLoadoutTutorial).
-	Loadout = {
-		Steps = {
-			{
-				text = "You unlocked a new marble! Open the LOADOUT menu.",
-				boxPosition = UDim2.fromScale(0.75, 0.80),
-				highlight = { Element = "MainGui.LeftBar.TriggerQuad.LoadoutTriggerHost" },
-				complete = { Kind = "OpenLoadout" },
-			},
-			{
-				text = "Equip the best possible loadout for maximum bonus cash.",
-				boxPosition = UDim2.fromScale(0.75, 0.80),
-				highlight = { Element = "LoadoutGui.Panel.EquipBestHost" },
-				complete = { Kind = "EquipLoadoutSlot" },
-			},
-		},
-	},
-	-- Fourth tutorial: fires the first time ANY ball-tuning axis (a Config/Upgrades Axes
+	-- (The standalone Loadout tutorial was removed — the reworked main Steps above now walk the
+	-- player through rolling, opening the loadout, and Equip Best as part of the join flow.)
+	-- Tuning tutorial: fires the first time ANY ball-tuning axis (a Config/Upgrades Axes
 	-- track: Arc, Angle, Size, Elasticity) gains a tier — highlights the ball-tuning menu
 	-- trigger and waits for the player to open it. Run-once (Stats.completedTuningTutorial).
 	Tuning = {

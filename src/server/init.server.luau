@@ -36,6 +36,7 @@ local DailyRewardService = require(script.Services.DailyRewardService)
 local MetricsService = require(script.Services.MetricsService)
 local LoadoutService = require(script.Services.LoadoutService)
 local DayNightService = require(script.Services.DayNightService)
+local WeatherService = require(script.Services.WeatherService)
 local ObstacleService = require(script.Services.ObstacleService)
 local TeleportService = require(script.Services.TeleportService)
 local OverheadStatsService = require(script.Services.OverheadStatsService)
@@ -135,6 +136,10 @@ BallPlotService.InitServer()
 MetricsService.Init()
 -- World-behaviour services (independent of the gameplay pipeline above).
 DayNightService.Init()
+-- WeatherService: captures the authored Lighting/Atmosphere baseline for its "Clear" restore
+-- target, so it must run after the place's Lighting is in its normal resting state (true by
+-- this point — nothing before it touches Lighting/Atmosphere).
+WeatherService.Init()
 ObstacleService.Init()
 TeleportService.Init()
 -- OverheadStatsService after Stats/Prestige/Cosmetic (it renders their signals).

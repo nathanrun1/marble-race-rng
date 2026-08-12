@@ -1,8 +1,9 @@
 --!strict
 -- Daily quests (QuestsConfig): every UTC day each player gets Count quests drawn from
 -- the templates with randomized targets; completing one pays CC (the cosmetics currency —
--- flat amounts, since skin prices don't scale with prestige). Short-session goals + a
--- reason to come back tomorrow, feeding the skin-collection loop.
+-- flat amounts, since skin prices don't scale with prestige) IMMEDIATELY — there is no
+-- separate claim step. Short-session goals + a reason to come back tomorrow, feeding the
+-- skin-collection loop.
 --
 -- Passive data service, PlaytimeBonusService-shaped: DataService owns the lifecycle
 -- (ApplyData / SerializeData / Clear) — this never touches a DataStore. Persisted state
@@ -11,8 +12,8 @@
 --
 -- Progress is tracked purely from server-side signals (ball banks, coin credits, upgrade
 -- counts, prestiges), so it can't be spoofed by a client remote. Per-ball metrics push to
--- the client on a small throttle (banks can happen many times a second); completions and
--- claims push immediately.
+-- the client on a small throttle (banks can happen many times a second); completions
+-- (which also pay out, see grantIfComplete) push immediately.
 
 local RS = game:GetService("ReplicatedStorage")
 local SSS = game:GetService("ServerScriptService")
@@ -31,6 +32,7 @@ local CosmeticService = require(SSS.Scripts.Services.CosmeticService)
 local StatsService = require(SSS.Scripts.Services.StatsService)
 local PrestigeService = require(SSS.Scripts.Services.PrestigeService)
 local QuestNet = require(RS.Shared.Remote.QuestNet)
+local FxNet = require(RS.Shared.Remote.FxNet)
 
 local QuestService = {}
 
@@ -40,7 +42,7 @@ local COMPLETE_WARN_LIFETIME = 4
 local ROLLOVER_CHECK_INTERVAL = 30 -- seconds between UTC-day rollover checks
 local PUSH_INTERVAL = 1.5          -- seconds between throttled progress pushes to a client
 
--- (player, info) — fired on load, regen, progress, completion, and claim.
+-- (player, info) — fired on load, regen, progress, and completion (which also pays out).
 QuestService.Changed = Signal.new()
 
 -- One persisted quest. The CC reward is locked in at generation.
@@ -48,8 +50,8 @@ export type QuestSave = {
 	key: string,    -- QuestsConfig.Templates key
 	target: number,
 	progress: number,
-	claimed: boolean,
-	reward: number, -- CC paid on claim
+	claimed: boolean, -- true the instant progress hits target (grantIfComplete) — no manual step
+	reward: number, -- CC, paid out the instant the quest completes
 }
 export type QuestData = {
 	day: number, -- UTC day (floor(os.time() / 86400)) the set was generated for
@@ -63,8 +65,8 @@ export type QuestInfo = {
 	target: number,
 	progress: number,
 	completed: boolean,
-	claimed: boolean,
-	reward: number, -- CC paid on claim
+	claimed: boolean, -- true the instant progress hits target (grantIfComplete) — no manual step
+	reward: number, -- CC, paid out the instant the quest completes
 }
 export type Info = {
 	day: number,
@@ -176,8 +178,26 @@ local function regenerate(player: Player, announce: boolean)
 	fireChanged(player)
 end
 
+-- Pays a quest's reward the instant it completes — no manual claim step. Idempotent
+-- (no-ops if already claimed or not yet at target), so it's safe to call speculatively:
+-- report()'s completion edge, and ApplyData migrating an old save that landed
+-- already-complete-but-unclaimed (from before rewards paid out automatically).
+local function grantIfComplete(player: Player, q: QuestSave)
+	if q.claimed or q.progress < q.target then
+		return
+	end
+	q.claimed = true
+	-- Fly BEFORE the grant (ordered delivery, same contract as StarterQuestService): the
+	-- client's live-sum hold seeds from the pre-grant balance, then the reward streams
+	-- into the Diamonds readout.
+	FxNet.PlayCurrencyFly:FireClient(player, "Diamonds", nil, q.reward)
+	CosmeticService.AddCC(player, q.reward)
+	WarnUI.Warn(player, "Quest Complete: " .. questText(q) .. "! +" .. StringUtils.FormatShort(q.reward) .. " Diamonds", QUEST_GREEN, COMPLETE_WARN_LIFETIME)
+	SoundService.PlayForClient(player, { soundId = SoundsConfig.Combo })
+end
+
 -- Advance a quest's progress. "count" templates accumulate (clamped at target); "best"
--- templates keep the high-water mark. Completion moments announce immediately; plain
+-- templates keep the high-water mark. Completion pays out and pushes immediately; plain
 -- progress is pushed on the PUSH_INTERVAL throttle.
 local function report(player: Player, key: string, amount: number)
 	local data = states[player.UserId]
@@ -195,31 +215,12 @@ local function report(player: Player, key: string, amount: number)
 		end
 		q.progress = new
 		if q.progress >= q.target then
-			WarnUI.Warn(player, "Quest Complete: " .. questText(q) .. "!", QUEST_GREEN, COMPLETE_WARN_LIFETIME)
-			SoundService.PlayForClient(player, { soundId = SoundsConfig.Collect2 })
+			grantIfComplete(player, q)
 			fireChanged(player)
 		else
 			dirty[player.UserId] = true
 		end
 	end
-end
-
--- Claim one completed quest by index. Returns the Diamonds granted (0 if not claimable).
-function QuestService.Claim(player: Player, index: number): number
-	local data = states[player.UserId]
-	if not data then
-		return 0
-	end
-	local q = data.quests[index]
-	if not q or q.claimed or q.progress < q.target then
-		return 0
-	end
-	q.claimed = true
-	CosmeticService.AddCC(player, q.reward)
-	WarnUI.Warn(player, "Quest Reward: " .. StringUtils.FormatShort(q.reward) .. " Diamonds", QUEST_GREEN, 2.5)
-	SoundService.PlayForClient(player, { soundId = SoundsConfig.Combo })
-	fireChanged(player)
-	return q.reward
 end
 
 ----------------------------------------------------------------
@@ -261,6 +262,12 @@ function QuestService.ApplyData(player: Player, saved: QuestData?)
 	local data = sanitize(saved)
 	if data and data.day == currentDay() then
 		states[player.UserId] = data
+		-- Migrate a save from before rewards auto-granted: a quest that finished but never
+		-- got claimed (the old manual-claim UI is gone, so it would otherwise be stuck
+		-- forever) pays out right here, same as a live completion.
+		for _, q in data.quests do
+			grantIfComplete(player, q)
+		end
 		fireChanged(player)
 	else
 		regenerate(player, false)
@@ -285,10 +292,6 @@ function QuestService.Init()
 	changedRE = QuestNet.QuestsChanged
 	;QuestNet.GetQuestInfo.OnServerInvoke = function(player: Player)
 		return QuestService.GetInfo(player)
-	end
-	;QuestNet.ClaimQuest.OnServerInvoke = function(player: Player, index: any)
-		local granted = if type(index) == "number" then QuestService.Claim(player, index) else 0
-		return { granted = granted, info = QuestService.GetInfo(player) }
 	end
 
 	-- Per-ball metrics off the banking breakdown. Lazy-require to avoid a load-time

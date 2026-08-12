@@ -31,6 +31,8 @@
 --   /show                  print current tiers + loadout to the server console
 --   /reset                 full fresh-join reset (tiers 0, loadout default, prestige 0, money reset)
 --   /podium                load your character onto all 3 rebirths-podium spots (test)
+--   /weather <name|clear>  set the server weather (Rain | Snow | AutumnLeaves | clear) — the
+--                          only way anything currently drives WeatherService; not gameplay
 --   /help                  list commands
 --
 -- To reset everything, restart the playtest (no persistence yet, so a rejoin
@@ -57,6 +59,8 @@ local LoadoutService = require(SSS.Scripts.Services.LoadoutService)
 local StatsService = require(SSS.Scripts.Services.StatsService)
 local MetricsService = require(SSS.Scripts.Services.MetricsService)
 local PhysicalLeaderboardService = require(SSS.Scripts.Services.PhysicalLeaderboardService)
+local WeatherService = require(SSS.Scripts.Services.WeatherService)
+local WeatherConfig = require(RS.Shared.Config.Weather)
 local BallSkins = require(RS.Shared.BallSkins)
 local PolicyGate = require(RS.Shared.PolicyGate)
 local DevNet = require(RS.Shared.Remote.DevNet)
@@ -994,7 +998,7 @@ end
 -- Returns a short result string for the console.
 local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4: string?): string?
 	if cmd == "help" then
-		return "commands: tier, maxall, bet, axis, money, cc, diamonds, skin, allskins, loadout, policy, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics"
+		return "commands: tier, maxall, bet, axis, money, cc, diamonds, skin, allskins, loadout, policy, avgball, preset, test, comprtest, geotest, axistest, show, reset_upgrades, reset, prestige, pmoney, playtime, attempt_prestige, podium, metrics, weather"
 	elseif cmd == "show" then
 		showState(player)
 		return nil
@@ -1234,6 +1238,31 @@ local function handle(player: Player, cmd: string, a2: string?, a3: string?, a4:
 		task.spawn(MetricsService.PrintReport, days)
 		return string.format("printing metrics report (last %d days) to server console",
 			math.clamp(math.floor(days or AdminConfig.Metrics.ReportDays), 1, 90))
+	elseif cmd == "weather" then
+		local names = { "clear" }
+		for name in WeatherConfig.Presets do
+			table.insert(names, name)
+		end
+		local usage = "usage: /weather <" .. table.concat(names, "|") .. ">"
+		local arg = a2 and a2:lower()
+		if not arg then
+			return usage
+		end
+		local key = if arg == "clear" then "Clear" else nil
+		if not key then
+			-- Case-insensitive match against the config's preset names (Rain/Snow/AutumnLeaves).
+			for name in WeatherConfig.Presets do
+				if name:lower() == arg then
+					key = name
+					break
+				end
+			end
+		end
+		if not key then
+			return "unknown weather '" .. a2 .. "' -- " .. usage
+		end
+		WeatherService.SetWeather(key)
+		return "weather -> " .. key
 	elseif cmd == "attempt_prestige" then
 		local ok, reason = PrestigeService.Prestige(player)
 		if ok then

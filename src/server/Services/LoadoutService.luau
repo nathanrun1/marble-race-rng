@@ -13,7 +13,6 @@
 local SSS = game:GetService("ServerScriptService")
 local RS = game:GetService("ReplicatedStorage")
 
-local BallSkins = require(RS.Shared.BallSkins)
 local CosmeticBonus = require(RS.Shared.CosmeticBonus)
 local Signal = require(RS.Shared.Utility.Signal)
 local CosmeticService = require(SSS.Scripts.Services.CosmeticService)
@@ -171,11 +170,11 @@ function LoadoutService.ApplyData(player: Player, saved: LoadoutData?)
 			end
 		end
 	end
-	-- At least one ball always equipped: brand-new players (no saved loadout) and any save
-	-- that validated down to nothing both start on Classic in slot 1.
-	if countEquipped(loadout) == 0 then
-		loadout["1"] = BallSkins.GetDefaultId()
-	end
+	-- No Classic auto-seed: fresh players own nothing and start with an EMPTY loadout (the
+	-- join tutorial walks them through rolling their first marble and equipping it). An empty
+	-- slot just opens the loadout menu when stepped on, and launchSlot no-ops it — nothing
+	-- assumes a ball is pre-equipped. (SetSlot still refuses to clear the LAST equipped ball,
+	-- so once populated the loadout can't be emptied back out by the player.)
 	data[player.UserId] = loadout
 	announce(player)
 end

@@ -619,6 +619,14 @@ function BallPlotService.InitClient()
 		BallEffects.SetValueUI(ball, ballValue[ball])
 		refreshCollect()
 
+		-- The falling ball SURVIVES this merge (it becomes the tracked plot ball), so it still
+		-- needs the same landing-momentum damp a normal, non-merging ball gets on its first
+		-- PlotBounds overlap. launchShot applies that damp only when there's NO onBoundsHit
+		-- override — and this function IS that override — so without damping here a marble that
+		-- merges (its skin already at MaxPerSkin) keeps full landing speed and skids across or
+		-- out of the plot instead of slowing like every other ball.
+		ball.AssemblyLinearVelocity *= BallPlotConfig.BoundsHitSlowFactor
+
 		local touchedConn: RBXScriptConnection
 		touchedConn = ball.Touched:Connect(function(obj: BasePart)
 			local char = Players.LocalPlayer.Character

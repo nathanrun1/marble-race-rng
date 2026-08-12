@@ -23,8 +23,16 @@ local UpgradeLockService = require(SSS.Scripts.Services.UpgradeLockService)
 local SoundService = require(RS.Shared.SoundService)
 local ProductService = require(RS.Shared.ProductService)
 local UpgradeNet = require(RS.Shared.Remote.UpgradeNet)
+local Signal = require(RS.Shared.Utility.Signal)
 
 local UpgradeService = {}
+
+-- Fires when a player buys a ZONE (a MaxBet tier) through Purchase — the deliberate
+-- "advance a zone" action, distinct from the generic StatsService.UpgradesAdded (which fires
+-- for every track). Signature (player, newTier). Consumed by StarterQuestService's
+-- "UpgradeZone" mission. Fired only from Purchase, so free grants (dev product / prestige
+-- perk / starter pack via raiseTrack) don't count toward the quest.
+UpgradeService.ZoneUpgraded = Signal.new()
 
 -- Instant-tiers dev product: grants this many free tiers on the chosen track.
 -- MonetizationConfig.Products ids are authored as strings; the Marketplace APIs use numbers.
@@ -134,6 +142,7 @@ function UpgradeService.Purchase(player: Player, track: string): PurchaseResult
 	-- as a bug.
 	if track == "MaxBet" then
 		ProfileService.SetBetTier(player, tier + 1)
+		UpgradeService.ZoneUpgraded:Fire(player, tier + 1)
 	end
 	return { ok = true, upgrades = UpgradeService.GetAllInfo(player) }
 end

@@ -25,11 +25,10 @@ local function remoteFunction(name: string): RemoteFunction
 end
 
 return {
-	-- Server -> Client: (info: Info) — quest set/progress snapshot (throttled push).
+	-- Server -> Client: (info: Info) — quest set/progress snapshot (throttled push). A
+	-- completed quest's reward is already paid by the time this arrives (QuestService pays
+	-- out the instant progress hits target) — there is no separate claim remote.
 	QuestsChanged = remoteEvent("QuestsChanged"),
 	-- Client -> Server invoke: () -> Info.
 	GetQuestInfo = remoteFunction("GetQuestInfo"),
-	-- Client -> Server invoke: (questIndex: number) -> (ok: boolean, reward: number?) — claim
-	-- a completed quest's CC reward.
-	ClaimQuest = remoteFunction("ClaimQuest"),
 }

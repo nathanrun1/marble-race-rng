@@ -11,7 +11,16 @@ local RS = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local CameraConfig = require(RS.Shared.Config.Camera)
+local Signal = require(RS.Shared.Utility.Signal)
 local CameraController = {}
+
+-- Fires the new board-view state on EVERY change to it — a player press of the camera button
+-- AND a scripted SetBoardView (the join tutorial enabling the view). MiscUI keeps the camera
+-- button's toggled visual in lockstep with this, so the button never goes stale (otherwise a
+-- tutorial-enabled view needs two presses to turn off — the first just catches the button up).
+-- The tutorial's camera step still only completes on the state going false (the player turning
+-- it off), so a scripted enable firing `true` here is harmless to it.
+CameraController.Toggled = Signal.new()
 
 local DEFAULT_FOV = 70
 local TWEEN_INFO = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -73,10 +82,15 @@ local function refresh()
 	end
 end
 
--- Switch the board view on or off.
+-- Switch the board view on or off. Fires Toggled on an actual change (no-op if already there,
+-- so re-enabling an on view doesn't spuriously re-fire).
 function CameraController.SetBoardView(enabled: boolean)
+	if boardView == enabled then
+		return
+	end
 	boardView = enabled
 	refresh()
+	CameraController.Toggled:Fire(boardView)
 end
 
 -- Switch the ball-tuning view on or off (driven by the tuning menu open/close).
@@ -93,10 +107,10 @@ function CameraController.SetTutorialView(shot: Shot?)
 	refresh()
 end
 
--- Flip the board view. Returns the new state.
+-- Flip the board view. Returns the new state. Routes through SetBoardView so the single
+-- change+Toggled path stays in one place.
 function CameraController.Toggle(): boolean
-	boardView = not boardView
-	refresh()
+	CameraController.SetBoardView(not boardView)
 	return boardView
 end
 
@@ -105,11 +119,15 @@ function CameraController.IsBoardView(): boolean
 end
 
 function CameraController.Init()
-	-- A CurrentCamera swap (e.g. respawn) resets to Custom, so drop our view state.
+	-- A CurrentCamera swap (e.g. respawn) resets to Custom, so drop our view state. Fire Toggled
+	-- if the board view was on, so MiscUI's button visual follows it back to off.
 	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-		boardView = false
 		tuningView = false
 		tutorialShot = nil
+		if boardView then
+			boardView = false
+			CameraController.Toggled:Fire(false)
+		end
 	end)
 end
 

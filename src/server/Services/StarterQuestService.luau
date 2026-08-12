@@ -28,6 +28,10 @@ local StatsService = require(SSS.Scripts.Services.StatsService)
 local PrestigeService = require(SSS.Scripts.Services.PrestigeService)
 local BallService = require(SSS.Scripts.Services.BallService)
 local UpgradeLockService = require(SSS.Scripts.Services.UpgradeLockService)
+-- UpgradeService is required LAZILY in Init() (not here): a top-level require closes the
+-- documented cycle UpgradeService -> ProductService -> DataService -> StarterQuestService.
+-- Deferring it to Init() (after every module has loaded) dodges it, same as PrestigeService/
+-- QuestService do elsewhere.
 local StarterQuestNet = require(RS.Shared.Remote.StarterQuestNet)
 local FxNet = require(RS.Shared.Remote.FxNet)
 
@@ -253,6 +257,11 @@ function StarterQuestService.Init()
 
 	UpgradeLockService.Purchased:Connect(function(player: Player, _lockId: string, _price: number, _tracks: { string })
 		report(player, "UnlockLock", 1)
+	end)
+
+	local UpgradeService = require(SSS.Scripts.Services.UpgradeService)
+	UpgradeService.ZoneUpgraded:Connect(function(player: Player, _newTier: number)
+		report(player, "UpgradeZone", 1)
 	end)
 
 	PrestigeService.Prestiged:Connect(function(player: Player, _newCount: number)

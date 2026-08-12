@@ -171,12 +171,20 @@ function MiscUI.Init()
 	local tools = leftBar:WaitForChild("Tools")
 
 	-- Camera: gold while the alternate board view is active.
-	UIButton.bind(tools:WaitForChild("CamButtonHost"), {
+	local camHandle = UIButton.bind(tools:WaitForChild("CamButtonHost"), {
 		toggle = { initial = CameraController.IsBoardView(), onChange = CameraController.SetBoardView },
 		hoverScale = 1.08,
 		idleGradient = BLUE,
 		activeGradient = GOLD,
 	})
+	-- Keep the button's toggled visual in lockstep with the ACTUAL board-view state, including
+	-- when it's changed from elsewhere (the join tutorial enables the view directly). Without
+	-- this the button's internal state goes stale, so the next press just catches it up instead
+	-- of flipping the view — the "have to click twice to go back" bug. fireChange = false: only
+	-- mirror the visual, don't re-invoke onChange (which would loop back into SetBoardView).
+	CameraController.Toggled:Connect(function(active: boolean)
+		camHandle.SetActive(active, false)
+	end)
 
 	-- Ball visibility: red + MuteIcon while other players' balls are hidden.
 	bindMuteToggle(tools:WaitForChild("BallVisibleButtonHost"), BallEffects.AreBallsHidden(), function(hidden)

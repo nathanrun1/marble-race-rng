@@ -1,12 +1,17 @@
 --!strict
--- Daily quests panel (client of QuestService: GetQuestInfo / ClaimQuest / QuestsChanged).
+-- Daily quests panel (client of QuestService: GetQuestInfo / QuestsChanged). A quest's
+-- reward pays out automatically the instant it completes (QuestService.grantIfComplete) —
+-- there's no claim button and completing one does NOT pop the panel open on its own; a row
+-- just shows a done badge once its bar fills. Opening the panel is purely a manual "check
+-- my progress" action.
+--
 -- The primary roots are Studio-authored on MainGui.LeftBar: QuestTriggerHost (UIButton
 -- contract, same structure as PlaytimeTriggerHost/TuneTriggerHost) opens LeftBar.QuestPanel
 -- and hides itself, mirroring PlaytimeUI's open/close (a UIScale grow/shrink so the left bar
 -- reflows). This module binds the trigger, fills the panel — title, reset countdown, one
--- row per quest with a progress bar and claim button — and keeps it live. Panel children
--- (Title/Reset/Close/Rows) are resolved by name and created when missing, so a panel
--- copied from a previous runtime build keeps working.
+-- row per quest with a progress bar — and keeps it live. Panel children (Title/Reset/Close/
+-- Rows) are resolved by name and created when missing, so a panel copied from a previous
+-- runtime build keeps working.
 --
 -- A second, always-visible presentation is built into any world SurfaceGui tagged
 -- TagsConfig.QuestUI (same CollectionService tag-discovery template as CosmeticsShop) —
@@ -21,12 +26,10 @@ local TweenService = game:GetService("TweenService")
 
 local UIButton = require(RS.Shared.Utility.UIButton)
 local StringUtils = require(RS.Shared.Utility.StringUtils)
-local SoundsConfig = require(RS.Shared.Config.Sounds)
 local TagsConfig = require(RS.Shared.Config.Tags)
 local QuestUI = {}
 
 local player = Players.LocalPlayer
-local CurrencyFlyUI = require(script.Parent.CurrencyFlyUI)
 local QuestNet = require(RS.Shared.Remote.QuestNet)
 
 -- Mirrors QuestService.Info / QuestInfo (server-computed).
@@ -55,9 +58,7 @@ local REWARD_AMBER = "#d89c18" -- rich-text hex for the reward suffix
 local BAR_BG       = Color3.fromRGB(214, 218, 232)
 local BAR_FILL     = Color3.fromRGB(64, 200, 99)
 local BAR_DONE     = Color3.fromRGB(255, 196, 40)
-local CLAIM_GREEN  = Color3.fromRGB(64, 200, 99)
-local GLOW_GOLD    = Color3.fromRGB(255, 220, 120)
-local GLOW_WHITE   = Color3.fromRGB(255, 255, 255)
+local DONE_GREEN   = Color3.fromRGB(64, 200, 99) -- done-badge checkmark color
 local PANEL_BG     = Color3.fromRGB(255, 255, 255) -- world-surface view background
 
 local ROW_HEIGHT = 66
@@ -68,8 +69,7 @@ type Row = {
 	text: TextLabel,
 	barFill: Frame,
 	counter: TextLabel,
-	button: TextButton,
-	handle: UIButton.Handle,
+	doneBadge: TextLabel, -- a checkmark, shown once the reward has paid out (always == completed)
 }
 
 -- One row-rendering target: the LeftBar panel is one View, and every world SurfaceGui
@@ -86,7 +86,6 @@ type View = {
 local views: { View } = {}
 
 local triggerHost: GuiObject? = nil
-local triggerHandle: UIButton.Handle? = nil
 local panel: GuiObject? = nil
 
 local latestInfo: Info? = nil
@@ -95,18 +94,7 @@ local isOpen = false
 local openTween: Tween? = nil
 local restScale = 1 -- the panel UIScale's authored rest value (captured at open)
 
--- Forward-declared: onInfo (below) auto-opens the panel on a fresh completion, but
--- openPanel's real definition lives further down in the Open/Close section.
-local openPanel: () -> ()
-
--- claimable[key] mirrors "completed and not claimed" as of the last onInfo call, so a
--- completed->claimed or not-completed->completed edge can be told apart from "still
--- sitting completed, already saw it" (which must NOT keep re-opening the panel).
-local prevClaimable: { [string]: boolean } = {}
-local sawFirstInfo = false -- first onInfo call only seeds prevClaimable, never auto-opens
-
 local getInfoRF: RemoteFunction
-local claimRF: RemoteFunction
 
 ----------------------------------------------------------------
 -- Construction helpers
@@ -118,57 +106,7 @@ local function makeCorner(parent: Instance, radius: number)
 	c.Parent = parent
 end
 
--- A UIButton-contract button (Host > { Shadow, Button > Hover }) sized by the caller.
-local function makeButton(parent: Instance, size: UDim2, position: UDim2, anchor: Vector2, text: string, textSize: number, onClick: () -> ()): (Frame, TextButton, UIButton.Handle)
-	local host = Instance.new("Frame")
-	host.Name = "ButtonHost"
-	host.AnchorPoint = anchor
-	host.Position = position
-	host.Size = size
-	host.BackgroundTransparency = 1
-	host.Parent = parent
-
-	local shadow = Instance.new("Frame")
-	shadow.Name = "Shadow"
-	shadow.Size = UDim2.fromScale(1, 1)
-	shadow.Position = UDim2.fromOffset(0, 3)
-	shadow.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
-	shadow.BorderSizePixel = 0
-	shadow.ZIndex = 1
-	shadow.Parent = host
-	makeCorner(shadow, 8)
-
-	local button = Instance.new("TextButton")
-	button.Name = "Button"
-	button.Size = UDim2.fromScale(1, 1)
-	button.BackgroundColor3 = CLAIM_GREEN
-	button.AutoButtonColor = false
-	button.BorderSizePixel = 0
-	button.Font = Enum.Font.GothamBold
-	button.TextSize = textSize
-	button.Text = text
-	button.TextColor3 = Color3.fromRGB(255, 255, 255)
-	button.TextStrokeColor3 = Color3.new(0, 0, 0)
-	button.TextStrokeTransparency = 0.6
-	button.ZIndex = 2
-	button.Parent = host
-	makeCorner(button, 8)
-
-	local hover = Instance.new("Frame")
-	hover.Name = "Hover"
-	hover.Size = UDim2.fromScale(1, 1)
-	hover.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	hover.BackgroundTransparency = 1
-	hover.BorderSizePixel = 0
-	hover.ZIndex = 3
-	hover.Parent = button
-	makeCorner(hover, 8)
-
-	local handle = UIButton.bind(host, { onClick = onClick, pressOffset = 3, clickSound = SoundsConfig.Upgrade })
-	return host, button, handle
-end
-
-local function buildRow(parent: Instance, index: number, onClaim: () -> ()): Row
+local function buildRow(parent: Instance, index: number): Row
 	local frame = Instance.new("Frame")
 	frame.Name = "QuestRow"
 	frame.Size = UDim2.new(1, 0, 0, ROW_HEIGHT)
@@ -194,7 +132,7 @@ local function buildRow(parent: Instance, index: number, onClaim: () -> ()): Row
 	text.Name = "Text"
 	text.BackgroundTransparency = 1
 	text.Position = UDim2.fromScale(0, 0)
-	text.Size = UDim2.new(1, -100, 0, 20)
+	text.Size = UDim2.new(1, -50, 0, 20)
 	text.Font = Enum.Font.GothamBold
 	text.TextSize = 15
 	text.RichText = true
@@ -205,12 +143,13 @@ local function buildRow(parent: Instance, index: number, onClaim: () -> ()): Row
 	text.Text = ""
 	text.Parent = frame
 
-	-- Progress bar (bottom-left), with the x/y counter to its right.
+	-- Progress bar (bottom-left), with the x/y counter to its right; the done badge sits
+	-- in the reclaimed space the old CLAIM button used (reward auto-grants now).
 	local bar = Instance.new("Frame")
 	bar.Name = "Bar"
 	bar.AnchorPoint = Vector2.new(0, 1)
 	bar.Position = UDim2.new(0, 0, 1, -4)
-	bar.Size = UDim2.new(1, -180, 0, 12)
+	bar.Size = UDim2.new(1, -94, 0, 12)
 	bar.BackgroundColor3 = BAR_BG
 	bar.BorderSizePixel = 0
 	bar.Parent = frame
@@ -228,8 +167,8 @@ local function buildRow(parent: Instance, index: number, onClaim: () -> ()): Row
 	counter.Name = "Counter"
 	counter.BackgroundTransparency = 1
 	counter.AnchorPoint = Vector2.new(0, 1)
-	counter.Position = UDim2.new(1, -172, 1, -2)
-	counter.Size = UDim2.fromOffset(70, 16)
+	counter.Position = UDim2.new(1, -90, 1, -2)
+	counter.Size = UDim2.fromOffset(40, 16)
 	counter.Font = Enum.Font.GothamMedium
 	counter.TextSize = 12
 	counter.TextXAlignment = Enum.TextXAlignment.Left
@@ -238,17 +177,24 @@ local function buildRow(parent: Instance, index: number, onClaim: () -> ()): Row
 	counter.Text = ""
 	counter.Parent = frame
 
-	local _, button, handle = makeButton(
-		frame,
-		UDim2.fromOffset(88, 32),
-		UDim2.new(1, 0, 0.5, 0),
-		Vector2.new(1, 0.5),
-		"CLAIM",
-		14,
-		onClaim
-	)
+	-- Static checkmark badge (no click target — the reward already paid out the instant
+	-- the bar filled); toggled purely by updateRow off q.completed.
+	local doneBadge = Instance.new("TextLabel")
+	doneBadge.Name = "Done"
+	doneBadge.AnchorPoint = Vector2.new(1, 0.5)
+	doneBadge.Position = UDim2.new(1, 0, 0.5, 0)
+	doneBadge.Size = UDim2.fromOffset(40, 40)
+	doneBadge.BackgroundTransparency = 1
+	doneBadge.Font = Enum.Font.GothamBold
+	doneBadge.TextSize = 26
+	doneBadge.TextColor3 = DONE_GREEN
+	doneBadge.TextStrokeColor3 = Color3.new(0, 0, 0)
+	doneBadge.TextStrokeTransparency = 0.6
+	doneBadge.Text = "✓"
+	doneBadge.Visible = false
+	doneBadge.Parent = frame
 
-	return { frame = frame, text = text, barFill = barFill, counter = counter, button = button, handle = handle }
+	return { frame = frame, text = text, barFill = barFill, counter = counter, doneBadge = doneBadge }
 end
 
 ----------------------------------------------------------------
@@ -388,21 +334,6 @@ end
 -- Data → UI
 ----------------------------------------------------------------
 
-local function claim(index: number)
-	-- Hold the Diamonds readout BEFORE the invoke: the grant's push lands ahead of the
-	-- invoke's return, and the fly's live sum must seed from the pre-claim balance.
-	local reward = if latestInfo and latestInfo.quests[index] then latestInfo.quests[index].reward else nil
-	local release = CurrencyFlyUI.HoldBalance("Diamonds")
-	local res = claimRF:InvokeServer(index)
-	if res and res.granted then
-		CurrencyFlyUI.Play("Diamonds", nil, reward) -- quest rewards pay Diamonds
-	end
-	release()
-	if res and res.info then
-		QuestUI.onInfo(res.info :: Info)
-	end
-end
-
 local function signatureOf(info: Info): string
 	local parts = { tostring(info.day) }
 	for _, q in info.quests do
@@ -424,21 +355,10 @@ local function updateRow(row: Row, q: QuestInfo)
 	row.barFill.Size = UDim2.fromScale(frac, 1)
 	row.barFill.BackgroundColor3 = if q.completed then BAR_DONE else BAR_FILL
 	row.counter.Text = tostring(q.progress) .. "/" .. tostring(q.target)
-
-	if q.claimed then
-		row.handle.SetGlowing(false)
-		row.handle.SetDisabled(true)
-		row.button.Text = "CLAIMED"
-	elseif q.completed then
-		row.handle.SetDisabled(false)
-		row.handle.SetColor(CLAIM_GREEN)
-		row.handle.SetGlowing(true, GLOW_GOLD)
-		row.button.Text = "CLAIM"
-	else
-		row.handle.SetGlowing(false)
-		row.handle.SetDisabled(true)
-		row.button.Text = "CLAIM"
-	end
+	-- Reward pays out the instant a quest completes (QuestService.grantIfComplete), so
+	-- completed and claimed are always in lockstep by the time the client sees either —
+	-- one flag to check, no separate claimable state.
+	row.doneBadge.Visible = q.completed
 end
 
 -- Rebuild (if the day/quest set changed) and refresh one view's rows from live info.
@@ -447,15 +367,11 @@ local function renderView(view: View, info: Info)
 	if sig ~= view.signature then
 		view.signature = sig
 		for _, row in view.rows do
-			row.handle.Destroy()
 			row.frame:Destroy()
 		end
 		table.clear(view.rows)
 		for i in info.quests do
-			local index = i
-			view.rows[i] = buildRow(view.rowsHolder, i, function()
-				claim(index)
-			end)
+			view.rows[i] = buildRow(view.rowsHolder, i)
 		end
 	end
 	for i, row in view.rows do
@@ -466,41 +382,13 @@ local function renderView(view: View, info: Info)
 	end
 end
 
-local function anyClaimable(info: Info): boolean
-	for _, q in info.quests do
-		if q.completed and not q.claimed then
-			return true
-		end
-	end
-	return false
-end
-
--- Updates prevClaimable from this info and reports whether any quest just crossed
--- not-claimable -> claimable since the LAST call (i.e. a fresh completion this tick, not
--- one we already knew about). Always returns false on the very first call (there's nothing
--- to compare against yet — a quest already sitting completed from a previous session
--- shouldn't auto-open the panel on join).
-local function detectFreshCompletion(info: Info): boolean
-	local any = false
-	for _, q in info.quests do
-		local isNow = q.completed and not q.claimed
-		if sawFirstInfo and isNow and not prevClaimable[q.key] then
-			any = true
-		end
-		prevClaimable[q.key] = isNow
-	end
-	sawFirstInfo = true
-	return any
-end
-
 function QuestUI.onInfo(info: Info)
-	local freshlyCompleted = detectFreshCompletion(info)
-
 	latestInfo = info
 	resetAt = os.clock() + info.resetIn
 
 	-- Prune views whose instances are gone (a streamed-out world kiosk) so one dead view
-	-- can't error the whole refresh, then render the rest.
+	-- can't error the whole refresh, then render the rest. No auto-open here — completing a
+	-- quest just fills in its row/badge; opening the panel is a manual "check progress" action.
 	for i = #views, 1, -1 do
 		local view = views[i]
 		if view.rowsHolder:IsDescendantOf(game) then
@@ -508,17 +396,6 @@ function QuestUI.onInfo(info: Info)
 		else
 			table.remove(views, i)
 		end
-	end
-
-	if triggerHandle then
-		triggerHandle.SetGlowing(anyClaimable(info), GLOW_GOLD, GLOW_WHITE)
-	end
-
-	-- Auto-open on a fresh completion (not on every refresh while it just sits claimable —
-	-- the trigger/row glow above already carries "until claimed" persistently). Don't
-	-- fight the player if they've already got it open, or already closed it back up.
-	if freshlyCompleted and not isOpen then
-		openPanel()
 	end
 end
 
@@ -545,7 +422,7 @@ local function formatCountdown(seconds: number): string
 	return string.format("Resets in %dm %02ds", m, seconds % 60)
 end
 
-function openPanel()
+local function openPanel()
 	local p, t = panel, triggerHost
 	if not p or not t or isOpen then
 		return
@@ -590,7 +467,6 @@ end
 
 function QuestUI.Init()
 	getInfoRF = QuestNet.GetQuestInfo :: RemoteFunction
-	claimRF = QuestNet.ClaimQuest :: RemoteFunction
 	local changedRE = QuestNet.QuestsChanged :: RemoteEvent
 
 	local playerGui = player:WaitForChild("PlayerGui")
@@ -607,7 +483,7 @@ function QuestUI.Init()
 	panel = p
 
 	table.insert(views, buildTitleResetRows(p, true, false))
-	triggerHandle = UIButton.bind(t, { onClick = openPanel, hoverScale = 1.08 })
+	UIButton.bind(t, { onClick = openPanel, hoverScale = 1.08 })
 
 	-- Alternative always-on presentation: any world SurfaceGui tagged QuestUI (same
 	-- CollectionService discovery template as CosmeticsShop).

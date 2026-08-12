@@ -21,6 +21,7 @@ local StarterQuests = {
 	Steps = {
 		{ key = "LaunchBalls", target = 10, reward = 20, text = "Launch %d marbles" },
 		{ key = "BuyUpgrades", target = 3, reward = 20, text = "Buy %d upgrades" },
+		{ key = "UpgradeZone", target = 1, reward = 40, text = "Upgrade your first zone" },
 		{ key = "UnlockLock", target = 1, reward = 40, text = "Unlock your first upgrade lock" },
 		{ key = "Prestige", target = 1, reward = 100, text = "Prestige for the first time" },
 	} :: { StepDef },

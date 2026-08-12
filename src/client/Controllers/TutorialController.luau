@@ -39,15 +39,14 @@ local WorldArrow = require(script.Parent.WorldArrow)
 local CoinPickups = require(script.Parent.CoinPickups)
 local BallTuningUI = require(script.Parent.BallTuningUI)
 local LoadoutUI = require(script.Parent.LoadoutUI)
-local CrateRollUI = require(script.Parent.CrateRollUI)
 local PlaytimeUI = require(script.Parent.PlaytimeUI)
 local QuestUI = require(script.Parent.QuestUI)
-local BallSkins = require(RS.Shared.BallSkins)
 local CosmeticsNet = require(RS.Shared.Remote.CosmeticsNet)
 local CurrencyNet = require(RS.Shared.Remote.CurrencyNet)
 local DataNet = require(RS.Shared.Remote.DataNet)
 local ProfileNet = require(RS.Shared.Remote.ProfileNet)
 local StatsNet = require(RS.Shared.Remote.StatsNet)
+local PlotNet = require(RS.Shared.Remote.PlotNet)
 
 -- Matches UpgradeShop.luau's own (bare, not-in-AttributesConfig) TRACK_ATTR local constant —
 -- the attribute a kiosk part stores its upgrade track under. Kept identical here so an
@@ -101,7 +100,6 @@ local TEXT_STROKE = 0.4
 local steps: { Step } = (TutorialConfig.Steps :: any) :: { Step }
 local cosmeticSteps: { Step } = (TutorialConfig.Cosmetic.Steps :: any) :: { Step }
 local tuningSteps: { Step } = (TutorialConfig.Tuning.Steps :: any) :: { Step }
-local loadoutSteps: { Step } = (((TutorialConfig :: any).Loadout and (TutorialConfig :: any).Loadout.Steps) or {}) :: { Step }
 
 -- The sequence the runner is currently playing. finish() reports activeId to the server
 -- ("main" / "cosmetic" / "tuning") so the right completed-flag is persisted.
@@ -446,11 +444,62 @@ local function resolveFreeCratePad(_spec: ArrowSpec): () -> Vector3?
 	end
 end
 
+-- The Interact (or AutoSign) part of the FIRST plot — the Slot model whose "SlotNum" attribute
+-- is 1, the plot a brand-new player owns. The arrow always points here (not at whichever plot
+-- happens to be nearest), so it's deterministic. Slots are Models tagged TagsConfig.Slot with
+-- child parts "Interact" (the touch-to-launch pad) and optional "AutoSign" (the per-slot auto
+-- toggle); "SlotNum" is the bare attribute SlotInteract stamps on each.
+local SLOT_NUM_ATTR = "SlotNum"
+local FIRST_SLOT_NUM = 1
+local function firstSlotPart(childName: string, fallbackChild: string?): () -> Vector3?
+	return function(): Vector3?
+		for _, model in CollectionService:GetTagged(TagsConfig.Slot) do
+			if model:GetAttribute(SLOT_NUM_ATTR) == FIRST_SLOT_NUM then
+				local part = model:FindFirstChild(childName)
+				if not part and fallbackChild then
+					part = model:FindFirstChild(fallbackChild)
+				end
+				if part and part:IsA("BasePart") then
+					return part.Position
+				end
+				return nil
+			end
+		end
+		return nil
+	end
+end
+
+-- Points at the launch pad of the first plot (its "Interact" touch part).
+local function resolveLaunchPad(_spec: ArrowSpec): () -> Vector3?
+	return firstSlotPart("Interact")
+end
+
+-- Points at the AUTO sign on the first plot (fall back to the pad if it has no AutoSign part).
+local function resolveSlotAutoSign(_spec: ArrowSpec): () -> Vector3?
+	return firstSlotPart("AutoSign", "Interact")
+end
+
+-- Points at the Collect All pad (the PlotCollect-tagged part) where the player banks every
+-- plot ball at once.
+local function resolvePlotCollectPad(_spec: ArrowSpec): () -> Vector3?
+	return function(): Vector3?
+		for _, pad in CollectionService:GetTagged(TagsConfig.PlotCollect) do
+			if pad:IsA("BasePart") then
+				return pad.Position
+			end
+		end
+		return nil
+	end
+end
+
 local ARROW_RESOLVERS: { [string]: (ArrowSpec) -> () -> Vector3? } = {
 	UpgradeShopTrack = resolveUpgradeShopTrack,
 	NearestCoin = resolveNearestCoin,
 	CosmeticsShop = resolveCosmeticsShop,
 	FreeCratePad = resolveFreeCratePad,
+	LaunchPad = resolveLaunchPad,
+	SlotAutoSign = resolveSlotAutoSign,
+	PlotCollectPad = resolvePlotCollectPad,
 }
 
 --------------------------------------------------------------------------------
@@ -730,6 +779,79 @@ local function startTouchFreeCratePad(_spec: CompletionSpec, onComplete: () -> (
 	end
 end
 
+-- "Watch it drop": turn the board view ON so the player watches their marble fall, and complete
+-- when it finishes falling and banks — the server fires PlotNet.SpawnPlotBall (the claimable
+-- plot ball appearing at the plot) exactly at that moment. Count defaults to 1.
+local function startWatchPlotBank(spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	CameraController.SetBoardView(true)
+	local need = (spec.Count :: number?) or 1
+	local count = 0
+	local spawnRE = PlotNet.SpawnPlotBall :: RemoteEvent
+	local conn = spawnRE.OnClientEvent:Connect(function()
+		count += 1
+		if count >= need then
+			onComplete()
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
+-- Teaches the board-view camera toggle: the step ensures the better view is ON on entry
+-- (SetBoardView(true), a no-op if the preceding watch step already enabled it), then completes
+-- when the PLAYER presses the camera button to flip it back off — the button now stays in sync
+-- (MiscUI mirrors CameraController.Toggled), so a single press turns it off and completes here.
+local function startDisableBoardView(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	CameraController.SetBoardView(true)
+	local conn = CameraController.Toggled:Connect(function(enabled: boolean)
+		if not enabled then
+			onComplete()
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
+-- Auto-launch being enabled on ANY plot: profile.autoSlots gaining a `true` value past the
+-- step-start baseline (ProfileChanged). A toggled-off slot is stored as an explicit `false`,
+-- so count only `== true` entries, not mere presence. Baselined like startBuyLuck so a player
+-- who already had auto on somewhere doesn't complete the step instantly.
+local function startEnableAuto(_spec: CompletionSpec, onComplete: () -> ()): () -> ()
+	local getProfileRF = ProfileNet.GetProfile :: RemoteFunction
+	local profileChangedRE = ProfileNet.ProfileChanged :: RemoteEvent
+
+	local function autoCount(profile: any): number
+		local n = 0
+		if type(profile) == "table" and type(profile.autoSlots) == "table" then
+			for _, v in profile.autoSlots do
+				if v == true then
+					n += 1
+				end
+			end
+		end
+		return n
+	end
+
+	local baseline = math.huge
+	task.spawn(function()
+		local ok, profile = pcall(function()
+			return getProfileRF:InvokeServer()
+		end)
+		baseline = if ok then autoCount(profile) else 0
+	end)
+
+	local conn = profileChangedRE.OnClientEvent:Connect(function(p: any)
+		if autoCount(p) > baseline then
+			onComplete()
+		end
+	end)
+	return function()
+		conn:Disconnect()
+	end
+end
+
 local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } = {
 	LaunchBalls = startLaunchBalls,
 	BuyUpgrade = startBuyUpgrade,
@@ -742,6 +864,9 @@ local COMPLETION_STARTERS: { [string]: (CompletionSpec, () -> ()) -> () -> () } 
 	OpenLoadout = startOpenLoadout,
 	EquipLoadoutSlot = startEquipLoadoutSlot,
 	TouchFreeCratePad = startTouchFreeCratePad,
+	WatchPlotBank = startWatchPlotBank,
+	DisableBoardView = startDisableBoardView,
+	EnableAuto = startEnableAuto,
 }
 
 --------------------------------------------------------------------------------
@@ -939,59 +1064,9 @@ function TutorialController.Init()
 			end
 		end)
 
-		-- Loadout tutorial: after the main one is over, the first time any skin OTHER than
-		-- the default Classic is owned (first crate pull / daily-reward skin) — walks the
-		-- player through opening the loadout and slotting a skin. Run-once (persisted).
-		task.spawn(function()
-			if #loadoutSteps == 0 or (stats and stats.completedLoadoutTutorial) then
-				return
-			end
-			TutorialController.WaitUntilOver()
-
-			local changedRE = CosmeticsNet.CosmeticChanged :: RemoteEvent
-			local getInfoRF = CosmeticsNet.GetCosmeticInfo :: RemoteFunction
-			local DEFAULT_ID = BallSkins.GetDefaultId()
-			local triggered = false
-			local conn: RBXScriptConnection? = nil
-			local function maybeTrigger(info: any)
-				if triggered or type(info) ~= "table" or type(info.owned) ~= "table" then
-					return
-				end
-				local hasNonDefault = false
-				for id in info.owned do
-					if id ~= DEFAULT_ID then
-						hasNonDefault = true
-						break
-					end
-				end
-				if not hasNonDefault then
-					return
-				end
-				triggered = true
-				if conn then
-					conn:Disconnect()
-				end
-				-- Own thread: startSequence yields while another sequence tears down.
-				task.spawn(function()
-					-- The inventory push lands the moment the SERVER rolls — before the crate
-					-- reel even starts client-side. Give the reveal a beat to begin, then hold
-					-- until it fully finishes so the tutorial doesn't talk over the spin.
-					task.wait(0.6)
-					while CrateRollUI.IsSpinning() do
-						task.wait(0.25)
-					end
-					startSequence(playerGui, "loadout", loadoutSteps)
-				end)
-			end
-			conn = changedRE.OnClientEvent:Connect(maybeTrigger)
-			-- Snapshot too: the skin may already be owned when this binds.
-			local ok, info = pcall(function()
-				return getInfoRF:InvokeServer()
-			end)
-			if ok then
-				maybeTrigger(info)
-			end
-		end)
+		-- (The standalone loadout tutorial was removed — the reworked main tutorial now
+		-- walks the player through rolling their first marble, opening the loadout, and
+		-- Equip Best directly, so a separate post-roll loadout sequence is unnecessary.)
 
 		-- Tuning tutorial: after the main one is over, the first time ANY ball-tuning axis
 		-- (a UpgradesConfig.Axes track) gains a tier — points the player at the tuning menu and
